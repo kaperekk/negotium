@@ -1,0 +1,11 @@
+# Ignore all data files except config
+data/*
+!data/config.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# OS
+.DS_Store

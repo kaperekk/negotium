@@ -1,0 +1,29 @@
+{
+  "name": "My Portfolio",
+  "start_day": "2024-01-01",
+  "default_currency": "PLN",
+  "graph_precision": "1D",
+  "ticker_rules": [
+    "AMZN.DE=AMZ.DE",
+    "TSLA.DE=TL0.DE",
+    "W9C.DE=W9C.F",
+    "BESI.NL=BESI.AS",
+    "ASML.NL=ASML.AS",
+    "ADYEN.NL=ADYEN.AS",
+    "SP20.NL=SP20.AS",
+    "*.US=",
+    "*.PL=*.WA"
+  ],
+  "isin_tickers": [
+    "IE00B4L5Y983=IWDA.L",
+    "IE00BMTX1Y45=I500.AS",
+    "IE00BM67HT60=XDWT.L",
+    "IE00B3WJKG14=IITU.L",
+    "IE000I8KRLL9=SEMI.AS",
+    "LU1681045297=ALAU.L",
+    "IE00BQT3WG13=CNYAN.MX",
+    "PLBTFBN00014=ETFBTCPL.WA",
+    "PLBSWTR00014=ETFBS80TR.WA",
+    "PLBETF400025=ETFBM40TR.WA"
+  ]
+}
