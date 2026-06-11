@@ -2,6 +2,9 @@
 data/*
 !data/config.json
 
+# Ignore imports
+imports/
+
 # Python
 __pycache__/
 *.pyc

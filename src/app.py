@@ -27,9 +27,10 @@ from transactions import (
 from portfolio import build_portfolio, snapshots_to_series
 from xtb_import import import_xtb
 from bossa_import import import_bossa
+from manual_import import import_manual
 
 IMPORTS_DIR = Path("imports")
-BROKERS = ["XTB", "BOSSA"]
+BROKERS = ["XTB", "BOSSA", "Custom"]
 BROKER_CURRENCIES = {"XTB": ["EUR", "PLN", "USD"], "BOSSA": ["EUR", "PLN", "Many"]}
 
 
@@ -188,7 +189,7 @@ with st.sidebar:
     broker_dir = IMPORTS_DIR / broker.lower()
     broker_dir.mkdir(parents=True, exist_ok=True)
 
-    file_types = ["csv"] if broker == "BOSSA" else ["xlsx"]
+    file_types = ["csv"] if broker == "BOSSA" else ["json"] if broker == "Custom" else ["xlsx"]
     uploaded_files = st.file_uploader(
         f"Upload {broker} files", type=file_types,
         accept_multiple_files=True, key="xtb_upload",
@@ -200,51 +201,89 @@ with st.sidebar:
         if not dest.exists():
             dest.write_bytes(uf.getvalue())
 
-    broker_files = sorted(broker_dir.glob("*.xlsx")) + sorted(broker_dir.glob("*.csv"))
+    broker_files = sorted(broker_dir.glob("*.xlsx")) + sorted(broker_dir.glob("*.csv")) + sorted(broker_dir.glob("*.json"))
 
     if broker_files:
-        ccy_options = BROKER_CURRENCIES.get(broker, ["EUR", "PLN", "USD"])
-        default_ccy = "Many" if broker == "BOSSA" else ccy_options[0]
         for fpath in broker_files:
             detected = _detect_currency(fpath.name)
-            if detected not in ccy_options:
-                detected = default_ccy
-            c1, c2, c3 = st.columns([3, 1.5, 1])
-            with c1:
-                st.caption(f"📄 {fpath.name}")
-            with c2:
-                ccy = st.selectbox(
-                    "Currency", ccy_options,
-                    index=ccy_options.index(detected),
-                    key=f"ccy_{broker}_{fpath.name}",
-                    label_visibility="collapsed",
-                )
-            with c3:
-                if st.button("⬇", key=f"imp_{broker}_{fpath.name}",
-                             help="Import this file"):
-                    if ccy != detected:
-                        new_name = f"{ccy}_{fpath.name}"
-                        new_path = broker_dir / new_name
-                        fpath.rename(new_path)
-                        fpath = new_path
-                    if fpath.suffix.lower() == ".csv":
-                        with st.spinner("Importing…"):
-                            result = import_bossa(str(fpath), ccy)
-                    else:
+            if broker == "BOSSA":
+                ccy = "Many"
+                c1, c2 = st.columns([4, 1])
+                with c1:
+                    st.caption(f"📄 {fpath.name} (currency: auto)")
+                with c2:
+                    if st.button("⬇", key=f"imp_{broker}_{fpath.name}",
+                                 help="Import this file"):
+                        if fpath.suffix.lower() == ".csv":
+                            with st.spinner("Importing…"):
+                                result = import_bossa(str(fpath), ccy)
+                        else:
+                            result = import_xtb(str(fpath), ccy)
+                        if result["success"]:
+                            n = result["imported"]
+                            s = result["skipped"]
+                            msg = f"**{fpath.name}** — {n} imported"
+                            if s:
+                                msg += f", {s} skipped (duplicates)"
+                            st.success(msg)
+                            st.session_state.pop(f"snapshots_{base_ccy}_{precision}", None)
+                            st.rerun()
+                        else:
+                            st.error(f"**{fpath.name}** — {result['error']}")
+            elif broker == "Custom":
+                c1, c2 = st.columns([4, 1])
+                with c1:
+                    st.caption(f"📄 {fpath.name}")
+                with c2:
+                    if st.button("⬇", key=f"imp_{broker}_{fpath.name}",
+                                 help="Import this file"):
+                        result = import_manual(str(fpath))
+                        if result["success"]:
+                            n = result["imported"]
+                            s = result["skipped"]
+                            msg = f"**{fpath.name}** — {n} imported"
+                            if s:
+                                msg += f", {s} skipped (duplicates)"
+                            st.success(msg)
+                            st.session_state.pop(f"snapshots_{base_ccy}_{precision}", None)
+                            st.rerun()
+                        else:
+                            st.error(f"**{fpath.name}** — {result['error']}")
+            else:
+                ccy_options = BROKER_CURRENCIES.get(broker, ["EUR", "PLN", "USD"])
+                default_ccy = ccy_options[0]
+                if detected not in ccy_options:
+                    detected = default_ccy
+                c1, c2, c3 = st.columns([3, 1.5, 1])
+                with c1:
+                    st.caption(f"📄 {fpath.name}")
+                with c2:
+                    ccy = st.selectbox(
+                        "Currency", ccy_options,
+                        index=ccy_options.index(detected),
+                        key=f"ccy_{broker}_{fpath.name}",
+                        label_visibility="collapsed",
+                    )
+                with c3:
+                    if st.button("⬇", key=f"imp_{broker}_{fpath.name}",
+                                 help="Import this file"):
+                        if ccy != detected:
+                            new_name = f"{ccy}_{fpath.name}"
+                            new_path = broker_dir / new_name
+                            fpath.rename(new_path)
+                            fpath = new_path
                         result = import_xtb(str(fpath), ccy)
-                    if result["success"]:
-                        n = result["imported"]
-                        s = result["skipped"]
-                        msg = f"**{fpath.name}** — {n} imported"
-                        if s:
-                            msg += f", {s} skipped (duplicates)"
-                        st.success(msg)
-                        if "error" in result:
-                            st.warning(result["error"])
-                        st.session_state.pop(f"snapshots_{base_ccy}_{precision}", None)
-                        st.rerun()
-                    else:
-                        st.error(f"**{fpath.name}** — {result['error']}")
+                        if result["success"]:
+                            n = result["imported"]
+                            s = result["skipped"]
+                            msg = f"**{fpath.name}** — {n} imported"
+                            if s:
+                                msg += f", {s} skipped (duplicates)"
+                            st.success(msg)
+                            st.session_state.pop(f"snapshots_{base_ccy}_{precision}", None)
+                            st.rerun()
+                        else:
+                            st.error(f"**{fpath.name}** — {result['error']}")
     else:
         st.caption("No files uploaded yet.")
 

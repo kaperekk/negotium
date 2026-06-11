@@ -24,60 +24,9 @@ streamlit run src/app.py
 
 Opens at http://localhost:8501
 
-## Importing from Bossa (DM BOŚ)
+## Imports
 
-Negotium can import transaction history exported from **DM BOŚ** (Bossa) brokerage.
-
-### How to export from Bossa
-
-1. Log in to your DM BOŚ account at [bossa.pl](https://www.bossa.pl)
-2. Go to **Historia finansowa** (Financial history)
-3. Set the date range you want to export (e.g. from your account start to today)
-4. Make sure **Pokaż** (Show) is set to display individual transactions, not just summaries
-5. Click **Eksportuj do CSV** (Export to CSV)
-6. Save the file — it will be a **semicolon-separated** CSV
-
-### CSV format
-
-The exported CSV must be **semicolon-separated** (`;`) with these columns:
-
-```csv
-data;tytuł operacji;szczegóły;kwota;waluta
-```
-
-Example rows:
-
-```csv
-data;tytuł operacji;szczegóły;kwota;waluta
-15.05.2026;Rozliczenie transakcji kupna:;iShares MSCI Global Semiconductors UCITS ETF (IE000I8KRLL9) 132 x 16.488 EUR nr Z00348421888;-;2 176.42;EUR
-16.04.2026;Wymiana waluty PLN/EUR 4.2385;;;4 246.75;-;EUR
-07.01.2026;Przelew do DM BOŚ;;;28 620.00;-;PLN
-```
-
-### Recognised operation types
-
-| Polish operation title | Meaning | Negotium action |
-|---|---|---|
-| `Rozliczenie transakcji kupna:` | Share purchase | Buy (shares in, cash out) |
-| `Rozliczenie transakcji sprzedaży:` | Share sale | Sell (shares out, cash in) |
-| `Wymiana waluty {SRC}/{TGT} {rate}` | Currency exchange | FX swap (two entries) |
-| `Przelew do DM BOŚ` | Cash deposit | Cash deposit |
-
-### Uploading
-
-1. In the app, go to the **Import** tab
-2. Select **BOSSA** as the broker
-3. Upload your CSV file(s)
-4. Select the currency for each file (PLN, EUR, or Many if mixed)
-5. Click the import button
-
-If any ISINs cannot be resolved to Yahoo Finance tickers, a warning will list the unresolved ones. You can then add manual ticker mappings in the app.
-
-### Supported instruments
-
-Negotium resolves ISINs from the CSV details column to Yahoo Finance tickers automatically. Most European-listed ETFs and stocks are supported. If an ISIN is not found, you can add a manual mapping in the app.
-
----
+See [IMPORTS.md](IMPORTS.md) for how to import transactions from Bossa, XTB, or manually.
 
 ## File layout
 
