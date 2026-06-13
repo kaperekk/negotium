@@ -33,13 +33,22 @@ def patch_root(tmp: Path):
 
     storage.ROOT               = tmp
     storage.DATA_ROOT          = tmp / "data"
-    storage.TRANSACTIONS_PATH  = tmp / "data" / "transactions.jsonl"
-    storage.PORTFOLIO_PATH     = tmp / "data" / "portfolio.jsonl"
-    storage.BALANCE_PATH       = tmp / "data" / "balance.json"
     storage.PRICES_DIR         = tmp / "data" / "prices"
+    storage.PROJECTS_PATH      = tmp / "data" / "projects.json"
 
-    cfg_module.ROOT            = tmp
-    cfg_module.CONFIG_PATH     = tmp / "data" / "config.json"
+    # Set up a default test project
+    test_project = tmp / "data" / "test_project"
+    test_project.mkdir(parents=True, exist_ok=True)
+    (test_project / "imports").mkdir(exist_ok=True)
+    storage.set_current_project("test_project")
+    storage._current_project = "test_project"
+    storage.TRANSACTIONS_PATH  = test_project / "transactions.jsonl"
+    storage.PORTFOLIO_PATH     = test_project / "portfolio.jsonl"
+    storage.BALANCE_PATH       = test_project / "balance.json"
+    storage.IMPORTS_DIR        = test_project / "imports"
+
+    cfg_module.ROOT                = tmp
+    cfg_module.GLOBAL_CONFIG_PATH  = tmp / "data" / "config.json"
 
 
 SAMPLE_CONFIG = {

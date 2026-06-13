@@ -31,7 +31,6 @@ from xtb_import import import_xtb
 from bossa_import import import_bossa
 from manual_import import import_manual
 
-IMPORTS_DIR = Path("imports")
 BROKERS = ["XTB", "BOSSA", "Custom"]
 BROKER_CURRENCIES = {"XTB": ["EUR", "PLN", "USD"], "BOSSA": ["EUR", "PLN", "Many"]}
 
@@ -56,17 +55,25 @@ st.markdown("""
         background: linear-gradient(135deg, #161B22 0%, #1C2333 100%);
         border: 1px solid #30363D;
         border-radius: 16px;
-        padding: 20px 24px;
+        padding: 28px 24px 16px 24px;
         box-shadow: 0 2px 8px rgba(0,0,0,0.3);
     }
-    [data-testid="metric-container"] label {
-        font-size: 0.75rem !important;
+    [data-testid="metric-container"] [data-testid="stMetricLabel"],
+    [data-testid="metric-container"] [data-testid="stMetricLabel"] p,
+    [data-testid="metric-container"] label,
+    [data-testid="metric-container"] label p,
+    [data-testid="metric-container"] [class*="Label"],
+    [data-testid="metric-container"] [class*="Label"] p {
+        color: #8B949E !important;
+        font-size: 0.85rem !important;
         font-weight: 600 !important;
         text-transform: uppercase;
-        letter-spacing: 0.08em !important;
-        color: #8B949E !important;
+        letter-spacing: 0.06em;
+        visibility: visible !important;
     }
-    [data-testid="metric-container"] [data-testid="stMetricValue"] {
+    [data-testid="metric-container"] [data-testid="stMetricValue"],
+    [data-testid="metric-container"] [class*="Value"],
+    [data-testid="metric-container"] [class*="Value"] p {
         font-weight: 700 !important;
     }
 
@@ -75,6 +82,33 @@ st.markdown("""
         min-width: 380px;
         max-width: 420px;
         border-right: 1px solid #30363D;
+    }
+    [data-testid="stSidebar"] [data-testid="stVerticalBlock"] > div {
+        margin-top: -0.4rem;
+    }
+    [data-testid="stSidebar"] [data-testid="stVerticalBlock"] > div:first-child {
+        margin-top: 0;
+    }
+    [data-testid="stSidebar"] hr {
+        display: none;
+    }
+    [data-testid="stSidebar"] button[kind="primary"] {
+        background: #6C63FF !important;
+        border: none !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stHorizontalBlock"] {
+        gap: 0.3rem;
+    }
+    [data-testid="stSidebar"] [data-testid="stMarkdown"] h1 {
+        font-size: 1.8rem !important;
+        text-align: center !important;
+        margin-top: -1rem !important;
+        padding-top: 0 !important;
+    }
+
+    /* ── Main content spacing ──────────────────────────────────────────── */
+    .block-container {
+        padding-top: 2.5rem !important;
     }
 
     /* ── Expanders ─────────────────────────────────────────────────────── */
@@ -96,30 +130,100 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# ── Project init ───────────────────────────────────────────────────────────────
+
+migrated = storage.init_legacy_project()
+projects = storage.list_projects()
+
+if not projects:
+    if storage.get_current_project() is None:
+        storage.create_project("default")
+        projects = storage.list_projects()
+
+current = storage.get_current_project()
+if current is None:
+    if projects:
+        storage.set_current_project(projects[0])
+        current = projects[0]
+    else:
+        storage.create_project("default")
+        current = storage.get_current_project()
+        projects = storage.list_projects()
+
 # ── Config ────────────────────────────────────────────────────────────────────
 
 cfg            = cfg_module.load()
 start_date_cfg = cfg_module.get_start_date(cfg)
 today          = date.today()
+precision      = "D"
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.title(f"📈 {cfg.get('name', 'My Portfolio')}")
-    st.divider()
-
-    st.subheader("Display")
-    base_ccy = st.selectbox(
-        "Base currency",
-        options=["PLN", "EUR", "USD"],
-        index=["PLN", "EUR", "USD"].index(cfg.get("default_currency", "PLN")),
+    st.markdown(
+        f"<h1 style='text-align:center;font-size:2.2rem;margin-top:-0.5rem;margin-bottom:0.3rem;'>📈 {storage.get_current_project()}</h1>",
+        unsafe_allow_html=True,
     )
 
-    precision = "D"
+    # ── Project switcher ───────────────────────────────────────────────────
+    projects = storage.list_projects()
+    current = storage.get_current_project()
 
-    st.subheader("Date range")
+    if current and current in projects:
+        idx = projects.index(current)
+    else:
+        idx = 0
+
+    selected = st.selectbox(
+        "Project",
+        options=projects + ["➕ New project"],
+        index=idx,
+        key="project_select",
+    )
+
+    if selected == "➕ New project":
+        @st.dialog("Create new project")
+        def _create_dialog():
+            name = st.text_input("Project name", placeholder="e.g. Retirement, Savings")
+            if st.button("Create", use_container_width=True):
+                if name and name.strip():
+                    try:
+                        storage.create_project(name.strip())
+                        st.session_state.clear()
+                        st.rerun()
+                    except ValueError as e:
+                        st.error(str(e))
+                else:
+                    st.error("Enter a name.")
+        _create_dialog()
+    elif selected != current:
+        storage.set_current_project(selected)
+        st.session_state.clear()
+        st.rerun()
+
+    # ── Display controls ───────────────────────────────────────────────────
+    st.caption("Currency")
+    ccy_options = ["PLN", "EUR", "USD"]
+    ccy_default = ccy_options.index(cfg.get("default_currency", "PLN"))
+    ccy_cols = st.columns(3)
+    base_ccy = None
+    for i, ccy in enumerate(ccy_options):
+        with ccy_cols[i]:
+            is_active = st.session_state.get("base_ccy_idx", ccy_default) == i
+            if st.button(
+                ccy,
+                key=f"ccy_btn_{ccy}",
+                use_container_width=True,
+                type="primary" if is_active else "secondary",
+            ):
+                st.session_state["base_ccy_idx"] = i
+                base_ccy = ccy
+                st.rerun()
+    if base_ccy is None:
+        base_ccy = ccy_options[st.session_state.get("base_ccy_idx", ccy_default)]
+
     range_option = st.selectbox(
-        "Quick range",
+        "Range",
         ["All time", "This year", "Last 12 months", "Last 3 months", "Custom"],
     )
     if range_option == "All time":
@@ -139,24 +243,7 @@ with st.sidebar:
             chart_end = st.date_input("To", value=today,
                                       min_value=start_date_cfg, max_value=today)
 
-    st.divider()
-
     with st.expander("⚙️ Settings"):
-        new_name  = st.text_input("Portfolio name", value=cfg.get("name", "My Portfolio"))
-        new_start = st.date_input("Start date", value=start_date_cfg, max_value=today)
-        new_ccy   = st.selectbox("Default currency", ["PLN", "EUR", "USD"],
-                                 index=["PLN", "EUR", "USD"].index(cfg.get("default_currency", "PLN")))
-        if st.button("Save settings"):
-            cfg.update({"name": new_name, "start_day": new_start.isoformat(),
-                        "default_currency": new_ccy})
-            cfg_module.save(cfg)
-            for k in list(st.session_state.keys()):
-                if k.startswith("snapshots_"):
-                    del st.session_state[k]
-            st.success("Saved!")
-            st.rerun()
-
-        st.divider()
         st.subheader("Ticker rules")
         rules_text = st.text_area(
             "Rules",
@@ -173,7 +260,25 @@ with st.sidebar:
             st.success("Rules saved!")
             st.rerun()
 
-    st.divider()
+        st.subheader("Project")
+
+        rename_val = st.text_input("Rename project to", value=current or "",
+                                   key="rename_proj_input")
+        rc1, rc2 = st.columns(2)
+        with rc1:
+            if st.button("Rename", key="rename_proj_btn"):
+                if rename_val and rename_val.strip() and rename_val.strip() != current:
+                    try:
+                        storage.rename_project(current, rename_val.strip())
+                        st.session_state.clear()
+                        st.rerun()
+                    except ValueError as e:
+                        st.error(str(e))
+        with rc2:
+            if st.button("Delete project", key="delete_proj_btn", type="primary"):
+                storage.delete_project(current)
+                st.session_state.clear()
+                st.rerun()
 
     with st.expander("➕ Add transaction"):
         with st.form("add_tx", clear_on_submit=True):
@@ -205,7 +310,7 @@ with st.sidebar:
                 if not entries:
                     st.error("Enter at least one ticker and amount.")
                 else:
-                    custom_dir = IMPORTS_DIR / "custom"
+                    custom_dir = storage.IMPORTS_DIR / "custom"
                     custom_dir.mkdir(parents=True, exist_ok=True)
                     tx_doc = [{"date": tx_date.isoformat(), "entries": entries}]
                     tx_path = custom_dir / f"{tx_date.isoformat()}_{tx_date.strftime('%H%M%S')}.json"
@@ -218,13 +323,11 @@ with st.sidebar:
                     st.session_state.pop(f"snapshots_{base_ccy}_{precision}", None)
                     st.rerun()
 
-    st.divider()
-
     with st.expander("📥 Import statement"):
-        IMPORTS_DIR.mkdir(parents=True, exist_ok=True)
+        storage.IMPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
         broker = st.selectbox("Broker", BROKERS, key="broker_select")
-        broker_dir = IMPORTS_DIR / broker.lower()
+        broker_dir = storage.IMPORTS_DIR / broker.lower()
         broker_dir.mkdir(parents=True, exist_ok=True)
 
         file_types = ["csv"] if broker == "BOSSA" else ["json"] if broker == "Custom" else ["xlsx"]
@@ -331,7 +434,7 @@ with st.sidebar:
 
             all_files = []
             for b in BROKERS:
-                bdir = IMPORTS_DIR / b.lower()
+                bdir = storage.IMPORTS_DIR / b.lower()
                 if not bdir.exists():
                     continue
                 for fpath in sorted(bdir.glob("*.xlsx")):
@@ -367,8 +470,6 @@ with st.sidebar:
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
-
-st.header(cfg.get("name", "My Portfolio"))
 
 all_tx = get_all_transactions()
 if not all_tx:
@@ -464,7 +565,7 @@ if cache_key not in st.session_state:
     elapsed = time.perf_counter() - t_start
     bar.empty()
 
-    log_path = Path(__file__).parent.parent / "data" / "build.log"
+    log_path = storage._project_dir() / "build.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a", encoding="utf-8") as f:
         f.write(f"{today.isoformat()} {time.strftime('%H:%M:%S')} | "
@@ -600,18 +701,18 @@ def fmt(v: float) -> str:
 
 c1, c2, c3, c4 = st.columns(4)
 with c1:
-    st.metric("Total value", fmt(cur_value))
+    st.metric("Total value", fmt(cur_value), label_visibility="visible")
 with c2:
-    st.metric("Invested", fmt(contrib))
+    st.metric("Invested", fmt(contrib), label_visibility="visible")
 with c3:
     sign = "+" if pnl >= 0 else ""
-    st.metric("Total P&L", f"{sign}{fmt(pnl)}", delta=f"{sign}{pnl_pct:.1f}%")
+    st.metric("Total P&L", f"{sign}{fmt(pnl)}", delta=f"{sign}{pnl_pct:.1f}%", label_visibility="visible")
 with c4:
     if latest["assets"]:
         best = max(latest["assets"], key=lambda a: a["value_base"])
-        st.metric("Largest position", best["ticker"])
+        st.metric("Largest position", best["ticker"], label_visibility="visible")
     else:
-        st.metric("Largest position", "—")
+        st.metric("Largest position", "—", label_visibility="visible")
 
 st.divider()
 

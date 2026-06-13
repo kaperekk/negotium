@@ -1,28 +1,162 @@
 """
-storage.py — low-level file I/O helpers
+storage.py — low-level file I/O helpers with multi-project support
 
 Layout:
-  ROOT/data/transactions.jsonl  — transaction ledger
-  ROOT/data/portfolio.jsonl     — computed snapshots
-  ROOT/data/balance.json        — current holdings {ticker: amount}
-  ROOT/data/benchmarks_{CCY}.json — hypothetical benchmark values
-  ROOT/data/prices/{TICKER}/{YEAR}.json — daily close price cache
+  ROOT/data/prices/{TICKER}/{YEAR}.json  — shared price cache
+  ROOT/data/projects.json                — project registry
+  ROOT/data/{project}/config.json        — per-project config overrides
+  ROOT/data/{project}/transactions.jsonl — transaction ledger
+  ROOT/data/{project}/portfolio.jsonl    — computed snapshots
+  ROOT/data/{project}/balance.json       — current holdings
+  ROOT/data/{project}/benchmarks_{CCY}.json — benchmark values
+  ROOT/data/{project}/imports/           — per-project import files
 """
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from datetime import date
+from datetime import date, datetime
 from typing import Iterator
 
 ROOT = Path(__file__).parent.parent
 
+DATA_ROOT     = ROOT / "data"
+PRICES_DIR    = DATA_ROOT / "prices"
+PROJECTS_PATH = DATA_ROOT / "projects.json"
 
-DATA_ROOT         = ROOT / "data"
+# ── Current project state ─────────────────────────────────────────────────────
+
+_current_project: str | None = None
+
 TRANSACTIONS_PATH = DATA_ROOT / "transactions.jsonl"
 PORTFOLIO_PATH    = DATA_ROOT / "portfolio.jsonl"
 BALANCE_PATH      = DATA_ROOT / "balance.json"
-PRICES_DIR        = DATA_ROOT / "prices"
+IMPORTS_DIR       = Path("imports")
+
+
+def _project_dir(name: str | None = None) -> Path:
+    """Return the data directory for a project."""
+    n = name or _current_project
+    if n is None:
+        raise RuntimeError("No project selected. Call set_current_project() first.")
+    return DATA_ROOT / n
+
+
+def set_current_project(name: str) -> None:
+    """Set the active project — updates all project-scoped paths."""
+    global _current_project
+    global TRANSACTIONS_PATH, PORTFOLIO_PATH, BALANCE_PATH, IMPORTS_DIR
+
+    _current_project = name
+    d = _project_dir(name)
+    TRANSACTIONS_PATH = d / "transactions.jsonl"
+    PORTFOLIO_PATH    = d / "portfolio.jsonl"
+    BALANCE_PATH      = d / "balance.json"
+    IMPORTS_DIR       = d / "imports"
+
+
+def get_current_project() -> str | None:
+    return _current_project
+
+
+def project_config_path(name: str | None = None) -> Path:
+    return _project_dir(name) / "config.json"
+
+
+# ── Project registry ──────────────────────────────────────────────────────────
+
+def list_projects() -> list[str]:
+    """Return sorted list of project names."""
+    if not PROJECTS_PATH.exists():
+        return []
+    with PROJECTS_PATH.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+    return sorted(data.keys())
+
+
+def _load_registry() -> dict:
+    if not PROJECTS_PATH.exists():
+        return {}
+    with PROJECTS_PATH.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _save_registry(reg: dict) -> None:
+    PROJECTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with PROJECTS_PATH.open("w", encoding="utf-8") as f:
+        json.dump(reg, f, indent=2, ensure_ascii=False)
+
+
+def create_project(name: str) -> None:
+    """Create a new empty project."""
+    reg = _load_registry()
+    if name in reg:
+        raise ValueError(f"Project '{name}' already exists")
+    _project_dir(name).mkdir(parents=True, exist_ok=True)
+    (_project_dir(name) / "imports").mkdir(exist_ok=True)
+    reg[name] = {"created_at": datetime.now().isoformat()}
+    _save_registry(reg)
+    set_current_project(name)
+
+
+def rename_project(old: str, new: str) -> None:
+    """Rename a project directory and update registry."""
+    reg = _load_registry()
+    if old not in reg:
+        raise ValueError(f"Project '{old}' not found")
+    if new in reg:
+        raise ValueError(f"Project '{new}' already exists")
+    old_dir = _project_dir(old)
+    new_dir = DATA_ROOT / new
+    old_dir.rename(new_dir)
+    reg[new] = reg.pop(old)
+    _save_registry(reg)
+    set_current_project(new)
+
+
+def delete_project(name: str) -> None:
+    """Delete a project and all its data."""
+    import shutil
+    reg = _load_registry()
+    if name not in reg:
+        return
+    d = _project_dir(name)
+    if d.exists():
+        shutil.rmtree(d)
+    del reg[name]
+    _save_registry(reg)
+
+
+def init_legacy_project() -> str | None:
+    """If legacy flat files exist at data/ root, migrate them into a 'default' project.
+    Returns the project name if migration happened, else None."""
+    legacy_tx = DATA_ROOT / "transactions.jsonl"
+    if not legacy_tx.exists():
+        return None
+    name = "default"
+    d = _project_dir(name)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "imports").mkdir(exist_ok=True)
+    for fname in ["transactions.jsonl", "portfolio.jsonl", "balance.json"]:
+        src = DATA_ROOT / fname
+        dst = d / fname
+        if src.exists() and not dst.exists():
+            src.rename(dst)
+    for p in DATA_ROOT.glob("benchmarks_*.json"):
+        dst = d / p.name
+        if not dst.exists():
+            p.rename(dst)
+    build_log = DATA_ROOT / "build.log"
+    if build_log.exists():
+        build_log.unlink()
+    reg = _load_registry()
+    reg[name] = {"created_at": datetime.now().isoformat(), "migrated_from": "legacy"}
+    _save_registry(reg)
+    set_current_project(name)
+    return name
+
+
+# ── Supported currencies ──────────────────────────────────────────────────────
 
 SUPPORTED_CURRENCIES: frozenset[str] = frozenset({"USD", "EUR", "PLN"})
 
@@ -43,7 +177,6 @@ CURRENCY_SUFFIXES: dict[str, list[str]] = {
 }
 SUFFIX_CURRENCY: dict[str, str] = {s: ccy for ccy, suffixes in CURRENCY_SUFFIXES.items() for s in suffixes}
 
-# Currencies without direct {ccy}PLN=X on Yahoo — triangulate via USD instead
 TRIANGULATE_VIA_USD: frozenset[str] = frozenset({"MXN"})
 
 
@@ -111,7 +244,7 @@ def save_balance(balance: dict[str, dict]) -> None:
         json.dump(clean, f, indent=2, ensure_ascii=False)
 
 
-# ── Price cache ────────────────────────────────────────────────────────────────
+# ── Price cache (shared) ──────────────────────────────────────────────────────
 
 def price_cache_path(ticker: str, year: int) -> Path:
     return PRICES_DIR / ticker.upper() / f"{year}.json"
@@ -172,7 +305,7 @@ def invalidate_portfolio_from(from_date: str) -> None:
 # ── Benchmark cache ──────────────────────────────────────────────────────────
 
 def benchmark_cache_path(base_ccy: str) -> Path:
-    return DATA_ROOT / f"benchmarks_{base_ccy.upper()}.json"
+    return _project_dir() / f"benchmarks_{base_ccy.upper()}.json"
 
 
 def save_benchmarks(base_ccy: str, data: list[dict]) -> None:
