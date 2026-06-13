@@ -6,6 +6,8 @@ Run: streamlit run src/app.py
 from __future__ import annotations
 
 import sys
+import time
+import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from datetime import date, timedelta
@@ -18,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import config as cfg_module
 import storage
-from ticker_data import ensure as ensure_ticker
+from ticker_data import ensure as ensure_ticker, get_price, get_fx_rate
 from portfolio import FX_TICKERS
 from transactions import (
     add_transaction, get_all_transactions, get_all_tickers,
@@ -72,20 +74,13 @@ with st.sidebar:
     st.divider()
 
     st.subheader("Display")
-    base_ccy = st.radio(
+    base_ccy = st.selectbox(
         "Base currency",
         options=["PLN", "EUR", "USD"],
         index=["PLN", "EUR", "USD"].index(cfg.get("default_currency", "PLN")),
-        horizontal=True,
     )
 
-    precision_label = st.radio(
-        "Granularity",
-        options=["Daily", "Weekly"],
-        index=0 if cfg.get("graph_precision", "1D") == "1D" else 1,
-        horizontal=True,
-    )
-    precision = "D" if precision_label == "Daily" else "W-FRI"
+    precision = "D"
 
     st.subheader("Date range")
     range_option = st.selectbox(
@@ -118,8 +113,7 @@ with st.sidebar:
                                  index=["PLN", "EUR", "USD"].index(cfg.get("default_currency", "PLN")))
         if st.button("Save settings"):
             cfg.update({"name": new_name, "start_day": new_start.isoformat(),
-                        "default_currency": new_ccy,
-                        "graph_precision": "1D" if precision == "D" else "1W"})
+                        "default_currency": new_ccy})
             cfg_module.save(cfg)
             for k in list(st.session_state.keys()):
                 if k.startswith("snapshots_"):
@@ -146,181 +140,190 @@ with st.sidebar:
 
     st.divider()
 
-    st.subheader("➕ Add transaction")
-    with st.form("add_tx", clear_on_submit=True):
-        tx_date = st.date_input("Date", value=today, max_value=today)
-        st.caption("Negative amount = sell / cash out.")
+    with st.expander("➕ Add transaction"):
+        with st.form("add_tx", clear_on_submit=True):
+            tx_date = st.date_input("Date", value=today, max_value=today)
+            st.caption("Negative amount = sell / cash out.")
 
-        rows = []
-        for idx in range(1, 4):
-            c1, c2 = st.columns([2, 1])
-            with c1:
-                t = st.text_input(
-                    f"Ticker {idx}",
-                    placeholder="AAPL / QDVE.DE / USD / PLN",
-                    key=f"t{idx}",
-                ).strip().upper()
-            with c2:
-                a = st.number_input(f"Amount {idx}", value=0.0,
-                                    format="%.4f", step=0.001, key=f"a{idx}")
-            rows.append((t, a))
+            rows = []
+            for idx in range(1, 4):
+                c1, c2 = st.columns([2, 1])
+                with c1:
+                    t = st.text_input(
+                        f"Ticker {idx}",
+                        placeholder="AAPL / QDVE.DE / USD / PLN",
+                        key=f"t{idx}",
+                    ).strip().upper()
+                with c2:
+                    a = st.number_input(f"Amount {idx}", value=0.0,
+                                        format="%.4f", step=0.001, key=f"a{idx}")
+                rows.append((t, a))
 
-        is_account_op = st.checkbox("Account operation (deposit/withdrawal)",
-                                    key="ao_new",
-                                    help="Marks this transaction as invested capital")
+            is_account_op = st.checkbox("Account operation (deposit/withdrawal)",
+                                        key="ao_new",
+                                        help="Marks this transaction as invested capital")
 
-        if st.form_submit_button("Add transaction", width="stretch"):
-            entries = [{"ticker": t, "amount": a}
-                       for t, a in rows if t and abs(a) > 1e-9]
-            if not entries:
-                st.error("Enter at least one ticker and amount.")
-            else:
-                add_transaction(tx_date, entries, account_operation=is_account_op)
-                st.success(f"Added for {tx_date}.")
-                st.session_state.pop(f"snapshots_{base_ccy}_{precision}", None)
-                st.rerun()
+            if st.form_submit_button("Add transaction", width="stretch"):
+                entries = [{"ticker": t, "amount": a,
+                            **({"account_operation": True} if is_account_op else {})}
+                           for t, a in rows if t and abs(a) > 1e-9]
+                if not entries:
+                    st.error("Enter at least one ticker and amount.")
+                else:
+                    custom_dir = IMPORTS_DIR / "custom"
+                    custom_dir.mkdir(parents=True, exist_ok=True)
+                    tx_doc = [{"date": tx_date.isoformat(), "entries": entries}]
+                    tx_path = custom_dir / f"{tx_date.isoformat()}_{tx_date.strftime('%H%M%S')}.json"
+                    tx_path.write_text(json.dumps(tx_doc, indent=2), encoding="utf-8")
+                    result = import_manual(str(tx_path))
+                    if result["success"]:
+                        st.success(f"Added for {tx_date}.")
+                    else:
+                        st.error(result["error"])
+                    st.session_state.pop(f"snapshots_{base_ccy}_{precision}", None)
+                    st.rerun()
 
     st.divider()
 
-    st.subheader("📥 Import statement")
-    IMPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    with st.expander("📥 Import statement"):
+        IMPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    broker = st.selectbox("Broker", BROKERS, key="broker_select")
-    broker_dir = IMPORTS_DIR / broker.lower()
-    broker_dir.mkdir(parents=True, exist_ok=True)
+        broker = st.selectbox("Broker", BROKERS, key="broker_select")
+        broker_dir = IMPORTS_DIR / broker.lower()
+        broker_dir.mkdir(parents=True, exist_ok=True)
 
-    file_types = ["csv"] if broker == "BOSSA" else ["json"] if broker == "Custom" else ["xlsx"]
-    uploaded_files = st.file_uploader(
-        f"Upload {broker} files", type=file_types,
-        accept_multiple_files=True, key="xtb_upload",
-        label_visibility="collapsed",
-    )
+        file_types = ["csv"] if broker == "BOSSA" else ["json"] if broker == "Custom" else ["xlsx"]
+        uploaded_files = st.file_uploader(
+            f"Upload {broker} files", type=file_types,
+            accept_multiple_files=True, key="xtb_upload",
+            label_visibility="collapsed",
+        )
 
-    for uf in uploaded_files:
-        dest = broker_dir / uf.name
-        if not dest.exists():
-            dest.write_bytes(uf.getvalue())
+        for uf in uploaded_files:
+            dest = broker_dir / uf.name
+            if not dest.exists():
+                dest.write_bytes(uf.getvalue())
 
-    broker_files = sorted(broker_dir.glob("*.xlsx")) + sorted(broker_dir.glob("*.csv")) + sorted(broker_dir.glob("*.json"))
+        broker_files = sorted(broker_dir.glob("*.xlsx")) + sorted(broker_dir.glob("*.csv")) + sorted(broker_dir.glob("*.json"))
 
-    if broker_files:
-        for fpath in broker_files:
-            detected = _detect_currency(fpath.name)
-            if broker == "BOSSA":
-                ccy = "Many"
-                c1, c2 = st.columns([4, 1])
-                with c1:
-                    st.caption(f"📄 {fpath.name} (currency: auto)")
-                with c2:
-                    if st.button("⬇", key=f"imp_{broker}_{fpath.name}",
-                                 help="Import this file"):
-                        if fpath.suffix.lower() == ".csv":
-                            with st.spinner("Importing…"):
-                                result = import_bossa(str(fpath), ccy)
-                        else:
-                            result = import_xtb(str(fpath), ccy)
-                        if result["success"]:
-                            n = result["imported"]
-                            s = result["skipped"]
-                            msg = f"**{fpath.name}** — {n} imported"
-                            if s:
-                                msg += f", {s} skipped (duplicates)"
-                            st.success(msg)
-                            st.session_state.pop(f"snapshots_{base_ccy}_{precision}", None)
-                            st.rerun()
-                        else:
-                            st.error(f"**{fpath.name}** — {result['error']}")
-            elif broker == "Custom":
-                c1, c2 = st.columns([4, 1])
-                with c1:
-                    st.caption(f"📄 {fpath.name}")
-                with c2:
-                    if st.button("⬇", key=f"imp_{broker}_{fpath.name}",
-                                 help="Import this file"):
-                        result = import_manual(str(fpath))
-                        if result["success"]:
-                            n = result["imported"]
-                            s = result["skipped"]
-                            msg = f"**{fpath.name}** — {n} imported"
-                            if s:
-                                msg += f", {s} skipped (duplicates)"
-                            st.success(msg)
-                            st.session_state.pop(f"snapshots_{base_ccy}_{precision}", None)
-                            st.rerun()
-                        else:
-                            st.error(f"**{fpath.name}** — {result['error']}")
-            else:
-                ccy_options = BROKER_CURRENCIES.get(broker, ["EUR", "PLN", "USD"])
-                default_ccy = ccy_options[0]
-                if detected not in ccy_options:
-                    detected = default_ccy
-                c1, c2, c3 = st.columns([3, 1.5, 1])
-                with c1:
-                    st.caption(f"📄 {fpath.name}")
-                with c2:
-                    ccy = st.selectbox(
-                        "Currency", ccy_options,
-                        index=ccy_options.index(detected),
-                        key=f"ccy_{broker}_{fpath.name}",
-                        label_visibility="collapsed",
-                    )
-                with c3:
-                    if st.button("⬇", key=f"imp_{broker}_{fpath.name}",
-                                 help="Import this file"):
-                        if ccy != detected:
-                            new_name = f"{ccy}_{fpath.name}"
-                            new_path = broker_dir / new_name
-                            fpath.rename(new_path)
-                            fpath = new_path
-                        result = import_xtb(str(fpath), ccy)
-                        if result["success"]:
-                            n = result["imported"]
-                            s = result["skipped"]
-                            msg = f"**{fpath.name}** — {n} imported"
-                            if s:
-                                msg += f", {s} skipped (duplicates)"
-                            st.success(msg)
-                            st.session_state.pop(f"snapshots_{base_ccy}_{precision}", None)
-                            st.rerun()
-                        else:
-                            st.error(f"**{fpath.name}** — {result['error']}")
-    else:
-        st.caption("No files uploaded yet.")
-
-    if st.button("♻️  Rebuild from ALL imports", width="stretch"):
-        for p in [storage.TRANSACTIONS_PATH, storage.PORTFOLIO_PATH, storage.BALANCE_PATH]:
-            p.write_text("")
-
-        all_files = []
-        for b in BROKERS:
-            bdir = IMPORTS_DIR / b.lower()
-            if not bdir.exists():
-                continue
-            for fpath in sorted(bdir.glob("*.xlsx")):
-                all_files.append(("xtb", fpath))
-            for fpath in sorted(bdir.glob("*.csv")):
-                all_files.append(("bossa", fpath))
-
-        if all_files:
-            bar = st.progress(0, text="Importing…")
-            total_imported = 0
-            for idx, (kind, fpath) in enumerate(all_files):
-                ccy = _detect_currency(fpath.name)
-                bar.progress(idx / len(all_files), text=f"Importing {fpath.name}…")
-                if kind == "bossa":
-                    result = import_bossa(str(fpath), ccy)
+        if broker_files:
+            for fpath in broker_files:
+                detected = _detect_currency(fpath.name)
+                if broker == "BOSSA":
+                    ccy = "Many"
+                    c1, c2 = st.columns([4, 1])
+                    with c1:
+                        st.caption(f"📄 {fpath.name} (currency: auto)")
+                    with c2:
+                        if st.button("⬇", key=f"imp_{broker}_{fpath.name}",
+                                     help="Import this file"):
+                            if fpath.suffix.lower() == ".csv":
+                                with st.spinner("Importing…"):
+                                    result = import_bossa(str(fpath), ccy)
+                            else:
+                                result = import_xtb(str(fpath), ccy)
+                            if result["success"]:
+                                n = result["imported"]
+                                s = result["skipped"]
+                                msg = f"**{fpath.name}** — {n} imported"
+                                if s:
+                                    msg += f", {s} skipped (duplicates)"
+                                st.success(msg)
+                                st.session_state.pop(f"snapshots_{base_ccy}_{precision}", None)
+                                st.rerun()
+                            else:
+                                st.error(f"**{fpath.name}** — {result['error']}")
+                elif broker == "Custom":
+                    c1, c2 = st.columns([4, 1])
+                    with c1:
+                        st.caption(f"📄 {fpath.name}")
+                    with c2:
+                        if st.button("⬇", key=f"imp_{broker}_{fpath.name}",
+                                     help="Import this file"):
+                            result = import_manual(str(fpath))
+                            if result["success"]:
+                                n = result["imported"]
+                                s = result["skipped"]
+                                msg = f"**{fpath.name}** — {n} imported"
+                                if s:
+                                    msg += f", {s} skipped (duplicates)"
+                                st.success(msg)
+                                st.session_state.pop(f"snapshots_{base_ccy}_{precision}", None)
+                                st.rerun()
+                            else:
+                                st.error(f"**{fpath.name}** — {result['error']}")
                 else:
-                    result = import_xtb(str(fpath), ccy)
-                if result["success"]:
-                    total_imported += result["imported"]
-            bar.progress(1.0, text="Done")
-            bar.empty()
+                    ccy_options = BROKER_CURRENCIES.get(broker, ["EUR", "PLN", "USD"])
+                    default_ccy = ccy_options[0]
+                    if detected not in ccy_options:
+                        detected = default_ccy
+                    c1, c2, c3 = st.columns([2, 2, 1])
+                    with c1:
+                        st.caption(f"📄 {fpath.name}")
+                    with c2:
+                        ccy = st.selectbox(
+                            "Currency", ccy_options,
+                            index=ccy_options.index(detected),
+                            key=f"ccy_{broker}_{fpath.name}",
+                            label_visibility="collapsed",
+                        )
+                    with c3:
+                        if st.button("⬇", key=f"imp_{broker}_{fpath.name}",
+                                     help="Import this file"):
+                            if ccy != detected:
+                                new_name = f"{ccy}_{fpath.name}"
+                                new_path = broker_dir / new_name
+                                fpath.rename(new_path)
+                                fpath = new_path
+                            result = import_xtb(str(fpath), ccy)
+                            if result["success"]:
+                                n = result["imported"]
+                                s = result["skipped"]
+                                msg = f"**{fpath.name}** — {n} imported"
+                                if s:
+                                    msg += f", {s} skipped (duplicates)"
+                                st.success(msg)
+                                st.session_state.pop(f"snapshots_{base_ccy}_{precision}", None)
+                                st.rerun()
+                            else:
+                                st.error(f"**{fpath.name}** — {result['error']}")
         else:
-            total_imported = 0
+            st.caption("No files uploaded yet.")
 
-        st.success(f"Rebuilt from {len(all_files)} files — {total_imported} transactions imported.")
-        st.session_state.pop(f"snapshots_{base_ccy}_{precision}", None)
-        st.rerun()
+        if st.button("♻️  Rebuild from ALL imports", width="stretch"):
+            for p in [storage.TRANSACTIONS_PATH, storage.PORTFOLIO_PATH, storage.BALANCE_PATH]:
+                p.write_text("")
+
+            all_files = []
+            for b in BROKERS:
+                bdir = IMPORTS_DIR / b.lower()
+                if not bdir.exists():
+                    continue
+                for fpath in sorted(bdir.glob("*.xlsx")):
+                    all_files.append(("xtb", fpath))
+                for fpath in sorted(bdir.glob("*.csv")):
+                    all_files.append(("bossa", fpath))
+
+            if all_files:
+                bar = st.progress(0, text="Importing…")
+                total_imported = 0
+                for idx, (kind, fpath) in enumerate(all_files):
+                    ccy = _detect_currency(fpath.name)
+                    bar.progress(idx / len(all_files), text=f"Importing {fpath.name}…")
+                    if kind == "bossa":
+                        result = import_bossa(str(fpath), ccy)
+                    else:
+                        result = import_xtb(str(fpath), ccy)
+                    if result["success"]:
+                        total_imported += result["imported"]
+                bar.progress(1.0, text="Done")
+                bar.empty()
+            else:
+                total_imported = 0
+
+            st.success(f"Rebuilt from {len(all_files)} files — {total_imported} transactions imported.")
+            st.session_state.pop(f"snapshots_{base_ccy}_{precision}", None)
+            st.rerun()
 
     if st.button("📈  Refresh market data", width="stretch"):
         st.session_state.pop(f"snapshots_{base_ccy}_{precision}", None)
@@ -414,6 +417,7 @@ if cache_key not in st.session_state:
     def _on_progress(day_str: str, pct: float):
         bar.progress(min(pct, 1.0), text=f"Computing {day_str}…")
 
+    t_start = time.perf_counter()
     all_snapshots = build_portfolio(
         start_date=start_date_cfg,
         end_date=today,
@@ -422,10 +426,99 @@ if cache_key not in st.session_state:
         progress_cb=_on_progress,
         use_cache=True,
     )
+    elapsed = time.perf_counter() - t_start
     bar.empty()
+
+    log_path = Path(__file__).parent.parent / "data" / "build.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("a", encoding="utf-8") as f:
+        f.write(f"{today.isoformat()} {time.strftime('%H:%M:%S')} | "
+                f"{base_ccy} {precision} | {elapsed:.3f}s | "
+                f"{len(all_snapshots)} snapshots\n")
+
     st.session_state[cache_key] = all_snapshots
 
 all_snapshots: list[dict] = st.session_state[cache_key]
+
+BENCHMARKS = {
+    "NASDAQ 100 (SXRV.DE)": "SXRV.DE",
+    "S&P 500 (I500.DE)": "I500.DE",
+    "Emerging Markets (IS3N.DE)": "IS3N.DE",
+    "Bitcoin (BTCE.DE)": "BTCE.DE",
+    "Gold (4GLD.DE)": "4GLD.DE",
+}
+BENCH_COLORS = {
+    "NASDAQ 100 (SXRV.DE)": "#06b6d4",
+    "S&P 500 (I500.DE)": "#22c55e",
+    "Emerging Markets (IS3N.DE)": "#8b5cf6",
+    "Bitcoin (BTCE.DE)": "#ef4444",
+    "Gold (4GLD.DE)": "#eab308",
+}
+
+# ── Compute & cache benchmarks ────────────────────────────────────────────────
+
+bench_cache_key = f"benchmarks_{base_ccy}_{len(all_snapshots)}"
+if bench_cache_key not in st.session_state:
+    cached = storage.load_benchmarks(base_ccy)
+    if cached and len(cached) == len(all_snapshots):
+        st.session_state[bench_cache_key] = cached
+    else:
+        bench_date_start = date.fromisoformat(all_snapshots[0]["date"])
+        bench_date_end = date.fromisoformat(all_snapshots[-1]["date"])
+        bench_result: list[dict] = []
+
+        for b_label, b_ticker in BENCHMARKS.items():
+            try:
+                ensure_ticker(b_ticker, bench_date_start, bench_date_end,
+                              force_refresh_current_year=False)
+            except Exception:
+                continue
+
+            fx_c: dict = {}
+            bp_c: dict = {}
+            b_vals: list[float] = []
+            cum_units = 0.0
+            prev_inv = 0.0
+
+            for snap in all_snapshots:
+                day = snap["date"]
+                yr = int(day[:4])
+                new_inv = snap["invested"] - prev_inv
+                prev_inv = snap["invested"]
+
+                price = get_price(b_ticker, day, bp_c, yr)
+                if price is None or price <= 0:
+                    b_vals.append(b_vals[-1] if b_vals else 0.0)
+                    continue
+
+                if base_ccy == "EUR":
+                    new_eur = new_inv
+                else:
+                    fx_to_eur = get_fx_rate(base_ccy, "EUR", day, fx_c, yr)
+                    new_eur = new_inv * fx_to_eur
+
+                cum_units += new_eur / price
+
+                if base_ccy == "EUR":
+                    hyp = cum_units * price
+                else:
+                    fx_to_base = get_fx_rate("EUR", base_ccy, day, fx_c, yr)
+                    hyp = cum_units * price * fx_to_base
+
+                b_vals.append(round(hyp, 2))
+
+            if not bench_result:
+                bench_result = [{"date": s["date"]} for s in all_snapshots]
+            for i, v in enumerate(b_vals):
+                bench_result[i][b_ticker] = v
+
+        storage.save_benchmarks(base_ccy, bench_result)
+        st.session_state[bench_cache_key] = bench_result
+
+all_benchmarks: list[dict] = st.session_state.get(bench_cache_key, [])
+
+# ── Bench index by date ──────────────────────────────────────────────────────
+bench_by_date: dict[str, dict] = {b["date"]: b for b in all_benchmarks}
 
 # Filter to chart date range
 cs = chart_start.isoformat()
@@ -442,6 +535,13 @@ if not snapshots:
     st.stop()
 
 dates, values, investeds = snapshots_to_series(snapshots)
+
+show_invested = st.session_state.get("show_invested", False)
+
+bench_selected = {
+    label: st.session_state.get("bench_select", []) and label in st.session_state.get("bench_select", [])
+    for label in BENCHMARKS
+}
 
 # ── Metric cards ──────────────────────────────────────────────────────────────
 
@@ -463,20 +563,34 @@ def fmt(v: float) -> str:
         return f"{formatted} PLN"
     return f"{SYM[base_ccy]}{formatted}"
 
-c1, c2, c3, c4 = st.columns(4)
-with c1:
-    st.metric("Total value", fmt(cur_value))
-with c2:
-    st.metric("Invested", fmt(contrib))
-with c3:
-    sign = "+" if pnl >= 0 else ""
-    st.metric("Total P&L", f"{sign}{fmt(pnl)}", delta=f"{sign}{pnl_pct:.1f}%")
-with c4:
-    if latest["assets"]:
-        best = max(latest["assets"], key=lambda a: a["value_base"])
-        st.metric("Largest position", best["ticker"])
-    else:
-        st.metric("Largest position", "—")
+if show_invested:
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.metric("Total value", fmt(cur_value))
+    with c2:
+        st.metric("Invested", fmt(contrib))
+    with c3:
+        sign = "+" if pnl >= 0 else ""
+        st.metric("Total P&L", f"{sign}{fmt(pnl)}", delta=f"{sign}{pnl_pct:.1f}%")
+    with c4:
+        if latest["assets"]:
+            best = max(latest["assets"], key=lambda a: a["value_base"])
+            st.metric("Largest position", best["ticker"])
+        else:
+            st.metric("Largest position", "—")
+else:
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.metric("Total value", fmt(cur_value))
+    with c2:
+        sign = "+" if pnl >= 0 else ""
+        st.metric("Total P&L", f"{sign}{fmt(pnl)}", delta=f"{sign}{pnl_pct:.1f}%")
+    with c3:
+        if latest["assets"]:
+            best = max(latest["assets"], key=lambda a: a["value_base"])
+            st.metric("Largest position", best["ticker"])
+        else:
+            st.metric("Largest position", "—")
 
 st.divider()
 
@@ -491,12 +605,26 @@ fig.add_trace(go.Scatter(
     fillcolor="rgba(59,130,246,0.12)",
     hovertemplate="%{x|%d %b %Y}<br><b>%{y:,.0f} " + base_ccy + "</b><extra></extra>",
 ))
-fig.add_trace(go.Scatter(
-    x=dates, y=investeds,
-    name="Invested capital",
-    line=dict(color="#94a3b8", width=1.5, dash="dot"),
-    hovertemplate="%{x|%d %b %Y}<br>Invested: %{y:,.0f} " + base_ccy + "<extra></extra>",
-))
+if show_invested:
+    fig.add_trace(go.Scatter(
+        x=dates, y=investeds,
+        name="Invested capital",
+        line=dict(color="#94a3b8", width=1.5, dash="dot"),
+        hovertemplate="%{x|%d %b %Y}<br>Invested: %{y:,.0f} " + base_ccy + "<extra></extra>",
+    ))
+
+for bench_label, bench_ticker in BENCHMARKS.items():
+    if not bench_selected.get(bench_label):
+        continue
+
+    bench_vals = [bench_by_date.get(d, {}).get(bench_ticker, 0.0) for d in dates]
+    fig.add_trace(go.Scatter(
+        x=dates, y=bench_vals,
+        name=bench_label,
+        line=dict(color=BENCH_COLORS[bench_label], width=1.5, dash="dot"),
+        hovertemplate=f"%{{x|%d %b %Y}}<br>{bench_label}: %{{y:,.0f}} " + base_ccy + "<extra></extra>",
+    ))
+
 fig.update_layout(
     height=420,
     margin=dict(l=0, r=0, t=12, b=0),
@@ -515,71 +643,53 @@ fig.update_layout(
 )
 st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
+c_inv, c_bench = st.columns([1, 2])
+with c_inv:
+    st.checkbox("Show invested capital", value=show_invested, key="show_invested")
+with c_bench:
+    st.multiselect(
+        "What-if benchmarks",
+        options=list(BENCHMARKS.keys()),
+        key="bench_select",
+    )
+
 # ── Holdings table ────────────────────────────────────────────────────────────
 
 if latest["assets"]:
     st.subheader("Current holdings")
     total_val = latest["total_value"] or 1.0
-
-    def _fmt_num(v):
-        return f"{v:,.2f}".replace(",", " ") if isinstance(v, float) else v
+    bal = storage.load_balance()
 
     rows = []
     for a in sorted(latest["assets"], key=lambda x: x["value_base"], reverse=True):
+        ticker = a["ticker"]
+        shares = a["amount"]
+        value = a["value_base"]
+        avg = bal.get(ticker, {}).get("avg_price", 0.0)
+        cost_basis = shares * avg
+        ret_pct = ((value / cost_basis) - 1) * 100 if cost_basis else 0.0
         row = {
-            "Ticker": a["ticker"],
+            "Ticker": ticker,
             "CCY": a.get("currency", "—"),
-            "Weight %": f"{a['value_base'] / total_val * 100:.1f}%",
-            "Shares": f"{a['amount']:.4f}",
-            "Value (Base Currency)": _fmt_num(a["value_base"]),
+            "Weight %": value / total_val * 100,
+            "Shares": shares,
+            "Value (Base Currency)": value,
+            "Return %": ret_pct,
         }
         rows.append(row)
-    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
-
-# ── Transaction log ───────────────────────────────────────────────────────────
-
-if st.checkbox("📋 Show transaction log", value=False, key="show_log"):
-    all_tx_log = get_all_transactions()
-    changed = False
-    for tx_idx, rec in enumerate(reversed(all_tx_log)):
-        st.caption(rec["date"])
-        for e_idx, e in enumerate(rec["entries"]):
-            is_op = e.get("account_operation", False)
-            c_del, c_ticker, c_amount, c_op = st.columns([1, 4, 3, 1])
-            with c_del:
-                delete = st.checkbox(
-                    "🗑", value=False, key=f"del_{tx_idx}_{e_idx}",
-                    help="Delete this entry",
-                )
-                if delete:
-                    delete_transaction(rec["date"], e_idx)
-                    changed = True
-                    break
-            with c_ticker:
-                new_ticker = st.text_input(
-                    "Ticker", value=e["ticker"], key=f"tk_{tx_idx}_{e_idx}",
-                    label_visibility="collapsed",
-                )
-            with c_amount:
-                new_amount = st.number_input(
-                    "Amount", value=float(e["amount"]),
-                    format="%.4f", step=0.001,
-                    key=f"am_{tx_idx}_{e_idx}",
-                    label_visibility="collapsed",
-                )
-            with c_op:
-                new_op = st.checkbox(
-                    "", value=is_op, key=f"ao_{tx_idx}_{e_idx}",
-                    help="Mark as deposit/withdrawal (counts as invested)",
-                )
-            if new_ticker != e["ticker"] or new_amount != float(e["amount"]) or new_op != is_op:
-                update_transaction(rec["date"], e_idx, new_ticker, new_amount, new_op)
-                changed = True
-        if changed:
-            break
-    if changed:
-        st.session_state.pop(f"snapshots_{base_ccy}_{precision}", None)
-        st.rerun()
+    df = pd.DataFrame(rows)
+    st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True,
+        height=600,
+        column_config={
+            "Weight %": st.column_config.NumberColumn(format="%.1f%%"),
+            "Shares": st.column_config.NumberColumn(format="%.4f"),
+            "Value (Base Currency)": st.column_config.NumberColumn(format="%.0f"),
+            "Return %": st.column_config.NumberColumn(format="%+.1f%%"),
+        },
+    )
 
 # ── Footer ────────────────────────────────────────────────────────────────────
 

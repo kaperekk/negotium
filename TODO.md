@@ -10,7 +10,6 @@
 ## Code quality
 
 - [ ] Clean up code — remove dead code, simplify logic
-- [ ] gitignore for imports
 
 ## UI
 - [ ] Improve readability 

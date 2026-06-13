@@ -5,16 +5,18 @@ Layout:
   ROOT/data/transactions.jsonl  — transaction ledger
   ROOT/data/portfolio.jsonl     — computed snapshots
   ROOT/data/balance.json        — current holdings {ticker: amount}
+  ROOT/data/benchmarks_{CCY}.json — hypothetical benchmark values
   ROOT/data/prices/{TICKER}/{YEAR}.json — daily close price cache
 """
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from datetime import date, datetime
+from datetime import date
 from typing import Iterator
 
 ROOT = Path(__file__).parent.parent
+
 
 DATA_ROOT         = ROOT / "data"
 TRANSACTIONS_PATH = DATA_ROOT / "transactions.jsonl"
@@ -165,3 +167,26 @@ def invalidate_portfolio_from(from_date: str) -> None:
     records = read_jsonl(PORTFOLIO_PATH)
     kept = [r for r in records if r["date"] < from_date]
     write_jsonl(PORTFOLIO_PATH, kept)
+
+
+# ── Benchmark cache ──────────────────────────────────────────────────────────
+
+def benchmark_cache_path(base_ccy: str) -> Path:
+    return DATA_ROOT / f"benchmarks_{base_ccy.upper()}.json"
+
+
+def save_benchmarks(base_ccy: str, data: list[dict]) -> None:
+    """Save pre-computed benchmark values. Each entry: {date, ticker: value, ...}."""
+    p = benchmark_cache_path(base_ccy)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with p.open("w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+def load_benchmarks(base_ccy: str) -> list[dict] | None:
+    """Load cached benchmarks, or None if missing."""
+    p = benchmark_cache_path(base_ccy)
+    if not p.exists():
+        return None
+    with p.open("r", encoding="utf-8") as f:
+        return json.load(f)
