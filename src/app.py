@@ -43,21 +43,56 @@ def _detect_currency(filename: str) -> str:
 # ── Page config ───────────────────────────────────────────────────────────────
 
 st.set_page_config(
-    page_title=" Negotium - Investment Tracker",
-    page_icon="📈",
+    page_title="Negotium",
+    page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
 st.markdown("""
 <style>
+    /* ── Metric cards ──────────────────────────────────────────────────── */
     [data-testid="metric-container"] {
-        background: rgba(255,255,255,0.05);
-        border: 1px solid rgba(255,255,255,0.1);
-        border-radius: 12px;
-        padding: 16px;
+        background: linear-gradient(135deg, #161B22 0%, #1C2333 100%);
+        border: 1px solid #30363D;
+        border-radius: 16px;
+        padding: 20px 24px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
     }
-    [data-testid="stSidebar"] { min-width: 380px; max-width: 420px; }
+    [data-testid="metric-container"] label {
+        font-size: 0.75rem !important;
+        font-weight: 600 !important;
+        text-transform: uppercase;
+        letter-spacing: 0.08em !important;
+        color: #8B949E !important;
+    }
+    [data-testid="metric-container"] [data-testid="stMetricValue"] {
+        font-weight: 700 !important;
+    }
+
+    /* ── Sidebar ───────────────────────────────────────────────────────── */
+    [data-testid="stSidebar"] {
+        min-width: 380px;
+        max-width: 420px;
+        border-right: 1px solid #30363D;
+    }
+
+    /* ── Expanders ─────────────────────────────────────────────────────── */
+    details[data-testid="stExpander"] {
+        background: #161B22;
+        border: 1px solid #30363D;
+        border-radius: 12px;
+    }
+
+    /* ── Dividers ──────────────────────────────────────────────────────── */
+    hr { border-color: #21262D !important; }
+
+    /* ── DataFrame ─────────────────────────────────────────────────────── */
+    [data-testid="stDataFrame"] {
+        border: 1px solid #30363D;
+        border-radius: 12px;
+        overflow: hidden;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -563,34 +598,20 @@ def fmt(v: float) -> str:
         return f"{formatted} PLN"
     return f"{SYM[base_ccy]}{formatted}"
 
-if show_invested:
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.metric("Total value", fmt(cur_value))
-    with c2:
-        st.metric("Invested", fmt(contrib))
-    with c3:
-        sign = "+" if pnl >= 0 else ""
-        st.metric("Total P&L", f"{sign}{fmt(pnl)}", delta=f"{sign}{pnl_pct:.1f}%")
-    with c4:
-        if latest["assets"]:
-            best = max(latest["assets"], key=lambda a: a["value_base"])
-            st.metric("Largest position", best["ticker"])
-        else:
-            st.metric("Largest position", "—")
-else:
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        st.metric("Total value", fmt(cur_value))
-    with c2:
-        sign = "+" if pnl >= 0 else ""
-        st.metric("Total P&L", f"{sign}{fmt(pnl)}", delta=f"{sign}{pnl_pct:.1f}%")
-    with c3:
-        if latest["assets"]:
-            best = max(latest["assets"], key=lambda a: a["value_base"])
-            st.metric("Largest position", best["ticker"])
-        else:
-            st.metric("Largest position", "—")
+c1, c2, c3, c4 = st.columns(4)
+with c1:
+    st.metric("Total value", fmt(cur_value))
+with c2:
+    st.metric("Invested", fmt(contrib))
+with c3:
+    sign = "+" if pnl >= 0 else ""
+    st.metric("Total P&L", f"{sign}{fmt(pnl)}", delta=f"{sign}{pnl_pct:.1f}%")
+with c4:
+    if latest["assets"]:
+        best = max(latest["assets"], key=lambda a: a["value_base"])
+        st.metric("Largest position", best["ticker"])
+    else:
+        st.metric("Largest position", "—")
 
 st.divider()
 
@@ -601,8 +622,8 @@ fig.add_trace(go.Scatter(
     x=dates, y=values,
     name=f"Portfolio ({base_ccy})",
     fill="tozeroy",
-    line=dict(color="#3b82f6", width=2),
-    fillcolor="rgba(59,130,246,0.12)",
+    line=dict(color="#6C63FF", width=2.5),
+    fillcolor="rgba(108,99,255,0.08)",
     hovertemplate="%{x|%d %b %Y}<br><b>%{y:,.0f} " + base_ccy + "</b><extra></extra>",
 ))
 if show_invested:
@@ -626,15 +647,18 @@ for bench_label, bench_ticker in BENCHMARKS.items():
     ))
 
 fig.update_layout(
-    height=420,
-    margin=dict(l=0, r=0, t=12, b=0),
+    height=450,
+    margin=dict(l=0, r=0, t=16, b=0),
     paper_bgcolor="rgba(0,0,0,0)",
     plot_bgcolor="rgba(0,0,0,0)",
-    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-    xaxis=dict(showgrid=False, zeroline=False, tickfont=dict(size=11)),
+    legend=dict(
+        orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+        font=dict(size=12, color="#8B949E"),
+    ),
+    xaxis=dict(showgrid=False, zeroline=False, tickfont=dict(size=11, color="#8B949E")),
     yaxis=dict(
-        showgrid=True, gridcolor="rgba(148,163,184,0.1)",
-        zeroline=False, tickfont=dict(size=11), tickformat=",.0f",
+        showgrid=True, gridcolor="rgba(48,54,61,0.6)",
+        zeroline=False, tickfont=dict(size=11, color="#8B949E"), tickformat=",.0f",
         ticksuffix=f" {base_ccy}" if base_ccy == "PLN" else "",
         tickprefix="" if base_ccy == "PLN" else SYM[base_ccy],
     ),
@@ -660,43 +684,96 @@ if latest["assets"]:
     total_val = latest["total_value"] or 1.0
     bal = storage.load_balance()
 
+    # avg_price is stored in default_currency; convert to current base_ccy
+    cfg_ccy = cfg.get("default_currency", "PLN")
+    avg_fx_cache: dict = {}
+    avg_fx = get_fx_rate(cfg_ccy, base_ccy, today.isoformat(), avg_fx_cache, today.year) if cfg_ccy != base_ccy else 1.0
+
     rows = []
     for a in sorted(latest["assets"], key=lambda x: x["value_base"], reverse=True):
         ticker = a["ticker"]
         shares = a["amount"]
         value = a["value_base"]
-        avg = bal.get(ticker, {}).get("avg_price", 0.0)
+        avg_raw = bal.get(ticker, {}).get("avg_price", 0.0)
+        avg = avg_raw * avg_fx
         cost_basis = shares * avg
         ret_pct = ((value / cost_basis) - 1) * 100 if cost_basis else 0.0
-        row = {
-            "Ticker": ticker,
-            "CCY": a.get("currency", "—"),
-            "Weight %": value / total_val * 100,
-            "Shares": shares,
-            "Value (Base Currency)": value,
-            "Return %": ret_pct,
-        }
-        rows.append(row)
-    df = pd.DataFrame(rows)
-    st.dataframe(
-        df,
-        use_container_width=True,
-        hide_index=True,
-        height=600,
-        column_config={
-            "Weight %": st.column_config.NumberColumn(format="%.1f%%"),
-            "Shares": st.column_config.NumberColumn(format="%.4f"),
-            "Value (Base Currency)": st.column_config.NumberColumn(format="%.0f"),
-            "Return %": st.column_config.NumberColumn(format="%+.1f%%"),
-        },
+        rows.append({
+            "ticker": ticker,
+            "ccy": a.get("currency", "—"),
+            "weight": value / total_val * 100,
+            "shares": shares,
+            "value": value,
+            "ret_pct": ret_pct,
+        })
+
+    def _fmt_val(v: float) -> str:
+        s = f"{v:,.0f}".replace(",", " ")
+        return f"{SYM.get(base_ccy, '')}{s}" if base_ccy != "PLN" else f"{s} PLN"
+
+    def _fmt_ret(p: float) -> str:
+        return f"{p:+.1f}%"
+
+    def _ret_color(p: float) -> str:
+        return "#3fb950" if p >= 0 else "#f85149"
+
+    max_weight = max((r["weight"] for r in rows), default=1) or 1
+
+    header = (
+        "<tr>"
+        "<th>Ticker</th><th>CCY</th><th>Weight</th>"
+        "<th>Shares</th><th>Value</th><th>Return %</th>"
+        "</tr>"
     )
+    body_rows = []
+    for r in rows:
+        bar_pct = r["weight"]
+        bar_color = "#6C63FF"
+        ret_col = _ret_color(r["ret_pct"])
+        body_rows.append(
+            "<tr>"
+            f"<td class='ticker-cell'>"
+            f"<div class='ticker-bar' style='width:{bar_pct / max_weight * 100:.1f}%;background:{bar_color};'></div>"
+            f"<span class='ticker-text'>{r['ticker']}</span>"
+            f"</td>"
+            f"<td>{r['ccy']}</td>"
+            f"<td class='num'>{r['weight']:.1f}%</td>"
+            f"<td class='num'>{r['shares']:.4f}</td>"
+            f"<td class='num'>{_fmt_val(r['value'])}</td>"
+            f"<td class='num' style='color:{ret_col};font-weight:600'>{_fmt_ret(r['ret_pct'])}</td>"
+            "</tr>"
+        )
+
+    table_html = f"""
+    <style>
+    .holdings-table {{ width:100%; border-collapse:collapse; font-size:0.88rem; }}
+    .holdings-table th {{
+        text-align:left; padding:10px 14px; font-weight:600; font-size:0.72rem;
+        text-transform:uppercase; letter-spacing:0.06em; color:#8B949E;
+        border-bottom:1px solid #30363D;
+    }}
+    .holdings-table td {{ padding:10px 14px; border-bottom:1px solid #21262D; color:#C9D1D9; }}
+    .holdings-table tr:hover td {{ background:rgba(108,99,255,0.06); }}
+    .holdings-table .num {{ text-align:right; font-variant-numeric:tabular-nums; }}
+    .ticker-cell {{ position:relative; overflow:hidden; }}
+    .ticker-bar {{
+        position:absolute; top:0; left:0; height:100%; opacity:0.10;
+        border-radius:4px; transition:width 0.3s ease;
+    }}
+    .ticker-text {{ position:relative; font-weight:600; color:#E6EDF3; }}
+    </style>
+    <table class="holdings-table">
+    <thead>{header}</thead>
+    <tbody>{"".join(body_rows)}</tbody>
+    </table>
+    """
+    st.markdown(table_html, unsafe_allow_html=True)
 
 # ── Footer ────────────────────────────────────────────────────────────────────
 
 st.caption(
-    f"Data: Yahoo Finance · {today} · {base_ccy} · "
-    f"{'Daily' if precision == 'D' else 'Weekly'}"
-    f" · Positions: {len(latest.get('assets', [])) if latest else 0}"
+    f":material/info: Yahoo Finance · {today} · {base_ccy} · "
+    f"Daily · {len(latest.get('assets', [])) if latest else 0} positions"
 )
 
 # ── Danger zone ──────────────────────────────────────────────────────────────
@@ -708,7 +785,6 @@ st.markdown(
         background-color: #dc3545;
         color: white;
         font-weight: bold;
-        font-size: 1.2em;
         border: none;
     }
     div[data-testid="stButton"] > button[kind="primary"]:hover {
