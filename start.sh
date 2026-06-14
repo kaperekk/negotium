@@ -71,7 +71,7 @@ mkdir -p data imports
 echo ""
 echo -e "  Checking dependencies…"
 MISSING=()
-for pkg in yfinance streamlit plotly pandas orjson openpyxl python-calamine; do
+for pkg in yfinance streamlit plotly pandas orjson openpyxl python_calamine; do
   if ! "$PYTHON" -c "import $pkg" &>/dev/null 2>&1; then
     MISSING+=("$pkg")
   fi

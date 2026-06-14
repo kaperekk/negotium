@@ -14,9 +14,9 @@ be expressed in the user's chosen base currency.
 """
 from __future__ import annotations
 
-import io
 import logging
 import os
+
 import sys
 import time
 from contextlib import contextmanager

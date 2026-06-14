@@ -1,5 +1,8 @@
 """
-config.py — load and manage config.json
+config.py — global + per-project config
+
+Global config:  data/config.json         (defaults for all projects)
+Project config: data/{project}/config.json (overrides, only non-default values)
 """
 from __future__ import annotations
 
@@ -7,9 +10,9 @@ import json
 from pathlib import Path
 from datetime import date
 
-ROOT = Path(__file__).parent.parent  # investment_tracker/
+ROOT = Path(__file__).parent.parent
 
-CONFIG_PATH = ROOT / "data" / "config.json"
+GLOBAL_CONFIG_PATH = ROOT / "data" / "config.json"
 
 DEFAULTS: dict = {
     "name": "My Portfolio",
@@ -21,29 +24,55 @@ DEFAULTS: dict = {
 }
 
 
-def load() -> dict:
-    """Return config dict, creating config.json with defaults if missing."""
-    if not CONFIG_PATH.exists():
-        save(DEFAULTS.copy())
+def _load_global() -> dict:
+    if not GLOBAL_CONFIG_PATH.exists():
+        _save_file(GLOBAL_CONFIG_PATH, DEFAULTS.copy())
         return DEFAULTS.copy()
-    with CONFIG_PATH.open("r", encoding="utf-8") as f:
-        data = json.load(f)
-    # Fill in any missing keys from defaults
+    with GLOBAL_CONFIG_PATH.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _load_project() -> dict:
+    from storage import project_config_path
+    p = project_config_path()
+    if not p.exists():
+        return {}
+    with p.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _save_file(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+def load() -> dict:
+    """Return merged config: global defaults → per-project overrides."""
+    global_cfg = _load_global()
+    project_cfg = _load_project()
+    merged = {**global_cfg, **project_cfg}
+    # Fill missing keys from defaults
     changed = False
     for k, v in DEFAULTS.items():
-        if k not in data:
-            data[k] = v
+        if k not in merged:
+            merged[k] = v
             changed = True
-    if changed:
-        save(data)
-    return data
+    if changed and not project_cfg:
+        _save_file(GLOBAL_CONFIG_PATH, merged)
+    return merged
 
 
 def save(cfg: dict) -> None:
-    """Write config dict to config.json."""
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with CONFIG_PATH.open("w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2, ensure_ascii=False)
+    """Save config to the current project's config file."""
+    from storage import project_config_path
+    p = project_config_path()
+    _save_file(p, cfg)
+
+
+def save_global(cfg: dict) -> None:
+    """Save to the global config file."""
+    _save_file(GLOBAL_CONFIG_PATH, cfg)
 
 
 def get_start_date(cfg: dict) -> date:

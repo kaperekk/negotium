@@ -26,6 +26,7 @@ from datetime import date
 import storage
 import config as cfg_module
 from ticker_translate import translate_ticker
+from ticker_data import get_fx_rate
 
 
 def _apply_entries(balance: dict[str, dict], entries: list[dict]) -> None:
@@ -77,8 +78,10 @@ def add_transaction(
 
     if date_str > last_date:
         # Fast append — new date after everything
-        storage.append_jsonl(storage.TRANSACTIONS_PATH, {"date": date_str, "entries": entries})
+        rec = {"date": date_str, "entries": entries}
+        storage.append_jsonl(storage.TRANSACTIONS_PATH, rec)
         bal = storage.load_balance()
+        _update_avg_prices(bal, rec)
         _apply_entries(bal, entries)
         storage.save_balance(bal)
         storage.invalidate_portfolio_from(date_str)
@@ -186,44 +189,75 @@ def _rebuild_balance(records: list[dict]) -> None:
     """Replay full ledger to recompute balance and avg_price from scratch."""
     balance: dict[str, dict] = {}
     for rec in records:
-        _apply_entries(balance, rec["entries"])
         _update_avg_prices(balance, rec)
+        _apply_entries(balance, rec["entries"])
     storage.save_balance(balance)
 
 
 def _update_avg_prices(balance: dict[str, dict], rec: dict) -> None:
-    """After applying entries, compute avg_price for stock buys."""
+    """After applying entries, compute avg_price in base currency for stock buys.
+
+    XTB imports pair each stock buy with the next cash outflow.
+    We match them sequentially: each positive stock entry is paired with
+    the immediately following negative cash entry.
+    """
     entries = rec["entries"]
-    stock_entries = [e for e in entries if e["ticker"].upper() not in storage.SUPPORTED_CURRENCIES]
-    cash_entries = [e for e in entries if e["ticker"].upper() in storage.SUPPORTED_CURRENCIES]
+    base_ccy = cfg_module.load().get("default_currency", "PLN")
+    tx_date = rec["date"]
+    yr = int(tx_date[:4])
+    fx_cache: dict = {}
 
-    total_cash_spent = 0.0
-    for ce in cash_entries:
-        amt = float(ce["amount"])
-        if amt < 0:
-            total_cash_spent += abs(amt)
+    # Accumulate cost and shares per ticker for this transaction
+    ticker_cost: dict[str, float] = {}
+    ticker_shares: dict[str, float] = {}
 
-    total_shares_bought = 0.0
-    for se in stock_entries:
-        amt = float(se["amount"])
-        if amt > 0:
-            total_shares_bought += amt
+    for i, e in enumerate(entries):
+        ticker = e["ticker"].upper()
+        amt = float(e["amount"])
+        if ticker in storage.SUPPORTED_CURRENCIES or amt <= 0:
+            continue
 
-    if total_shares_bought > 0 and total_cash_spent > 0:
-        price_per_share = total_cash_spent / total_shares_bought
-        for se in stock_entries:
-            ticker = se["ticker"].upper()
-            amt = float(se["amount"])
-            if amt > 0 and ticker in balance:
-                bal = balance[ticker]
-                old_amount = bal["amount"] - amt
-                old_avg = bal["avg_price"]
-                new_amount = bal["amount"]
-                if new_amount > 0:
-                    bal["avg_price"] = (old_amount * old_avg + amt * price_per_share) / new_amount
-    elif total_shares_bought > 0 and len(stock_entries) == 1:
-        # Single stock buy without explicit cash pairing - try to find price from entries
-        pass
+        # Find next cash outflow after this stock buy
+        cost_base = None
+        for j in range(i + 1, len(entries)):
+            ce = entries[j]
+            ccy = ce["ticker"].upper()
+            camt = float(ce["amount"])
+            if ccy in storage.SUPPORTED_CURRENCIES and camt < 0:
+                if ccy == base_ccy:
+                    cost_base = abs(camt)
+                else:
+                    rate = get_fx_rate(ccy, base_ccy, tx_date, fx_cache, yr)
+                    cost_base = abs(camt) * rate
+                break
+
+        if cost_base is None:
+            continue
+
+        ticker_cost[ticker] = ticker_cost.get(ticker, 0.0) + cost_base
+        ticker_shares[ticker] = ticker_shares.get(ticker, 0.0) + amt
+
+    # Compute new avg_price = (old_cost + new_cost) / new_amount
+    # balance still has pre-tx state since _apply_entries hasn't run yet
+    for ticker, shares_bought in ticker_shares.items():
+        pre = balance.get(ticker, {}).get("amount", 0.0)
+        old_avg = balance.get(ticker, {}).get("avg_price", 0.0)
+
+        # Net change to amount from this transaction (buys + sells)
+        net_change = sum(float(e["amount"]) for e in entries
+                         if e["ticker"].upper() == ticker)
+        new_amount = pre + net_change
+        if new_amount > 0:
+            old_cost = pre * old_avg
+            new_cost = old_cost + ticker_cost[ticker]
+            new_avg = new_cost / new_amount
+        else:
+            new_avg = 0.0
+
+        if ticker not in balance:
+            balance[ticker] = {"amount": 0.0, "avg_price": new_avg}
+        else:
+            balance[ticker]["avg_price"] = new_avg
 
 
 def get_all_transactions() -> list[dict]:
