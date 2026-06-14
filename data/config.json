@@ -7,10 +7,7 @@
     "AMZN.DE=AMZ.DE",
     "TSLA.DE=TL0.DE",
     "W9C.DE=W9C.F",
-    "BESI.NL=BESI.AS",
-    "ASML.NL=ASML.AS",
-    "ADYEN.NL=ADYEN.AS",
-    "SP20.NL=SP20.AS",
+    "*.NL=*.AS",
     "*.US=",
     "*.PL=*.WA"
   ],
