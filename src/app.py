@@ -782,17 +782,19 @@ if chart_mode == "amount":
         fill="tozeroy",
         line=dict(color="#6C63FF", width=2.5),
         fillcolor="rgba(108,99,255,0.08)",
-        hovertemplate="%{x|%d %b %Y}<br><b>%{y:,.0f} " + base_ccy + "</b><extra></extra>",
+        customdata=[f"Portfolio: {v:,.1f} {base_ccy}" for v in values],
+        hovertemplate="%{x|%d %b %y}<br><b>%{customdata}</b><extra></extra>",
     ))
     fig.add_trace(go.Scatter(
         x=dates, y=investeds,
         name="Invested capital",
         line=dict(color="#94a3b8", width=1.5, dash="dot"),
-        hovertemplate="%{x|%d %b %Y}<br>Invested: %{y:,.0f} " + base_ccy + "<extra></extra>",
+        customdata=[f"Invested: {v:,.1f} {base_ccy}" for v in investeds],
+        hovertemplate="%{x|%d %b %y}<br>%{customdata}<extra></extra>",
     ))
     yaxis_cfg = dict(
         showgrid=True, gridcolor="rgba(48,54,61,0.6)",
-        zeroline=False, tickfont=dict(size=11, color="#8B949E"), tickformat=",.0f",
+        zeroline=False, tickfont=dict(size=11, color="#8B949E"), tickformat=",.1f",
         ticksuffix=f" {base_ccy}" if base_ccy == "PLN" else "",
         tickprefix="" if base_ccy == "PLN" else SYM[base_ccy],
     )
@@ -806,7 +808,8 @@ else:
         fill="tozeroy",
         line=dict(color="#6C63FF", width=2.5),
         fillcolor="rgba(108,99,255,0.08)",
-        hovertemplate="%{x|%d %b %Y}<br><b>%{y:+.1f}%</b><extra></extra>",
+        customdata=[f"Return: {v:+.1f}%" for v in pct_values],
+        hovertemplate="%{x|%d %b %y}<br><b>%{customdata}</b><extra></extra>",
     ))
     span = max(abs(min(pct_values)), abs(max(pct_values))) if pct_values else 1
     yaxis_cfg = dict(
@@ -814,7 +817,7 @@ else:
         zeroline=True, zerolinecolor="rgba(48,54,61,0.8)",
         tickfont=dict(size=11, color="#8B949E"),
         ticksuffix="%",
-        tickformat="+.0f" if span > 10 else "+.1f",
+        tickformat="+.1f",
     )
 
 bench_selected = {
@@ -836,14 +839,16 @@ for bench_label, bench_ticker in BENCHMARKS.items():
             x=dates, y=bench_pcts,
             name=bench_label,
             line=dict(color=BENCH_COLORS[bench_label], width=1.5, dash="dot"),
-            hovertemplate=f"%{{x|%d %b %Y}}<br>{bench_label}: %{{y:+.1f}}%<extra></extra>",
+            customdata=[f"{bench_label}: {v:+.1f}%" for v in bench_pcts],
+            hovertemplate=f"%{{x|%d %b %y}}<br>%{{customdata}}<extra></extra>",
         ))
     else:
         fig.add_trace(go.Scatter(
             x=dates, y=bench_vals,
             name=bench_label,
             line=dict(color=BENCH_COLORS[bench_label], width=1.5, dash="dot"),
-            hovertemplate=f"%{{x|%d %b %Y}}<br>{bench_label}: %{{y:,.0f}} " + base_ccy + "<extra></extra>",
+            customdata=[f"{bench_label}: {v:,.1f} {base_ccy}" for v in bench_vals],
+            hovertemplate=f"%{{x|%d %b %y}}<br>%{{customdata}}<extra></extra>",
         ))
 
 fig.update_layout(
@@ -900,7 +905,7 @@ if latest["assets"]:
         })
 
     def _fmt_val(v: float) -> str:
-        s = f"{v:,.0f}".replace(",", " ")
+        s = f"{v:,.1f}".replace(",", " ")
         return f"{SYM.get(base_ccy, '')}{s}" if base_ccy != "PLN" else f"{s} PLN"
 
     def _fmt_ret(p: float) -> str:

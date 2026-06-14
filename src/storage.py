@@ -13,7 +13,16 @@ Layout:
 """
 from __future__ import annotations
 
-import json
+try:
+    import orjson
+    def _loads(data: bytes):
+        return orjson.loads(data)
+    def _dumps(obj) -> str:
+        return orjson.dumps(obj).decode()
+except ImportError:
+    import json
+    _loads = json.loads
+    _dumps = lambda obj: json.dumps(obj, ensure_ascii=False)
 from pathlib import Path
 from datetime import date, datetime
 from typing import Iterator
@@ -69,22 +78,18 @@ def list_projects() -> list[str]:
     """Return sorted list of project names."""
     if not PROJECTS_PATH.exists():
         return []
-    with PROJECTS_PATH.open("r", encoding="utf-8") as f:
-        data = json.load(f)
-    return sorted(data.keys())
+    return sorted(_loads(PROJECTS_PATH.read_bytes()).keys())
 
 
 def _load_registry() -> dict:
     if not PROJECTS_PATH.exists():
         return {}
-    with PROJECTS_PATH.open("r", encoding="utf-8") as f:
-        return json.load(f)
+    return _loads(PROJECTS_PATH.read_bytes())
 
 
 def _save_registry(reg: dict) -> None:
     PROJECTS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with PROJECTS_PATH.open("w", encoding="utf-8") as f:
-        json.dump(reg, f, indent=2, ensure_ascii=False)
+    PROJECTS_PATH.write_bytes(_dumps(reg).encode())
 
 
 def create_project(name: str) -> None:
@@ -186,11 +191,10 @@ def iter_jsonl(path: Path) -> Iterator[dict]:
     """Yield parsed dicts from a .jsonl file, skipping blank lines."""
     if not path.exists():
         return
-    with path.open("r", encoding="utf-8") as f:
+    with path.open("rb") as f:
         for line in f:
-            line = line.strip()
-            if line:
-                yield json.loads(line)
+            if line.strip():
+                yield _loads(line)
 
 
 def read_jsonl(path: Path) -> list[dict]:
@@ -200,16 +204,18 @@ def read_jsonl(path: Path) -> list[dict]:
 def write_jsonl(path: Path, records: list[dict]) -> None:
     """Overwrite file with records (sorted by 'date' key if present)."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
+    with path.open("wb") as f:
         for rec in records:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            f.write(_dumps(rec).encode())
+            f.write(b"\n")
 
 
 def append_jsonl(path: Path, record: dict) -> None:
     """Append a single record to a .jsonl file."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    with path.open("ab") as f:
+        f.write(_dumps(record).encode())
+        f.write(b"\n")
 
 
 # ── Balance ────────────────────────────────────────────────────────────────────
@@ -218,8 +224,7 @@ def load_balance() -> dict[str, dict]:
     """Return {ticker: {"amount": float, "avg_price": float}} dict."""
     if not BALANCE_PATH.exists():
         return {}
-    with BALANCE_PATH.open("r", encoding="utf-8") as f:
-        data = json.load(f)
+    data = _loads(BALANCE_PATH.read_bytes())
     result = {}
     for k, v in data.items():
         if isinstance(v, dict):
@@ -240,8 +245,7 @@ def save_balance(balance: dict[str, dict]) -> None:
             else:
                 clean[k] = {"amount": round(amt, 8), "avg_price": 0.0}
     BALANCE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with BALANCE_PATH.open("w", encoding="utf-8") as f:
-        json.dump(clean, f, indent=2, ensure_ascii=False)
+    BALANCE_PATH.write_bytes(_dumps(clean).encode())
 
 
 # ── Price cache (shared) ──────────────────────────────────────────────────────
@@ -255,16 +259,14 @@ def load_price_year(ticker: str, year: int) -> dict[str, float]:
     p = price_cache_path(ticker, year)
     if not p.exists():
         return {}
-    with p.open("r", encoding="utf-8") as f:
-        return json.load(f)
+    return _loads(p.read_bytes())
 
 
 def save_price_year(ticker: str, year: int, prices: dict[str, float]) -> None:
     """Persist {YYYY-MM-DD: close_price} for a ticker/year."""
     p = price_cache_path(ticker, year)
     p.parent.mkdir(parents=True, exist_ok=True)
-    with p.open("w", encoding="utf-8") as f:
-        json.dump(prices, f, indent=2, ensure_ascii=False)
+    p.write_bytes(_dumps(prices).encode())
 
 
 def has_price_year(ticker: str, year: int) -> bool:
@@ -296,10 +298,18 @@ def invalidate_portfolio_from(from_date: str) -> None:
     """
     Remove all portfolio snapshots on or after from_date.
     Called when a transaction is inserted that affects a past date.
+    Streams line-by-line to avoid loading the entire file into memory.
     """
-    records = read_jsonl(PORTFOLIO_PATH)
-    kept = [r for r in records if r["date"] < from_date]
-    write_jsonl(PORTFOLIO_PATH, kept)
+    if not PORTFOLIO_PATH.exists():
+        return
+    tmp = PORTFOLIO_PATH.with_suffix(".jsonl.tmp")
+    with PORTFOLIO_PATH.open("rb") as src, tmp.open("wb") as dst:
+        from_date_bytes = from_date.encode()
+        for line in src:
+            stripped = line.strip()
+            if stripped and stripped[9:19] < from_date_bytes:
+                dst.write(line)
+    tmp.rename(PORTFOLIO_PATH)
 
 
 # ── Benchmark cache ──────────────────────────────────────────────────────────
@@ -312,8 +322,7 @@ def save_benchmarks(base_ccy: str, data: list[dict]) -> None:
     """Save pre-computed benchmark values. Each entry: {date, ticker: value, ...}."""
     p = benchmark_cache_path(base_ccy)
     p.parent.mkdir(parents=True, exist_ok=True)
-    with p.open("w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    p.write_bytes(_dumps(data).encode())
 
 
 def load_benchmarks(base_ccy: str) -> list[dict] | None:
@@ -321,5 +330,4 @@ def load_benchmarks(base_ccy: str) -> list[dict] | None:
     p = benchmark_cache_path(base_ccy)
     if not p.exists():
         return None
-    with p.open("r", encoding="utf-8") as f:
-        return json.load(f)
+    return _loads(p.read_bytes())

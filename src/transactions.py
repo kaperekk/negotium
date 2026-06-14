@@ -81,7 +81,8 @@ def add_transaction(
         rec = {"date": date_str, "entries": entries}
         storage.append_jsonl(storage.TRANSACTIONS_PATH, rec)
         bal = storage.load_balance()
-        _update_avg_prices(bal, rec)
+        base_ccy = cfg_module.load().get("default_currency", "PLN")
+        _update_avg_prices(bal, rec, base_ccy)
         _apply_entries(bal, entries)
         storage.save_balance(bal)
         storage.invalidate_portfolio_from(date_str)
@@ -187,14 +188,15 @@ def update_transaction(
 
 def _rebuild_balance(records: list[dict]) -> None:
     """Replay full ledger to recompute balance and avg_price from scratch."""
+    base_ccy = cfg_module.load().get("default_currency", "PLN")
     balance: dict[str, dict] = {}
     for rec in records:
-        _update_avg_prices(balance, rec)
+        _update_avg_prices(balance, rec, base_ccy)
         _apply_entries(balance, rec["entries"])
     storage.save_balance(balance)
 
 
-def _update_avg_prices(balance: dict[str, dict], rec: dict) -> None:
+def _update_avg_prices(balance: dict[str, dict], rec: dict, base_ccy: str) -> None:
     """After applying entries, compute avg_price in base currency for stock buys.
 
     XTB imports pair each stock buy with the next cash outflow.
@@ -202,7 +204,6 @@ def _update_avg_prices(balance: dict[str, dict], rec: dict) -> None:
     the immediately following negative cash entry.
     """
     entries = rec["entries"]
-    base_ccy = cfg_module.load().get("default_currency", "PLN")
     tx_date = rec["date"]
     yr = int(tx_date[:4])
     fx_cache: dict = {}
@@ -296,20 +297,21 @@ def get_tickers(include_cash: bool = False) -> set[str]:
 
 def get_all_tickers(include_fx: bool = True) -> set[str]:
     """Return all tickers including FX pairs needed for price data."""
-    tickers = get_tickers(include_cash=False)
+    tickers: set[str] = set()
+    cash_currencies: set[str] = set()
+    for rec in get_all_transactions():
+        for e in rec["entries"]:
+            t = e["ticker"].upper()
+            if t in storage.SUPPORTED_CURRENCIES:
+                cash_currencies.add(t)
+            else:
+                tickers.add(t)
     if include_fx:
-        cash_currencies: set[str] = set()
-        for rec in get_all_transactions():
-            for e in rec["entries"]:
-                t = e["ticker"].upper()
-                if t in storage.SUPPORTED_CURRENCIES:
-                    cash_currencies.add(t)
         if "USD" in cash_currencies or tickers:
             tickers.add("USDPLN")
         if "EUR" in cash_currencies:
             tickers.add("EURPLN")
             tickers.add("EURUSD")
-        # Add FX pairs for any currency whose suffix appears in a ticker
         for ccy, suffixes in storage.CURRENCY_SUFFIXES.items():
             if ccy == "PLN":
                 continue
