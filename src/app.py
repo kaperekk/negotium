@@ -672,8 +672,6 @@ if not snapshots:
 
 dates, values, investeds = snapshots_to_series(snapshots)
 
-show_invested = st.session_state.get("show_invested", False)
-
 # ── Metric cards ──────────────────────────────────────────────────────────────
 
 latest = snapshots[-1]
@@ -786,13 +784,12 @@ if chart_mode == "amount":
         fillcolor="rgba(108,99,255,0.08)",
         hovertemplate="%{x|%d %b %Y}<br><b>%{y:,.0f} " + base_ccy + "</b><extra></extra>",
     ))
-    if show_invested or chart_mode == "amount":
-        fig.add_trace(go.Scatter(
-            x=dates, y=investeds,
-            name="Invested capital",
-            line=dict(color="#94a3b8", width=1.5, dash="dot"),
-            hovertemplate="%{x|%d %b %Y}<br>Invested: %{y:,.0f} " + base_ccy + "<extra></extra>",
-        ))
+    fig.add_trace(go.Scatter(
+        x=dates, y=investeds,
+        name="Invested capital",
+        line=dict(color="#94a3b8", width=1.5, dash="dot"),
+        hovertemplate="%{x|%d %b %Y}<br>Invested: %{y:,.0f} " + base_ccy + "<extra></extra>",
+    ))
     yaxis_cfg = dict(
         showgrid=True, gridcolor="rgba(48,54,61,0.6)",
         zeroline=False, tickfont=dict(size=11, color="#8B949E"), tickformat=",.0f",
@@ -992,7 +989,7 @@ st.markdown(
 _, center, _ = st.columns([1, 2, 1])
 with center:
     if st.button(
-        "Remove all transactions, portfolio and balance",
+        "Clean up data",
         type="primary",
         key="nuke_all",
     ):

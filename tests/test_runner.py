@@ -1035,6 +1035,379 @@ def test_xtb_negative_position_gets_fixed(tmp: Path):
     assert cash_entry["amount"] == -0.01
 
 
+# ── Ticker translate tests ─────────────────────────────────────────────────────
+
+def test_translate_no_rules(tmp: Path):
+    """translate_ticker with no rules returns uppercased input."""
+    from ticker_translate import translate_ticker
+    assert translate_ticker("aapl") == "AAPL"
+    assert translate_ticker("GOOG") == "GOOG"
+    assert translate_ticker("", None) == ""
+
+
+def test_translate_exact_match(tmp: Path):
+    """Exact match rule replaces ticker."""
+    from ticker_translate import translate_ticker
+    rules = ["AMZN.DE=AMZ.DE", "VOW3.DE=VOW.DE"]
+    assert translate_ticker("AMZN.DE", rules) == "AMZ.DE"
+    assert translate_ticker("VOW3.DE", rules) == "VOW.DE"
+    assert translate_ticker("AAPL.DE", rules) == "AAPL.DE"  # no match
+
+
+def test_translate_suffix_swap(tmp: Path):
+    """Suffix swap rule *.PL=*.WA replaces extension."""
+    from ticker_translate import translate_ticker
+    rules = ["*.PL=*.WA"]
+    assert translate_ticker("SNT.PL", rules) == "SNT.WA"
+    assert translate_ticker("CDR.PL", rules) == "CDR.WA"
+    assert translate_ticker("AAPL.US", rules) == "AAPL.US"  # no match
+
+
+def test_translate_suffix_strip(tmp: Path):
+    """Suffix strip rule .US= removes the suffix."""
+    from ticker_translate import translate_ticker
+    rules = [".US="]
+    assert translate_ticker("AAPL.US", rules) == "AAPL"
+    assert translate_ticker("GOOG.US", rules) == "GOOG"
+    assert translate_ticker("AAPL.DE", rules) == "AAPL.DE"  # no match
+
+
+def test_translate_no_match(tmp: Path):
+    """No matching rule returns uppercased input."""
+    from ticker_translate import translate_ticker
+    rules = ["AMZN.DE=AMZ.DE", "*.PL=*.WA"]
+    assert translate_ticker("MSFT", rules) == "MSFT"
+    assert translate_ticker("AAPL.US", rules) == "AAPL.US"
+
+
+# ── Transactions: set_account_operation, get_transactions_up_to, get_all_tickers ──
+
+def test_set_account_operation(tmp: Path):
+    """set_account_operation toggles the flag on an entry."""
+    import transactions
+
+    transactions.add_transaction("2023-01-03", [
+        {"ticker": "AAPL", "amount": 10.0},
+        {"ticker": "USD", "amount": -1250.0},
+    ])
+
+    recs = transactions.get_all_transactions()
+    assert recs[0]["entries"][0].get("account_operation") is None
+
+    transactions.set_account_operation("2023-01-03", 0, True)
+    recs = transactions.get_all_transactions()
+    assert recs[0]["entries"][0].get("account_operation") is True
+
+    transactions.set_account_operation("2023-01-03", 0, False)
+    recs = transactions.get_all_transactions()
+    assert recs[0]["entries"][0].get("account_operation") is None
+
+
+def test_get_transactions_up_to(tmp: Path):
+    """get_transactions_up_to returns only transactions up to the given date."""
+    import transactions
+
+    transactions.add_transaction("2023-01-03", [{"ticker": "AAPL", "amount": 5.0}])
+    transactions.add_transaction("2023-01-10", [{"ticker": "MSFT", "amount": 3.0}])
+    transactions.add_transaction("2023-06-01", [{"ticker": "GOOG", "amount": 2.0}])
+
+    result = transactions.get_transactions_up_to("2023-01-10")
+    dates = [r["date"] for r in result]
+    assert "2023-01-03" in dates
+    assert "2023-01-10" in dates
+    assert "2023-06-01" not in dates
+    assert len(result) == 2
+
+
+def test_get_all_tickers(tmp: Path):
+    """get_all_tickers returns stock tickers plus FX pair tickers."""
+    import transactions
+
+    transactions.add_transaction("2023-01-03", [
+        {"ticker": "AAPL", "amount": 10.0},
+        {"ticker": "USD", "amount": -1250.0},
+    ])
+    transactions.add_transaction("2023-01-06", [
+        {"ticker": "QDVE.DE", "amount": 5.0},
+        {"ticker": "EUR", "amount": -1000.0},
+    ])
+
+    tickers = transactions.get_all_tickers(include_fx=True)
+    assert "AAPL" in tickers
+    assert "QDVE.DE" in tickers
+    # Cash tickers excluded, FX pairs included
+    assert "USD" not in tickers
+    assert "EUR" not in tickers
+
+
+# ── Storage: project management ────────────────────────────────────────────────
+
+def test_create_and_list_projects(tmp: Path):
+    """create_project + list_projects returns sorted project names."""
+    import storage
+
+    storage.create_project("alpha")
+    storage.create_project("gamma")
+    storage.create_project("beta")
+
+    projects = storage.list_projects()
+    assert "alpha" in projects
+    assert "beta" in projects
+    assert "gamma" in projects
+    assert projects == sorted(projects)
+
+
+def test_rename_project(tmp: Path):
+    """rename_project preserves project data under new name."""
+    import storage
+
+    storage.create_project("old_name")
+    storage.set_current_project("old_name")
+    storage.save_balance({"AAPL": {"amount": 10.0, "avg_price": 150.0}})
+
+    storage.rename_project("old_name", "new_name")
+
+    projects = storage.list_projects()
+    assert "new_name" in projects
+    assert "old_name" not in projects
+
+    storage.set_current_project("new_name")
+    bal = storage.load_balance()
+    assert bal["AAPL"]["amount"] == 10.0
+
+
+def test_delete_project(tmp: Path):
+    """delete_project removes project directory and registry entry."""
+    import storage
+
+    storage.create_project("to_delete")
+    assert "to_delete" in storage.list_projects()
+
+    storage.delete_project("to_delete")
+    assert "to_delete" not in storage.list_projects()
+
+
+def test_project_config_isolation(tmp: Path):
+    """Different projects can have independent configs."""
+    import storage, json
+
+    storage.create_project("proj_a")
+    cfg_a = storage.project_config_path("proj_a")
+    cfg_a.write_text(json.dumps({"name": "Portfolio A"}))
+
+    storage.create_project("proj_b")
+    cfg_b = storage.project_config_path("proj_b")
+    cfg_b.write_text(json.dumps({"name": "Portfolio B"}))
+
+    assert json.loads(cfg_a.read_text())["name"] == "Portfolio A"
+    assert json.loads(cfg_b.read_text())["name"] == "Portfolio B"
+
+
+# ── Storage: benchmark roundtrip ───────────────────────────────────────────────
+
+def test_benchmark_save_load_roundtrip(tmp: Path):
+    """save_benchmarks → load_benchmarks roundtrip preserves data."""
+    import storage
+
+    data = [
+        {"date": "2023-01-03", "SXRV.DE": 5000.0, "I500.DE": 4800.0},
+        {"date": "2023-01-04", "SXRV.DE": 5050.0, "I500.DE": 4820.0},
+    ]
+    storage.save_benchmarks("PLN", data)
+    loaded = storage.load_benchmarks("PLN")
+    assert loaded is not None
+    assert len(loaded) == 2
+    assert loaded[0]["SXRV.DE"] == 5000.0
+    assert loaded[1]["I500.DE"] == 4820.0
+
+
+def test_benchmark_load_returns_none_when_missing(tmp: Path):
+    """load_benchmarks returns None when no cache file exists."""
+    import storage
+    assert storage.load_benchmarks("USD") is None
+
+
+# ── Portfolio: withdrawal and _ticker_currency ─────────────────────────────────
+
+def test_withdrawal_decreases_invested(tmp: Path):
+    """Withdrawal (negative account_operation) reduces invested capital."""
+    import transactions, portfolio
+
+    fx.inject_fake_prices(tmp)
+
+    transactions.add_transaction("2023-01-03", [
+        {"ticker": "PLN", "amount": 10000.0},
+    ])
+    transactions.add_transaction("2023-01-04", [
+        {"ticker": "PLN", "amount": -3000.0, "account_operation": True},
+    ])
+
+    snaps = portfolio.build_portfolio(
+        start_date=date(2023, 1, 3),
+        end_date=date(2023, 1, 4),
+        base_currency="PLN",
+        precision="D",
+        use_cache=False,
+    )
+
+    snap_jan3 = next(s for s in snaps if s["date"] == "2023-01-03")
+    snap_jan4 = next(s for s in snaps if s["date"] == "2023-01-04")
+
+    assert abs(snap_jan3["invested"] - 10000.0) < 1.0
+    assert abs(snap_jan4["invested"] - 7000.0) < 1.0, \
+        f"Withdrawal should reduce invested to ~7000, got {snap_jan4['invested']}"
+    assert abs(snap_jan4["total_value"] - 7000.0) < 1.0
+
+
+def test_ticker_currency_detection(tmp: Path):
+    """_ticker_currency maps suffixes to correct currencies."""
+    from portfolio import _ticker_currency
+
+    assert _ticker_currency("PLN") == "PLN"
+    assert _ticker_currency("USD") == "USD"
+    assert _ticker_currency("EUR") == "EUR"
+    assert _ticker_currency("QDVE.DE") == "EUR"
+    assert _ticker_currency("SNT.WA") == "PLN"
+    assert _ticker_currency("4GLD.L") == "GBP"
+    assert _ticker_currency("AAPL") == "USD"  # no suffix → USD default
+
+    # Unknown suffix defaults to USD (triggers warning on stdout)
+    import io, sys
+    old = sys.stdout
+    sys.stdout = io.StringIO()
+    assert _ticker_currency("AAPL.US") == "USD"
+    sys.stdout = old
+
+
+# ── Manual import tests ────────────────────────────────────────────────────────
+
+def test_manual_validate_errors(tmp: Path):
+    """validate_manual_file catches various malformed inputs."""
+    from manual_import import validate_manual_file
+
+    empty = tmp / "empty.json"
+    empty.write_text("")
+    valid, msg = validate_manual_file(empty)
+    assert not valid
+    assert "empty" in msg.lower()
+
+    bad_json = tmp / "bad.json"
+    bad_json.write_text("{not json}")
+    valid, msg = validate_manual_file(bad_json)
+    assert not valid
+
+    not_array = tmp / "not_array.json"
+    not_array.write_text('{"date": "2023-01-03"}')
+    valid, msg = validate_manual_file(not_array)
+    assert not valid
+    assert "array" in msg.lower()
+
+    missing_date = tmp / "missing_date.json"
+    missing_date.write_text('[{"entries": [{"ticker": "AAPL", "amount": 10}]}]')
+    valid, msg = validate_manual_file(missing_date)
+    assert not valid
+    assert "date" in msg.lower()
+
+    missing_ticker = tmp / "missing_ticker.json"
+    missing_ticker.write_text('[{"date": "2023-01-03", "entries": [{"amount": 10}]}]')
+    valid, msg = validate_manual_file(missing_ticker)
+    assert not valid
+    assert "ticker" in msg.lower()
+
+
+def test_manual_parse_and_import(tmp: Path):
+    """parse_manual_json parses correctly; import_manual deduplicates."""
+    from manual_import import parse_manual_json, import_manual
+
+    data = [
+        {
+            "date": "2023-01-03",
+            "entries": [
+                {"ticker": "AAPL", "amount": 10.0},
+                {"ticker": "USD", "amount": -1250.0},
+            ],
+        },
+        {
+            "date": "2023-01-04",
+            "entries": [
+                {"ticker": "MSFT", "amount": 5.0, "account_operation": True},
+            ],
+        },
+    ]
+
+    json_file = tmp / "test_manual.json"
+    json_file.write_text(json.dumps(data))
+
+    parsed = parse_manual_json(json_file)
+    assert len(parsed) == 2
+    assert parsed[0]["date"] == "2023-01-03"
+    assert len(parsed[0]["entries"]) == 2
+    assert parsed[1]["entries"][0].get("account_operation") is True
+
+    result = import_manual(json_file)
+    assert result["success"] is True
+    assert result["imported"] == 2
+
+    # Import again — should skip duplicates
+    result2 = import_manual(json_file)
+    assert result2["success"] is True
+    assert result2["skipped"] == 2
+    assert result2["imported"] == 0
+
+
+# ── BOSSA validate tests ──────────────────────────────────────────────────────
+
+def test_bossa_validate_errors(tmp: Path):
+    """validate_bossa_file catches empty and malformed files."""
+    from bossa_import import validate_bossa_file
+
+    empty = tmp / "empty.csv"
+    empty.write_text("")
+    valid, msg = validate_bossa_file(empty)
+    assert not valid
+    assert "empty" in msg.lower()
+
+    wrong_cols = tmp / "wrong.csv"
+    wrong_cols.write_text("name;value\ntest;123")
+    valid, msg = validate_bossa_file(wrong_cols)
+    assert not valid
+    assert "missing" in msg.lower()
+
+    valid_file = tmp / "valid.csv"
+    valid_file.write_text("data;tytuł operacji;szczegóły;kwota;waluta\nrow1;row2;row3;row4;row5")
+    valid, msg = validate_bossa_file(valid_file)
+    assert valid
+
+
+# ── ISIN resolve tests ─────────────────────────────────────────────────────────
+
+def test_isin_resolve_from_config(tmp: Path):
+    """resolve_isins_with_names resolves ISINs based on config rules."""
+    import json as _json
+    import config as cfg_module
+
+    cfg = cfg_module.load()
+    cfg["isin_tickers"] = [
+        "IE00B4L5Y983=IWDA.L",
+        "US5949181085=MSFT.US",
+    ]
+    cfg_module.save(cfg)
+
+    from isin_resolve import resolve_isins_with_names
+
+    isin_map = {
+        "IE00B4L5Y983": "iShares Core MSCI World",
+        "US5949181085": "Microsoft",
+        "DE0005793303": "unknown fund",
+    }
+
+    resolved, unresolved = resolve_isins_with_names(isin_map)
+    assert resolved["IE00B4L5Y983"] == "IWDA.L"
+    assert resolved["US5949181085"] == "MSFT.US"
+    assert "DE0005793303" in unresolved
+    assert unresolved["DE0005793303"] == "unknown fund"
+
+
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 ALL_TESTS = [
@@ -1084,6 +1457,27 @@ ALL_TESTS = [
     ("Portfolio: _day_range daily",           test_day_range_daily),
     ("Portfolio: _day_range weekly",          test_day_range_weekly),
     ("Portfolio: snapshots_to_series",        test_snapshots_to_series),
+    # ── New tests ────────────────────────────────────────────────────────────
+    ("Ticker translate: no rules",            test_translate_no_rules),
+    ("Ticker translate: exact match",         test_translate_exact_match),
+    ("Ticker translate: suffix swap",         test_translate_suffix_swap),
+    ("Ticker translate: suffix strip",        test_translate_suffix_strip),
+    ("Ticker translate: no match",            test_translate_no_match),
+    ("Transactions: set_account_operation",   test_set_account_operation),
+    ("Transactions: get_transactions_up_to",  test_get_transactions_up_to),
+    ("Transactions: get_all_tickers",         test_get_all_tickers),
+    ("Storage: create and list projects",     test_create_and_list_projects),
+    ("Storage: rename project",               test_rename_project),
+    ("Storage: delete project",               test_delete_project),
+    ("Storage: project config isolation",     test_project_config_isolation),
+    ("Storage: benchmark save/load",          test_benchmark_save_load_roundtrip),
+    ("Storage: benchmark load missing",       test_benchmark_load_returns_none_when_missing),
+    ("Portfolio: withdrawal decreases invested", test_withdrawal_decreases_invested),
+    ("Portfolio: ticker currency detection",  test_ticker_currency_detection),
+    ("Manual: validate errors",              test_manual_validate_errors),
+    ("Manual: parse and import",              test_manual_parse_and_import),
+    ("BOSSA: validate errors",               test_bossa_validate_errors),
+    ("ISIN: resolve from config",            test_isin_resolve_from_config),
 ]
 
 
