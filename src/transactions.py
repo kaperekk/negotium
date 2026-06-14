@@ -26,7 +26,7 @@ from datetime import date
 import storage
 import config as cfg_module
 from ticker_translate import translate_ticker
-from ticker_data import get_fx_rate
+from ticker_data import get_price
 
 
 def _apply_entries(balance: dict[str, dict], entries: list[dict]) -> None:
@@ -199,43 +199,28 @@ def _rebuild_balance(records: list[dict]) -> None:
 def _update_avg_prices(balance: dict[str, dict], rec: dict, base_ccy: str) -> None:
     """After applying entries, compute avg_price in base currency for stock buys.
 
-    XTB imports pair each stock buy with the next cash outflow.
-    We match them sequentially: each positive stock entry is paired with
-    the immediately following negative cash entry.
+    Uses the ticker's close price on the transaction date to determine cost.
     """
     entries = rec["entries"]
     tx_date = rec["date"]
     yr = int(tx_date[:4])
-    fx_cache: dict = {}
+    price_cache: dict = {}
 
     # Accumulate cost and shares per ticker for this transaction
     ticker_cost: dict[str, float] = {}
     ticker_shares: dict[str, float] = {}
 
-    for i, e in enumerate(entries):
+    for e in entries:
         ticker = e["ticker"].upper()
         amt = float(e["amount"])
         if ticker in storage.SUPPORTED_CURRENCIES or amt <= 0:
             continue
 
-        # Find next cash outflow after this stock buy
-        cost_base = None
-        for j in range(i + 1, len(entries)):
-            ce = entries[j]
-            ccy = ce["ticker"].upper()
-            camt = float(ce["amount"])
-            if ccy in storage.SUPPORTED_CURRENCIES and camt < 0:
-                if ccy == base_ccy:
-                    cost_base = abs(camt)
-                else:
-                    rate = get_fx_rate(ccy, base_ccy, tx_date, fx_cache, yr)
-                    cost_base = abs(camt) * rate
-                break
-
-        if cost_base is None:
+        close = get_price(ticker, tx_date, price_cache, yr)
+        if close is None:
             continue
 
-        ticker_cost[ticker] = ticker_cost.get(ticker, 0.0) + cost_base
+        ticker_cost[ticker] = ticker_cost.get(ticker, 0.0) + amt * close
         ticker_shares[ticker] = ticker_shares.get(ticker, 0.0) + amt
 
     # Compute new avg_price = (old_cost + new_cost) / new_amount

@@ -286,7 +286,7 @@ with st.sidebar:
             st.caption("Negative amount = sell / cash out.")
 
             rows = []
-            for idx in range(1, 4):
+            for idx in range(1, 3):
                 c1, c2 = st.columns([2, 1])
                 with c1:
                     t = st.text_input(
@@ -441,6 +441,8 @@ with st.sidebar:
                     all_files.append(("xtb", fpath))
                 for fpath in sorted(bdir.glob("*.csv")):
                     all_files.append(("bossa", fpath))
+                for fpath in sorted(bdir.glob("*.json")):
+                    all_files.append(("custom", fpath))
 
             if all_files:
                 bar = st.progress(0, text="Importing…")
@@ -450,6 +452,8 @@ with st.sidebar:
                     bar.progress(idx / len(all_files), text=f"Importing {fpath.name}…")
                     if kind == "bossa":
                         result = import_bossa(str(fpath), ccy)
+                    elif kind == "custom":
+                        result = import_manual(str(fpath))
                     else:
                         result = import_xtb(str(fpath), ccy)
                     if result["success"]:
