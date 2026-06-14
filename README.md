@@ -38,7 +38,6 @@ negotium/
 │       ├── portfolio.jsonl
 │       ├── balance.json
 │       └── imports/
-├── imports/                  ← broker statement uploads (git-ignored)
 ├── src/
 │   ├── app.py               ← Streamlit UI
 │   ├── config.py            ← load/save config (global + per-project)
