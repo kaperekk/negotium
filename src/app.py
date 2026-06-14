@@ -674,11 +674,6 @@ dates, values, investeds = snapshots_to_series(snapshots)
 
 show_invested = st.session_state.get("show_invested", False)
 
-bench_selected = {
-    label: st.session_state.get("bench_select", []) and label in st.session_state.get("bench_select", [])
-    for label in BENCHMARKS
-}
-
 # ── Metric cards ──────────────────────────────────────────────────────────────
 
 latest = snapshots[-1]
@@ -699,53 +694,160 @@ def fmt(v: float) -> str:
         return f"{formatted} PLN"
     return f"{SYM[base_ccy]}{formatted}"
 
-c1, c2, c3, c4 = st.columns(4)
+c1, c2, c3 = st.columns(3)
 with c1:
     st.metric("Total value", fmt(cur_value), label_visibility="visible")
 with c2:
     st.metric("Invested", fmt(contrib), label_visibility="visible")
 with c3:
-    sign = "+" if pnl >= 0 else ""
-    st.metric("Total P&L", f"{sign}{fmt(pnl)}", delta=f"{sign}{pnl_pct:.1f}%", label_visibility="visible")
-with c4:
     if latest["assets"]:
         best = max(latest["assets"], key=lambda a: a["value_base"])
         st.metric("Largest position", best["ticker"], label_visibility="visible")
     else:
         st.metric("Largest position", "—", label_visibility="visible")
 
-st.divider()
+
+# ── P&L toggle blocks ────────────────────────────────────────────────────────
+
+if "chart_mode" not in st.session_state:
+    st.session_state.chart_mode = "amount"
+
+sign = "+" if pnl >= 0 else ""
+is_amount = st.session_state.chart_mode == "amount"
+is_percent = not is_amount
+
+st.markdown("""
+<style>
+    div[data-testid="stHorizontalBlock"] > div:has(button[kind="secondary"]) button[kind="secondary"],
+    div[data-testid="stHorizontalBlock"] > div:has(button[kind="primary"]) button[kind="primary"] {
+        background: linear-gradient(135deg, #161B22 0%, #1C2333 100%) !important;
+        border: 1px solid #30363D !important;
+        border-radius: 16px !important;
+        padding: 20px 24px !important;
+        min-height: 85px !important;
+        width: 100% !important;
+        transition: all 0.2s ease !important;
+        color: #E6EDF3 !important;
+        font-size: 1.5rem !important;
+        font-weight: 600 !important;
+    }
+    div[data-testid="stHorizontalBlock"] > div:has(button[kind="secondary"]) button[kind="secondary"]:hover,
+    div[data-testid="stHorizontalBlock"] > div:has(button[kind="primary"]) button[kind="primary"]:hover {
+        border-color: #6C63FF !important;
+        box-shadow: 0 2px 12px rgba(108,99,255,0.3) !important;
+    }
+    div[data-testid="stHorizontalBlock"] > div:has(button[kind="primary"]) button[kind="primary"] {
+        border-color: #6C63FF !important;
+        background: linear-gradient(135deg, #1C2333 0%, #252D44 100%) !important;
+        box-shadow: 0 2px 12px rgba(108,99,255,0.2) !important;
+    }
+    div[data-testid="stHorizontalBlock"] button p {
+        font-size: 1.2rem !important;
+        font-weight: 600 !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+pln_col1, pln_col2 = st.columns(2)
+
+with pln_col1:
+    if st.button(
+        f"Total P&L  ·  {sign}{fmt(pnl)}",
+        key="pnl_amount_btn",
+        type="primary" if is_amount else "secondary",
+        use_container_width=True,
+    ):
+        st.session_state.chart_mode = "amount"
+        st.rerun()
+
+with pln_col2:
+    if st.button(
+        f"Total Return  ·  {sign}{pnl_pct:.1f}%",
+        key="pnl_pct_btn",
+        type="primary" if is_percent else "secondary",
+        use_container_width=True,
+    ):
+        st.session_state.chart_mode = "percent"
+        st.rerun()
+
 
 # ── Chart ─────────────────────────────────────────────────────────────────────
 
+chart_mode = st.session_state.chart_mode
+
 fig = go.Figure()
-fig.add_trace(go.Scatter(
-    x=dates, y=values,
-    name=f"Portfolio ({base_ccy})",
-    fill="tozeroy",
-    line=dict(color="#6C63FF", width=2.5),
-    fillcolor="rgba(108,99,255,0.08)",
-    hovertemplate="%{x|%d %b %Y}<br><b>%{y:,.0f} " + base_ccy + "</b><extra></extra>",
-))
-if show_invested:
+
+if chart_mode == "amount":
     fig.add_trace(go.Scatter(
-        x=dates, y=investeds,
-        name="Invested capital",
-        line=dict(color="#94a3b8", width=1.5, dash="dot"),
-        hovertemplate="%{x|%d %b %Y}<br>Invested: %{y:,.0f} " + base_ccy + "<extra></extra>",
+        x=dates, y=values,
+        name=f"Portfolio ({base_ccy})",
+        fill="tozeroy",
+        line=dict(color="#6C63FF", width=2.5),
+        fillcolor="rgba(108,99,255,0.08)",
+        hovertemplate="%{x|%d %b %Y}<br><b>%{y:,.0f} " + base_ccy + "</b><extra></extra>",
     ))
+    if show_invested or chart_mode == "amount":
+        fig.add_trace(go.Scatter(
+            x=dates, y=investeds,
+            name="Invested capital",
+            line=dict(color="#94a3b8", width=1.5, dash="dot"),
+            hovertemplate="%{x|%d %b %Y}<br>Invested: %{y:,.0f} " + base_ccy + "<extra></extra>",
+        ))
+    yaxis_cfg = dict(
+        showgrid=True, gridcolor="rgba(48,54,61,0.6)",
+        zeroline=False, tickfont=dict(size=11, color="#8B949E"), tickformat=",.0f",
+        ticksuffix=f" {base_ccy}" if base_ccy == "PLN" else "",
+        tickprefix="" if base_ccy == "PLN" else SYM[base_ccy],
+    )
+else:
+    pct_values = []
+    for v, inv in zip(values, investeds):
+        pct_values.append(((v / inv) - 1.0) * 100.0 if inv else 0.0)
+    fig.add_trace(go.Scatter(
+        x=dates, y=pct_values,
+        name="Return (%)",
+        fill="tozeroy",
+        line=dict(color="#6C63FF", width=2.5),
+        fillcolor="rgba(108,99,255,0.08)",
+        hovertemplate="%{x|%d %b %Y}<br><b>%{y:+.1f}%</b><extra></extra>",
+    ))
+    span = max(abs(min(pct_values)), abs(max(pct_values))) if pct_values else 1
+    yaxis_cfg = dict(
+        showgrid=True, gridcolor="rgba(48,54,61,0.6)",
+        zeroline=True, zerolinecolor="rgba(48,54,61,0.8)",
+        tickfont=dict(size=11, color="#8B949E"),
+        ticksuffix="%",
+        tickformat="+.0f" if span > 10 else "+.1f",
+    )
+
+bench_selected = {
+    label: label in st.session_state.get("bench_persist", [])
+    for label in BENCHMARKS
+}
 
 for bench_label, bench_ticker in BENCHMARKS.items():
     if not bench_selected.get(bench_label):
         continue
 
     bench_vals = [bench_by_date.get(d, {}).get(bench_ticker, 0.0) for d in dates]
-    fig.add_trace(go.Scatter(
-        x=dates, y=bench_vals,
-        name=bench_label,
-        line=dict(color=BENCH_COLORS[bench_label], width=1.5, dash="dot"),
-        hovertemplate=f"%{{x|%d %b %Y}}<br>{bench_label}: %{{y:,.0f}} " + base_ccy + "<extra></extra>",
-    ))
+    if chart_mode == "percent":
+        bench_pcts = [
+            ((bv / inv) - 1.0) * 100.0 if inv else 0.0
+            for bv, inv in zip(bench_vals, investeds)
+        ]
+        fig.add_trace(go.Scatter(
+            x=dates, y=bench_pcts,
+            name=bench_label,
+            line=dict(color=BENCH_COLORS[bench_label], width=1.5, dash="dot"),
+            hovertemplate=f"%{{x|%d %b %Y}}<br>{bench_label}: %{{y:+.1f}}%<extra></extra>",
+        ))
+    else:
+        fig.add_trace(go.Scatter(
+            x=dates, y=bench_vals,
+            name=bench_label,
+            line=dict(color=BENCH_COLORS[bench_label], width=1.5, dash="dot"),
+            hovertemplate=f"%{{x|%d %b %Y}}<br>{bench_label}: %{{y:,.0f}} " + base_ccy + "<extra></extra>",
+        ))
 
 fig.update_layout(
     height=450,
@@ -757,26 +859,18 @@ fig.update_layout(
         font=dict(size=12, color="#8B949E"),
     ),
     xaxis=dict(showgrid=False, zeroline=False, tickfont=dict(size=11, color="#8B949E")),
-    yaxis=dict(
-        showgrid=True, gridcolor="rgba(48,54,61,0.6)",
-        zeroline=False, tickfont=dict(size=11, color="#8B949E"), tickformat=",.0f",
-        ticksuffix=f" {base_ccy}" if base_ccy == "PLN" else "",
-        tickprefix="" if base_ccy == "PLN" else SYM[base_ccy],
-    ),
+    yaxis=yaxis_cfg,
     hovermode="x unified",
     font=dict(family="sans-serif"),
 )
 st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
-c_inv, c_bench = st.columns([1, 2])
-with c_inv:
-    st.checkbox("Show invested capital", value=show_invested, key="show_invested")
-with c_bench:
-    st.multiselect(
-        "What-if benchmarks",
-        options=list(BENCHMARKS.keys()),
-        key="bench_select",
-    )
+st.multiselect(
+    "What-if benchmarks",
+    options=list(BENCHMARKS.keys()),
+    key="bench_select",
+    on_change=lambda: st.session_state.update(bench_persist=list(st.session_state.bench_select)),
+)
 
 # ── Holdings table ────────────────────────────────────────────────────────────
 

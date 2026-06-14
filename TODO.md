@@ -6,6 +6,8 @@
 - [ ] Per-ticker stats: total return, avg buy price, current value
 - [ ] average per year return
 - [ ] returns per each year
+ value and return charts
+ more tests
 
 ## Code quality
 
