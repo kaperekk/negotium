@@ -45,6 +45,8 @@ from storage import (
     has_price_year,
     load_price_year,
     save_price_year,
+    load_ticker_names,
+    save_ticker_names,
     SUPPORTED_CURRENCIES,
     CURRENCY_SUFFIXES,
     TRIANGULATE_VIA_USD,
@@ -66,6 +68,24 @@ _RETRY_DELAY    = 2   # seconds
 def _yahoo_symbol(ticker: str) -> str:
     """Map internal ticker name to Yahoo Finance symbol."""
     return FX_YAHOO.get(ticker, ticker)
+
+
+def get_ticker_name(ticker: str) -> str:
+    """Return company short name for a ticker, cached to disk. Falls back to ticker."""
+    if ticker.upper() in SUPPORTED_CURRENCIES:
+        return ticker
+    names = load_ticker_names()
+    if ticker in names:
+        return names[ticker]
+    try:
+        with _suppress_output():
+            info = yf.Ticker(_yahoo_symbol(ticker)).info
+        short = info.get("shortName") or info.get("longName") or ticker
+    except Exception:
+        short = ticker
+    names[ticker] = short
+    save_ticker_names(names)
+    return short
 
 
 def _download_year(ticker: str, year: int) -> dict[str, float]:

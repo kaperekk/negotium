@@ -331,3 +331,21 @@ def load_benchmarks(base_ccy: str) -> list[dict] | None:
     if not p.exists():
         return None
     return _loads(p.read_bytes())
+
+
+# ── Ticker name cache ────────────────────────────────────────────────────────
+
+TICKER_NAMES_PATH = DATA_ROOT / "ticker_names.json"
+
+
+def load_ticker_names() -> dict[str, str]:
+    """Return {ticker: company_name} from cache, or empty dict."""
+    if not TICKER_NAMES_PATH.exists():
+        return {}
+    return _loads(TICKER_NAMES_PATH.read_bytes())
+
+
+def save_ticker_names(names: dict[str, str]) -> None:
+    """Persist {ticker: company_name} cache."""
+    TICKER_NAMES_PATH.parent.mkdir(parents=True, exist_ok=True)
+    TICKER_NAMES_PATH.write_bytes(_dumps(names).encode())

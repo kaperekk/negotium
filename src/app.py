@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import config as cfg_module
 import storage
-from ticker_data import ensure as ensure_ticker, get_price, get_fx_rate
+from ticker_data import ensure as ensure_ticker, get_price, get_fx_rate, get_ticker_name
 from portfolio import FX_TICKERS
 from transactions import (
     add_transaction, get_all_transactions, get_all_tickers,
@@ -887,6 +887,7 @@ if latest["assets"]:
 
     rows = []
     avg_fx_cache: dict = {}
+    ticker_names = {a["ticker"]: get_ticker_name(a["ticker"]) for a in latest["assets"]}
     for a in sorted(latest["assets"], key=lambda x: x["value_base"], reverse=True):
         ticker = a["ticker"]
         shares = a["amount"]
@@ -902,6 +903,7 @@ if latest["assets"]:
         ret_pct = ((value / cost_basis) - 1) * 100 if cost_basis else 0.0
         rows.append({
             "ticker": ticker,
+            "name": ticker_names.get(ticker, ticker),
             "ccy": a.get("currency", "—"),
             "weight": value / total_val * 100,
             "shares": shares,
@@ -932,11 +934,13 @@ if latest["assets"]:
         bar_pct = r["weight"]
         bar_color = "#6C63FF"
         ret_col = _ret_color(r["ret_pct"])
+        name_html = f"<span class='ticker-sub'>{r['ticker']}</span>" if r["name"] != r["ticker"] else ""
         body_rows.append(
             "<tr>"
             f"<td class='ticker-cell'>"
             f"<div class='ticker-bar' style='width:{bar_pct / max_weight * 100:.1f}%;background:{bar_color};'></div>"
-            f"<span class='ticker-text'>{r['ticker']}</span>"
+            f"<span class='ticker-text'>{r['name']}</span>"
+            f"{name_html}"
             f"</td>"
             f"<td>{r['ccy']}</td>"
             f"<td class='num'>{r['weight']:.1f}%</td>"
@@ -963,6 +967,7 @@ if latest["assets"]:
         border-radius:4px; transition:width 0.3s ease;
     }}
     .ticker-text {{ position:relative; font-weight:600; color:#E6EDF3; }}
+    .ticker-sub {{ position:relative; display:block; font-size:0.78em; color:#8B949E; font-weight:400; }}
     </style>
     <table class="holdings-table">
     <thead>{header}</thead>
