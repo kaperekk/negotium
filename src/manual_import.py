@@ -56,11 +56,8 @@ def parse_manual_json(file_path: str | Path) -> list[dict]:
 
 
 def _existing_keys() -> set[tuple[str, str, float]]:
-    keys: set[tuple[str, str, float]] = set()
-    for rec in get_all_transactions():
-        for e in rec["entries"]:
-            keys.add((rec["date"], e["ticker"].upper(), round(e["amount"], 8)))
-    return keys
+    from transactions import existing_keys
+    return existing_keys()
 
 
 def import_manual(file_path: str | Path) -> dict:

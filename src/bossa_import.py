@@ -167,32 +167,13 @@ def parse_bossa_csv(file_path: str | Path, currency: str, progress_cb=None) -> l
 
 
 def _fix_negative_positions(transactions: list[dict], currency: str) -> None:
-    balance: dict[str, float] = {}
-    for rec in transactions:
-        for e in rec["entries"]:
-            ticker = e["ticker"].upper()
-            if ticker in storage.SUPPORTED_CURRENCIES:
-                continue
-            balance[ticker] = balance.get(ticker, 0.0) + float(e["amount"])
-
-    for ticker, amt in balance.items():
-        if amt < -1e-9:
-            buy_shares = round(abs(amt), 8)
-            transactions.append({
-                "date": transactions[0]["date"] if transactions else "2000-01-01",
-                "entries": [
-                    {"ticker": ticker, "amount": buy_shares},
-                    {"ticker": currency, "amount": -0.01},
-                ],
-            })
+    from transactions import fix_negative_positions
+    fix_negative_positions(transactions, currency)
 
 
 def _existing_keys() -> set[tuple[str, str, float]]:
-    keys: set[tuple[str, str, float]] = set()
-    for rec in get_all_transactions():
-        for e in rec["entries"]:
-            keys.add((rec["date"], e["ticker"].upper(), round(e["amount"], 8)))
-    return keys
+    from transactions import existing_keys
+    return existing_keys()
 
 
 def import_bossa(file_path: str | Path, currency: str, progress_cb=None) -> dict:

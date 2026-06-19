@@ -8,9 +8,10 @@ from __future__ import annotations
 import sys
 import time
 import json
+import html
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import streamlit as st
 import plotly.graph_objects as go
@@ -161,7 +162,7 @@ precision      = "D"
 
 with st.sidebar:
     st.markdown(
-        f"<h1 style='text-align:center;font-size:2.2rem;margin-top:-0.5rem;margin-bottom:0.3rem;'>📈 {storage.get_current_project()}</h1>",
+        f"<h1 style='text-align:center;font-size:2.2rem;margin-top:-0.5rem;margin-bottom:0.3rem;'>📈 {html.escape(storage.get_current_project())}</h1>",
         unsafe_allow_html=True,
     )
 
@@ -313,7 +314,7 @@ with st.sidebar:
                     custom_dir = storage.IMPORTS_DIR / "custom"
                     custom_dir.mkdir(parents=True, exist_ok=True)
                     tx_doc = [{"date": tx_date.isoformat(), "entries": entries}]
-                    tx_path = custom_dir / f"{tx_date.isoformat()}_{tx_date.strftime('%H%M%S')}.json"
+                    tx_path = custom_dir / f"{tx_date.isoformat()}_{datetime.now().strftime('%H%M%S')}.json"
                     tx_path.write_text(json.dumps(tx_doc, indent=2), encoding="utf-8")
                     result = import_manual(str(tx_path))
                     if result["success"]:
@@ -934,12 +935,12 @@ if latest["assets"]:
         bar_pct = r["weight"]
         bar_color = "#6C63FF"
         ret_col = _ret_color(r["ret_pct"])
-        name_html = f"<span class='ticker-sub'>{r['ticker']}</span>" if r["name"] != r["ticker"] else ""
+        name_html = f"<span class='ticker-sub'>{html.escape(r['ticker'])}</span>" if r["name"] != r["ticker"] else ""
         body_rows.append(
             "<tr>"
             f"<td class='ticker-cell'>"
             f"<div class='ticker-bar' style='width:{bar_pct / max_weight * 100:.1f}%;background:{bar_color};'></div>"
-            f"<span class='ticker-text'>{r['name']}</span>"
+            f"<span class='ticker-text'>{html.escape(r['name'])}</span>"
             f"{name_html}"
             f"</td>"
             f"<td>{r['ccy']}</td>"

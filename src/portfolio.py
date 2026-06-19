@@ -33,8 +33,11 @@ Key optimisations:
 """
 from __future__ import annotations
 
+import logging
 from datetime import date, timedelta
 from typing import Callable
+
+log = logging.getLogger(__name__)
 
 from storage import (
     load_portfolio,
@@ -80,7 +83,7 @@ def _ticker_currency(ticker: str) -> str:
     if t in FX_TICKERS:
         return "PLN"
     if ext:
-        print(f"[portfolio] WARNING: unknown exchange suffix '{ext}' for ticker {t}, assuming USD")
+        log.warning("unknown exchange suffix '%s' for ticker %s, assuming USD", ext, t)
     return "USD"
 
 

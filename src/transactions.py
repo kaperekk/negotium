@@ -94,7 +94,7 @@ def add_transaction(
         # Merge into the last record
         records[-1]["entries"].extend(entries)
         storage.write_jsonl(storage.TRANSACTIONS_PATH, records)
-        _rebuild_balance(records)
+        _rebuild_balance(records, from_date=date_str)
         storage.invalidate_portfolio_from(date_str)
         return
 
@@ -120,7 +120,7 @@ def add_transaction(
         new_records.append({"date": date_str, "entries": entries})
 
     storage.write_jsonl(storage.TRANSACTIONS_PATH, new_records)
-    _rebuild_balance(new_records)
+    _rebuild_balance(new_records, from_date=date_str)
     storage.invalidate_portfolio_from(date_str)
 
 
@@ -188,11 +188,26 @@ def update_transaction(
             break
 
 
-def _rebuild_balance(records: list[dict]) -> None:
-    """Replay full ledger to recompute balance and avg_price from scratch."""
+def _rebuild_balance(records: list[dict], from_date: str | None = None) -> None:
+    """Replay ledger to recompute balance and avg_price from scratch.
+
+    If from_date is provided, only records on or after from_date are replayed
+    on top of the existing balance. Otherwise replays everything from scratch.
+    """
     base_ccy = cfg_module.load().get("default_currency", "PLN")
     yesterday_str = (date.today() - timedelta(days=1)).isoformat()
-    balance: dict[str, dict] = {}
+
+    if from_date:
+        balance = storage.load_balance()
+        start_idx = 0
+        for i, rec in enumerate(records):
+            if rec["date"] >= from_date:
+                start_idx = i
+                break
+        records = records[start_idx:]
+    else:
+        balance = {}
+
     for rec in records:
         if rec["date"] > yesterday_str:
             continue
@@ -205,6 +220,7 @@ def _update_avg_prices(balance: dict[str, dict], rec: dict, base_ccy: str) -> No
     """After applying entries, compute avg_price in base currency for stock buys.
 
     Uses the ticker's close price on the transaction date to determine cost.
+    On sells, avg_price stays constant (standard weighted-average cost).
     """
     entries = rec["entries"]
     tx_date = rec["date"]
@@ -228,19 +244,30 @@ def _update_avg_prices(balance: dict[str, dict], rec: dict, base_ccy: str) -> No
         ticker_cost[ticker] = ticker_cost.get(ticker, 0.0) + amt * close
         ticker_shares[ticker] = ticker_shares.get(ticker, 0.0) + amt
 
-    # Compute new avg_price = (old_cost + new_cost) / new_amount
+    # Collect all tickers touched by this transaction (buys + sells)
+    all_tickers = set(ticker_shares.keys())
+    for e in entries:
+        t = e["ticker"].upper()
+        if t not in storage.SUPPORTED_CURRENCIES:
+            all_tickers.add(t)
+
+    # Compute new avg_price
     # balance still has pre-tx state since _apply_entries hasn't run yet
-    for ticker, shares_bought in ticker_shares.items():
+    for ticker in all_tickers:
         pre = balance.get(ticker, {}).get("amount", 0.0)
         old_avg = balance.get(ticker, {}).get("avg_price", 0.0)
 
-        # Net change to amount from this transaction (buys + sells)
         net_change = sum(float(e["amount"]) for e in entries
                          if e["ticker"].upper() == ticker)
         new_amount = pre + net_change
         if new_amount > 0:
             old_cost = pre * old_avg
-            new_cost = old_cost + ticker_cost[ticker]
+            if ticker in ticker_cost:
+                # Buy: blend old cost with new cost
+                new_cost = old_cost + ticker_cost[ticker]
+            else:
+                # Sell only: reduce cost pool proportionally
+                new_cost = old_avg * new_amount
             new_avg = new_cost / new_amount
         else:
             new_avg = 0.0
@@ -312,3 +339,46 @@ def get_all_tickers(include_fx: bool = True) -> set[str]:
             else:
                 tickers.add(f"{ccy}PLN")
     return tickers
+
+
+def existing_keys() -> set[tuple[str, str, float]]:
+    """Return set of (date, ticker, amount) tuples from the ledger for dedup."""
+    keys: set[tuple[str, str, float]] = set()
+    for rec in get_all_transactions():
+        for e in rec["entries"]:
+            keys.add((rec["date"], e["ticker"].upper(), round(e["amount"], 8)))
+    return keys
+
+
+def fix_negative_positions(transactions: list[dict], currency: str) -> None:
+    """If any stock/ETF ends negative, insert a buy on the same date to zero it."""
+    balance: dict[str, float] = {}
+    for rec in transactions:
+        for e in rec["entries"]:
+            ticker = e["ticker"].upper()
+            if ticker in storage.SUPPORTED_CURRENCIES:
+                continue
+            balance[ticker] = balance.get(ticker, 0.0) + float(e["amount"])
+
+    for ticker, amt in balance.items():
+        if amt < -1e-9:
+            # Find the date where the position first went negative
+            fix_date = "2000-01-01"
+            running: dict[str, float] = {}
+            for rec in transactions:
+                for e in rec["entries"]:
+                    t = e["ticker"].upper()
+                    if t in storage.SUPPORTED_CURRENCIES:
+                        continue
+                    running[t] = running.get(t, 0.0) + float(e["amount"])
+                if running.get(ticker, 0.0) < -1e-9:
+                    fix_date = rec["date"]
+                    break
+            buy_shares = round(abs(amt), 8)
+            transactions.append({
+                "date": fix_date,
+                "entries": [
+                    {"ticker": ticker, "amount": buy_shares},
+                    {"ticker": currency, "amount": -0.01},
+                ],
+            })

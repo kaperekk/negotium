@@ -16,30 +16,26 @@ from __future__ import annotations
 
 import logging
 import os
-
 import sys
 import time
-from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager, redirect_stdout, redirect_stderr
 from datetime import date, timedelta
 from typing import Callable
 
 import yfinance as yf
 
+log = logging.getLogger(__name__)
 logging.getLogger("yfinance").setLevel(logging.ERROR)
 logging.getLogger("urllib3").setLevel(logging.ERROR)
 
 
 @contextmanager
 def _suppress_output():
-    """Suppress stdout/stderr to silence yfinance download noise."""
-    devnull = open(os.devnull, "w")
-    old_stdout, old_stderr = sys.stdout, sys.stderr
-    sys.stdout, sys.stderr = devnull, devnull
-    try:
-        yield
-    finally:
-        sys.stdout, sys.stderr = old_stdout, old_stderr
-        devnull.close()
+    """Suppress stdout/stderr to silence yfinance download noise (thread-safe)."""
+    with open(os.devnull, "w") as devnull:
+        with redirect_stdout(devnull), redirect_stderr(devnull):
+            yield
 
 from storage import (
     has_price_year,
@@ -136,7 +132,7 @@ def _download_year(ticker: str, year: int) -> dict[str, float]:
             if attempt < _RETRY_ATTEMPTS - 1:
                 time.sleep(_RETRY_DELAY)
             else:
-                print(f"[ticker_data] WARNING: could not download {symbol} {year}: {exc}")
+                log.warning("could not download %s %s: %s", symbol, year, exc)
                 return {}
 
     return {}
@@ -155,9 +151,15 @@ def ensure(
     - Historical years (fully elapsed): downloaded once, never re-fetched.
     - Current year: always re-fetched so we get the latest closes.
     - Cash tickers (USD/EUR/PLN): skipped — no price data needed.
+    Also fetches and caches the ticker's company name.
     """
     if ticker.upper() in SUPPORTED_CURRENCIES:
         return  # cash holds its own value
+
+    # Ensure name is cached
+    names = load_ticker_names()
+    if ticker not in names:
+        get_ticker_name(ticker)
 
     if end_date is None:
         end_date = date.today()

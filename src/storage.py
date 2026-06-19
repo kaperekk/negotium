@@ -121,6 +121,7 @@ def rename_project(old: str, new: str) -> None:
 
 def delete_project(name: str) -> None:
     """Delete a project and all its data."""
+    global _current_project
     import shutil
     reg = _load_registry()
     if name not in reg:
@@ -130,6 +131,8 @@ def delete_project(name: str) -> None:
         shutil.rmtree(d)
     del reg[name]
     _save_registry(reg)
+    if _current_project == name:
+        _current_project = None
 
 
 def init_legacy_project() -> str | None:
