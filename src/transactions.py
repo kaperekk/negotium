@@ -21,7 +21,7 @@ Rules:
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import storage
 import config as cfg_module
@@ -80,11 +80,13 @@ def add_transaction(
         # Fast append — new date after everything
         rec = {"date": date_str, "entries": entries}
         storage.append_jsonl(storage.TRANSACTIONS_PATH, rec)
-        bal = storage.load_balance()
-        base_ccy = cfg_module.load().get("default_currency", "PLN")
-        _update_avg_prices(bal, rec, base_ccy)
-        _apply_entries(bal, entries)
-        storage.save_balance(bal)
+        yesterday_str = (date.today() - timedelta(days=1)).isoformat()
+        if date_str <= yesterday_str:
+            bal = storage.load_balance()
+            base_ccy = cfg_module.load().get("default_currency", "PLN")
+            _update_avg_prices(bal, rec, base_ccy)
+            _apply_entries(bal, entries)
+            storage.save_balance(bal)
         storage.invalidate_portfolio_from(date_str)
         return
 
@@ -189,8 +191,11 @@ def update_transaction(
 def _rebuild_balance(records: list[dict]) -> None:
     """Replay full ledger to recompute balance and avg_price from scratch."""
     base_ccy = cfg_module.load().get("default_currency", "PLN")
+    yesterday_str = (date.today() - timedelta(days=1)).isoformat()
     balance: dict[str, dict] = {}
     for rec in records:
+        if rec["date"] > yesterday_str:
+            continue
         _update_avg_prices(balance, rec, base_ccy)
         _apply_entries(balance, rec["entries"])
     storage.save_balance(balance)

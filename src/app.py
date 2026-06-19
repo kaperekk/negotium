@@ -885,18 +885,19 @@ if latest["assets"]:
     total_val = latest["total_value"] or 1.0
     bal = storage.load_balance()
 
-    # avg_price is stored in default_currency; convert to current base_ccy
-    cfg_ccy = cfg.get("default_currency", "PLN")
-    avg_fx_cache: dict = {}
-    avg_fx = get_fx_rate(cfg_ccy, base_ccy, today.isoformat(), avg_fx_cache, today.year) if cfg_ccy != base_ccy else 1.0
-
     rows = []
+    avg_fx_cache: dict = {}
     for a in sorted(latest["assets"], key=lambda x: x["value_base"], reverse=True):
         ticker = a["ticker"]
         shares = a["amount"]
         value = a["value_base"]
         avg_raw = bal.get(ticker, {}).get("avg_price", 0.0)
-        avg = avg_raw * avg_fx
+        ticker_ccy = a.get("currency", "PLN")
+        if ticker_ccy != base_ccy:
+            avg_ccy_fx = get_fx_rate(ticker_ccy, base_ccy, today.isoformat(), avg_fx_cache, today.year)
+        else:
+            avg_ccy_fx = 1.0
+        avg = avg_raw * avg_ccy_fx
         cost_basis = shares * avg
         ret_pct = ((value / cost_basis) - 1) * 100 if cost_basis else 0.0
         rows.append({
@@ -947,9 +948,9 @@ if latest["assets"]:
 
     table_html = f"""
     <style>
-    .holdings-table {{ width:100%; border-collapse:collapse; font-size:0.88rem; }}
+    .holdings-table {{ width:100%; border-collapse:collapse; font-size:1.15rem; }}
     .holdings-table th {{
-        text-align:left; padding:10px 14px; font-weight:600; font-size:0.72rem;
+        text-align:left; padding:10px 14px; font-weight:600; font-size:0.95rem;
         text-transform:uppercase; letter-spacing:0.06em; color:#8B949E;
         border-bottom:1px solid #30363D;
     }}

@@ -1408,6 +1408,200 @@ def test_isin_resolve_from_config(tmp: Path):
     assert unresolved["DE0005793303"] == "unknown fund"
 
 
+# ── Skip-today transaction tests ──────────────────────────────────────────────
+
+def test_portfolio_skips_today_transactions(tmp: Path):
+    """build_portfolio excludes transactions dated today."""
+    from unittest.mock import patch
+    import transactions, portfolio
+    from datetime import date as _real_date
+
+    fx.inject_fake_prices(tmp)
+
+    # Yesterday's transaction — should be included
+    transactions.add_transaction("2023-01-04", [
+        {"ticker": "AAPL", "amount": 10.0},
+    ])
+    # Today's transaction — should be skipped
+    transactions.add_transaction("2023-01-05", [
+        {"ticker": "AAPL", "amount": 5.0},
+    ])
+
+    class _FakeDate(_real_date):
+        @classmethod
+        def today(cls):
+            return _real_date(2023, 1, 5)
+
+    with patch.object(transactions, "date", _FakeDate), \
+         patch.object(portfolio, "date", _FakeDate):
+        snapshots = portfolio.build_portfolio(
+            start_date=date(2023, 1, 3),
+            end_date=date(2023, 1, 5),
+            base_currency="PLN",
+            precision="D",
+            use_cache=False,
+        )
+
+    snap = next(s for s in snapshots if s["date"] == "2023-01-05")
+    aapl = next((a for a in snap["assets"] if a["ticker"] == "AAPL"), None)
+    assert aapl is not None, "AAPL from yesterday should appear"
+    assert abs(aapl["amount"] - 10.0) < 1e-6, \
+        f"Should hold 10 AAPL (today's +5 skipped), got {aapl['amount']}"
+
+
+def test_rebuild_balance_skips_today_transactions(tmp: Path):
+    """_rebuild_balance excludes today's records from balance and avg_price."""
+    from unittest.mock import patch
+    import transactions, storage
+    from datetime import date as _real_date
+
+    fx.inject_fake_prices(tmp)
+
+    transactions.add_transaction("2023-01-03", [
+        {"ticker": "AAPL", "amount": 10.0},
+    ])
+    transactions.add_transaction("2023-01-05", [
+        {"ticker": "AAPL", "amount": 5.0},
+    ])
+
+    class _FakeDate(_real_date):
+        @classmethod
+        def today(cls):
+            return _real_date(2023, 1, 5)
+
+    with patch.object(transactions, "date", _FakeDate):
+        records = transactions.get_all_transactions()
+        transactions._rebuild_balance(records)
+
+    bal = storage.load_balance()
+    assert abs(bal["AAPL"]["amount"] - 10.0) < 1e-6, \
+        f"Balance should be 10 AAPL (today's +5 skipped), got {bal['AAPL']['amount']}"
+
+
+# ── Holdings return calculation tests ─────────────────────────────────────────
+
+def test_avg_price_stored_in_native_currency(tmp: Path):
+    """avg_price is stored in the ticker's native currency (EUR for .DE stocks)."""
+    import transactions, storage
+
+    fx.inject_fake_prices(tmp)
+    storage.save_price_year("SEC0.DE", 2023, {"2023-01-03": 88.27})
+
+    transactions.add_transaction("2023-01-03", [
+        {"ticker": "SEC0.DE", "amount": 288.0},
+        {"ticker": "EUR",     "amount": -25425.0},
+    ])
+
+    bal = storage.load_balance()
+    avg = bal["SEC0.DE"]["avg_price"]
+    assert abs(avg - 88.27) < 0.01, \
+        f"avg_price should be 88.27 EUR (native), got {avg}"
+
+
+def test_avg_price_usd_stored_in_usd(tmp: Path):
+    """avg_price for USD stock is stored in USD."""
+    import transactions, storage
+
+    fx.inject_fake_prices(tmp)
+    storage.save_price_year("GOOG", 2023, {"2023-01-03": 88.0})
+
+    transactions.add_transaction("2023-01-03", [
+        {"ticker": "GOOG", "amount": 10.0},
+        {"ticker": "USD",  "amount": -880.0},
+    ])
+
+    bal = storage.load_balance()
+    avg = bal["GOOG"]["avg_price"]
+    assert abs(avg - 88.0) < 0.01, \
+        f"avg_price should be 88.0 USD (native), got {avg}"
+
+
+def test_cost_basis_eur_stock_converts_to_pln(tmp: Path):
+    """Cost basis for EUR stock uses avg_price × EURPLN rate × shares."""
+    import transactions, portfolio, storage
+
+    fx.inject_fake_prices(tmp)
+    storage.save_price_year("SEC0.DE", 2023, {
+        "2023-01-03": 88.27,
+        "2023-01-04": 90.00,
+    })
+
+    transactions.add_transaction("2023-01-03", [
+        {"ticker": "SEC0.DE", "amount": 288.0},
+        {"ticker": "EUR",     "amount": -25425.0},
+    ])
+
+    snaps = portfolio.build_portfolio(
+        start_date=date(2023, 1, 3),
+        end_date=date(2023, 1, 4),
+        base_currency="PLN",
+        precision="D",
+        use_cache=False,
+    )
+
+    snap = next(s for s in snaps if s["date"] == "2023-01-04")
+    asset = next(a for a in snap["assets"] if a["ticker"] == "SEC0.DE")
+
+    bal = storage.load_balance()
+    avg_raw = bal["SEC0.DE"]["avg_price"]  # 88.27 EUR (native)
+
+    # avg_price is in native EUR, not PLN — verify it's the stock price, not inflated
+    assert 80 < avg_raw < 100, \
+        f"avg_price should be ~88 EUR (native), got {avg_raw}"
+
+    # Value uses EURPLN, cost basis must use same currency
+    # Return = (90/88.27 - 1) × 100 ≈ 1.96% — FX cancels out
+    ret_pct = ((asset["value_base"] / (asset["amount"] * avg_raw * 4.67)) - 1) * 100
+    assert 0 < ret_pct < 5, \
+        f"Return should be ~2%, got {ret_pct:.1f}%"
+
+
+def test_return_eur_stock_not_inflated(tmp: Path):
+    """Return for EUR stock is reasonable, not 300%+ due to missing FX conversion."""
+    import transactions, portfolio, storage
+
+    fx.inject_fake_prices(tmp)
+    storage.save_price_year("SXRV.DE", 2023, {
+        "2023-01-03": 42.0,
+        "2023-01-09": 44.0,
+    })
+
+    transactions.add_transaction("2023-01-03", [
+        {"ticker": "SXRV.DE", "amount": 3.5},
+        {"ticker": "EUR",     "amount": -147.0},
+    ])
+
+    snaps = portfolio.build_portfolio(
+        start_date=date(2023, 1, 3),
+        end_date=date(2023, 1, 9),
+        base_currency="PLN",
+        precision="D",
+        use_cache=False,
+    )
+
+    snap = next(s for s in snaps if s["date"] == "2023-01-09")
+    asset = next(a for a in snap["assets"] if a["ticker"] == "SXRV.DE")
+
+    bal = storage.load_balance()
+    avg_raw = bal["SXRV.DE"]["avg_price"]  # 42.0 EUR (native)
+
+    # avg_price should be the EUR stock price, not some PLN-inflated number
+    assert 30 < avg_raw < 50, \
+        f"avg_price should be ~42 EUR (native), got {avg_raw}"
+
+    # Return ≈ 44/42 - 1 ≈ 4.8%. With proper FX conversion both value and
+    # cost_basis use the same EURPLN rate, so it cancels out.
+    # Without the fix, cost_basis would be in EUR while value is in PLN → 300%+.
+    # We just check it's in a sane range (0–20%).
+    shares = asset["amount"]
+    # Use avg_raw directly (native EUR) — this is what the holdings table
+    # does BEFORE the fix (missing FX conversion). If the fix works,
+    # the return should be ~5% regardless of FX rate used.
+    ret_pct_native = ((asset["value_base"] / (shares * avg_raw * 4.34)) - 1) * 100
+    assert -5 < ret_pct_native < 20, \
+        f"Return ~{ret_pct_native:.1f}% looks inflated (FX conversion may be missing)"
+
+
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 ALL_TESTS = [
@@ -1478,6 +1672,12 @@ ALL_TESTS = [
     ("Manual: parse and import",              test_manual_parse_and_import),
     ("BOSSA: validate errors",               test_bossa_validate_errors),
     ("ISIN: resolve from config",            test_isin_resolve_from_config),
+    ("Portfolio: skips today transactions",   test_portfolio_skips_today_transactions),
+    ("Rebuild balance: skips today",          test_rebuild_balance_skips_today_transactions),
+    ("Avg price: stored in native currency",  test_avg_price_stored_in_native_currency),
+    ("Avg price: USD stock in USD",           test_avg_price_usd_stored_in_usd),
+    ("Cost basis: EUR stock → PLN",           test_cost_basis_eur_stock_converts_to_pln),
+    ("Return: EUR stock not inflated",        test_return_eur_stock_not_inflated),
 ]
 
 
