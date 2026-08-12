@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import csv
 import io
+import logging
 import re
 from pathlib import Path
 
@@ -27,6 +28,8 @@ import storage
 import config as cfg_module
 from transactions import get_all_transactions
 from isin_resolve import resolve_isins_with_names
+
+log = logging.getLogger(__name__)
 
 DETAILS_RE = re.compile(
     r"^(.+?)\s*\(([A-Z0-9]{12})\)\s+"
@@ -78,6 +81,7 @@ def _parse_float(val: str) -> float | None:
 
 def parse_bossa_csv(file_path: str | Path, currency: str, progress_cb=None) -> list[dict]:
     currency = currency.upper()
+    log.info("Parsing %s (currency=%s)", file_path, currency)
 
     text = _read_csv_text(file_path)
     reader = csv.reader(io.StringIO(text), delimiter=";")
@@ -161,6 +165,9 @@ def parse_bossa_csv(file_path: str | Path, currency: str, progress_cb=None) -> l
         else:
             merged.append({"date": rec["date"], "entries": list(rec["entries"])})
 
+    log.info("Parsed %d raw transactions, merged to %d daily records", len(transactions), len(merged))
+    log.info("Unresolved ISINs: %d", len(still_unresolved))
+
     _fix_negative_positions(merged, currency)
 
     return merged, still_unresolved
@@ -177,8 +184,10 @@ def _existing_keys() -> set[tuple[str, str, float]]:
 
 
 def import_bossa(file_path: str | Path, currency: str, progress_cb=None) -> dict:
+    log.info("=== BOSSA import: %s (currency=%s) ===", file_path, currency)
     valid, msg = validate_bossa_file(file_path)
     if not valid:
+        log.error("Validation failed: %s", msg)
         return {"success": False, "error": msg}
 
     transactions, unresolved = parse_bossa_csv(file_path, currency, progress_cb=progress_cb)
@@ -198,6 +207,7 @@ def import_bossa(file_path: str | Path, currency: str, progress_cb=None) -> dict
         else:
             skipped += 1
 
+    log.info("Result: %d imported, %d skipped (duplicates)", imported, skipped)
     result = {"success": True, "imported": imported, "skipped": skipped}
     if unresolved:
         lines = [f"  {isin} ({name})" for isin, name in sorted(unresolved.items())]

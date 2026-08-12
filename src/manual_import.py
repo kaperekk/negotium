@@ -6,9 +6,12 @@ Parses a JSON file containing an array of transactions in Negotium format.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 from transactions import get_all_transactions
+
+log = logging.getLogger(__name__)
 
 
 def validate_manual_file(file_path: str | Path) -> tuple[bool, str]:
@@ -61,8 +64,10 @@ def _existing_keys() -> set[tuple[str, str, float]]:
 
 
 def import_manual(file_path: str | Path) -> dict:
+    log.info("=== Manual import: %s ===", file_path)
     valid, msg = validate_manual_file(file_path)
     if not valid:
+        log.error("Validation failed: %s", msg)
         return {"success": False, "error": msg}
 
     transactions = parse_manual_json(file_path)
@@ -82,4 +87,5 @@ def import_manual(file_path: str | Path) -> dict:
         else:
             skipped += 1
 
+    log.info("Result: %d imported, %d skipped (duplicates)", imported, skipped)
     return {"success": True, "imported": imported, "skipped": skipped}

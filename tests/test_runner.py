@@ -282,6 +282,92 @@ def test_get_fx_rate_usd_to_pln(tmp: Path):
     assert abs(rate - 4.38) < 0.01, f"Expected ~4.38, got {rate}"
 
 
+def test_get_fx_rate_stale_usd_uses_latest(tmp: Path):
+    """Stale USDPLN must fall back to the latest cached rate, not collapse to 1.0."""
+    import ticker_data
+
+    fx.inject_fake_prices(tmp)  # USDPLN has no value for 2023-03-01
+    cache: dict = {}
+    rate = ticker_data.get_fx_rate("USD", "PLN", "2023-03-01", cache, 2023)
+    assert rate > 3.0, f"USD→PLN collapsed to {rate} (should use latest ~3.98)"
+    assert abs(rate - 3.98) < 0.01, f"Expected latest ~3.98, got {rate}"
+
+
+def test_get_fx_rate_stale_invertible(tmp: Path):
+    """USD↔PLN must be near-inverses even on stale data (not 1.0 in any direction)."""
+    import ticker_data
+
+    fx.inject_fake_prices(tmp)
+    cache: dict = {}
+    up = ticker_data.get_fx_rate("USD", "PLN", "2023-03-01", cache, 2023)
+    pu = ticker_data.get_fx_rate("PLN", "USD", "2023-03-01", cache, 2023)
+    assert up > 3.0, f"USD→PLN fell back to {up}"
+    assert pu > 0.2, f"PLN→USD fell back to {pu}"
+    assert abs(up * pu - 1.0) < 0.02, f"rates not inverses: {up} * {pu}"
+
+
+def test_get_fx_rate_gbp_triangulates(tmp: Path):
+    """GBP→EUR and GBP→USD derive via PLN pairs instead of returning 1.0."""
+    import ticker_data
+
+    cache = {
+        "GBPPLN": {2023: {"2023-01-03": 5.0}},
+        "EURPLN": {2023: {"2023-01-03": 4.5}},
+        "USDPLN": {2023: {"2023-01-03": 4.4}},
+    }
+    gbp_eur = ticker_data.get_fx_rate("GBP", "EUR", "2023-01-03", cache, 2023)
+    assert abs(gbp_eur - (5.0 / 4.5)) < 0.01, f"GBP→EUR got {gbp_eur}"
+    gbp_usd = ticker_data.get_fx_rate("GBP", "USD", "2023-01-03", cache, 2023)
+    assert abs(gbp_usd - (5.0 / 4.4)) < 0.01, f"GBP→USD got {gbp_usd}"
+
+
+def test_holdings_weights_currency_invariant(tmp: Path):
+    """Position weights must not change when the base currency changes (no FX→1.0)."""
+    import json
+    import transactions, portfolio, storage
+
+    def write(ticker, year, prices):
+        d = tmp / "data" / "prices" / ticker
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{year}.json").write_text(json.dumps(prices))
+
+    # EURPLN and EURUSD are fresh on 2023-03-05; USDPLN is stale (only 2023-01-05).
+    write("EURPLN", 2023, {"2023-03-05": 4.84})
+    write("EURUSD", 2023, {"2023-03-05": 1.10})
+    write("USDPLN", 2023, {"2023-01-05": 4.40})
+    write("GOOG", 2023, {"2023-03-05": 100.0})
+    write("SEC0.DE", 2023, {"2023-03-05": 80.0})
+
+    transactions.add_transaction("2023-03-05", [
+        {"ticker": "PLN", "amount": 10000.0, "account_operation": True},
+    ])
+    transactions.add_transaction("2023-03-05", [
+        {"ticker": "USD", "amount": -1000.0},
+        {"ticker": "GOOG", "amount": 10.0},
+    ])
+    transactions.add_transaction("2023-03-05", [
+        {"ticker": "EUR", "amount": -800.0},
+        {"ticker": "SEC0.DE", "amount": 10.0},
+    ])
+
+    def weights(base):
+        snaps = portfolio.build_portfolio(
+            start_date=date(2023, 3, 5), end_date=date(2023, 3, 5),
+            base_currency=base, precision="D", use_cache=False,
+        )
+        latest = snaps[-1]
+        tv = latest["total_value"]
+        assert tv > 0
+        return {a["ticker"]: a["value_base"] / tv for a in latest["assets"]}
+
+    w_pln = weights("PLN")
+    w_usd = weights("USD")
+    assert set(w_pln) == set(w_usd)
+    for ticker in w_pln:
+        assert abs(w_pln[ticker] - w_usd[ticker]) < 0.01, \
+            f"weight of {ticker} differs by currency: {w_pln[ticker]:.4f} vs {w_usd[ticker]:.4f}"
+
+
 def test_invalidate_portfolio(tmp: Path):
     """invalidate_portfolio_from removes snapshots on/after the given date."""
     import storage
@@ -1642,6 +1728,10 @@ ALL_TESTS = [
     ("Prices: cash returns 1.0",              test_get_price_cash_returns_one),
     ("FX: same-currency rate is 1.0",         test_get_fx_rate_same_currency),
     ("FX: USD→PLN from cache",                test_get_fx_rate_usd_to_pln),
+    ("FX: stale USD→PLN uses latest",         test_get_fx_rate_stale_usd_uses_latest),
+    ("FX: stale USD↔PLN invertible",          test_get_fx_rate_stale_invertible),
+    ("FX: GBP triangulates",                  test_get_fx_rate_gbp_triangulates),
+    ("Holdings: weights currency invariant",  test_holdings_weights_currency_invariant),
     ("Portfolio: invalidate cache",           test_invalidate_portfolio),
     ("Portfolio: single asset PLN value",     test_portfolio_build_single_asset),
     ("Portfolio: cash-only",                  test_portfolio_build_cash_only),

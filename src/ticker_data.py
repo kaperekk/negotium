@@ -227,6 +227,30 @@ def get_price(
     return None
 
 
+def _latest_price(
+    ticker: str,
+    cache: dict,
+    year: int,
+) -> float | None:
+    """
+    Return the most recent cached price for ticker, scanning loaded slabs.
+
+    Used as a fallback when the priced date is missing (stale cache), so FX
+    conversions do not silently collapse to 1.0. Returns None if unavailable.
+    """
+    if ticker.upper() in SUPPORTED_CURRENCIES:
+        return 1.0
+    if ticker not in cache or not isinstance(cache[ticker], dict):
+        if ticker not in cache:
+            return None
+    for y in sorted(cache[ticker].keys(), reverse=True):
+        slab = cache[ticker].get(y) or {}
+        if not slab:
+            continue
+        return slab[max(slab.keys())]
+    return None
+
+
 def get_fx_rate(
     from_ccy: str,
     to_ccy: str,
@@ -236,29 +260,38 @@ def get_fx_rate(
 ) -> float:
     """
     Return exchange rate from_ccy → to_ccy on on_date.
-    Falls back to 1.0 if same currency or rate unavailable.
+
+    Looks up the exact date first, then falls back to the most recent cached
+    rate for the same conversion so stale data does not produce a bogus 1.0.
+    Falls back to 1.0 only if no rate is available at all.
     """
     if from_ccy == to_ccy:
         return 1.0
 
-    pair = f"{from_ccy}{to_ccy}"
+    pair    = f"{from_ccy}{to_ccy}"
     reverse = f"{to_ccy}{from_ccy}"
+
+    def _rate(ticker: str) -> float | None:
+        v = get_price(ticker, on_date, cache, year)
+        if v is not None:
+            return v
+        return _latest_price(ticker, cache, year)
 
     # Try direct pair
     if pair in FX_YAHOO:
-        rate = get_price(pair, on_date, cache, year)
+        rate = _rate(pair)
         if rate is not None:
             return rate
 
     # Try reverse pair
     if reverse in FX_YAHOO:
-        rate = get_price(reverse, on_date, cache, year)
+        rate = _rate(reverse)
         if rate is not None and rate != 0:
             return 1.0 / rate
 
     # Triangulate via USD for currencies without direct pair
-    usd_pln = get_price("USDPLN", on_date, cache, year)
-    eur_usd = get_price("EURUSD", on_date, cache, year)
+    usd_pln = _rate("USDPLN")
+    eur_usd = _rate("EURUSD")
 
     if from_ccy == "EUR" and to_ccy == "PLN" and eur_usd and usd_pln:
         return eur_usd * usd_pln
@@ -275,19 +308,27 @@ def get_fx_rate(
 
     # Triangulate via USD for currencies without direct {ccy}PLN pair
     if from_ccy in TRIANGULATE_VIA_USD and to_ccy == "PLN":
-        ccy_usd = get_price(f"{from_ccy}USD", on_date, cache, year)
+        ccy_usd = _rate(f"{from_ccy}USD")
         if ccy_usd and usd_pln:
             return ccy_usd * usd_pln
     if to_ccy in TRIANGULATE_VIA_USD and from_ccy == "PLN":
-        ccy_usd = get_price(f"{to_ccy}USD", on_date, cache, year)
+        ccy_usd = _rate(f"{to_ccy}USD")
         if ccy_usd and usd_pln and ccy_usd != 0:
             return 1.0 / (ccy_usd * usd_pln)
 
     # General triangulation via USD for any unsupported cross pair
     if from_ccy not in ("USD", to_ccy) and to_ccy not in ("USD", from_ccy):
-        from_usd = get_price(f"{from_ccy}USD", on_date, cache, year) if f"{from_ccy}USD" in FX_YAHOO else None
-        to_usd = get_price(f"{to_ccy}USD", on_date, cache, year) if f"{to_ccy}USD" in FX_YAHOO else None
+        from_usd = _rate(f"{from_ccy}USD") if f"{from_ccy}USD" in FX_YAHOO else None
+        to_usd   = _rate(f"{to_ccy}USD") if f"{to_ccy}USD" in FX_YAHOO else None
         if from_usd and to_usd and to_usd != 0:
             return from_usd / to_usd
 
+    # Triangulate any two non-PLN currencies via their PLN pairs
+    if from_ccy != "PLN" and to_ccy != "PLN":
+        a = _rate(f"{from_ccy}PLN")
+        b = _rate(f"{to_ccy}PLN")
+        if a and b and a != 0:
+            return a / b
+
+    log.warning("FX rate %s→%s unavailable for %s, assuming 1.0", from_ccy, to_ccy, on_date)
     return 1.0  # last-resort fallback

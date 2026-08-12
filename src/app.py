@@ -9,6 +9,7 @@ import sys
 import time
 import json
 import html
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from datetime import date, datetime, timedelta
@@ -51,6 +52,11 @@ st.set_page_config(
 
 st.markdown("""
 <style>
+    /* ── Global ─────────────────────────────────────────────────────────── */
+    html, body, [class*="css"] {
+        font-size: 18px !important;
+    }
+
     /* ── Metric cards ──────────────────────────────────────────────────── */
     [data-testid="metric-container"] {
         background: linear-gradient(135deg, #161B22 0%, #1C2333 100%);
@@ -66,7 +72,7 @@ st.markdown("""
     [data-testid="metric-container"] [class*="Label"],
     [data-testid="metric-container"] [class*="Label"] p {
         color: #8B949E !important;
-        font-size: 0.85rem !important;
+        font-size: 1rem !important;
         font-weight: 600 !important;
         text-transform: uppercase;
         letter-spacing: 0.06em;
@@ -75,6 +81,7 @@ st.markdown("""
     [data-testid="metric-container"] [data-testid="stMetricValue"],
     [data-testid="metric-container"] [class*="Value"],
     [data-testid="metric-container"] [class*="Value"] p {
+        font-size: 2rem !important;
         font-weight: 700 !important;
     }
 
@@ -101,7 +108,7 @@ st.markdown("""
         gap: 0.3rem;
     }
     [data-testid="stSidebar"] [data-testid="stMarkdown"] h1 {
-        font-size: 1.8rem !important;
+        font-size: 2rem !important;
         text-align: center !important;
         margin-top: -1rem !important;
         padding-top: 0 !important;
@@ -110,6 +117,9 @@ st.markdown("""
     /* ── Main content spacing ──────────────────────────────────────────── */
     .block-container {
         padding-top: 2.5rem !important;
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
+        max-width: 100% !important;
     }
 
     /* ── Expanders ─────────────────────────────────────────────────────── */
@@ -150,6 +160,31 @@ if current is None:
         storage.create_project("default")
         current = storage.get_current_project()
         projects = storage.list_projects()
+
+# ── Import logging ────────────────────────────────────────────────────────────
+
+_log_dir = storage._project_dir()
+_log_dir.mkdir(parents=True, exist_ok=True)
+_log_file = _log_dir / "import.log"
+
+_import_logger = logging.getLogger("negotium.imports")
+_import_logger.setLevel(logging.DEBUG)
+if not any(isinstance(h, logging.FileHandler) and h.baseFilename == str(_log_file.resolve())
+           for h in _import_logger.handlers):
+    _fh = logging.FileHandler(str(_log_file), encoding="utf-8")
+    _fh.setLevel(logging.DEBUG)
+    _fh.setFormatter(logging.Formatter("%(asctime)s | %(name)s | %(levelname)s | %(message)s"))
+    _import_logger.addHandler(_fh)
+    _import_logger.propagate = False
+
+    # Route import-module loggers to the same file
+    for mod_name in ("xtb_import", "bossa_import", "manual_import"):
+        _child = logging.getLogger(mod_name)
+        _child.setLevel(logging.DEBUG)
+        if not any(isinstance(h, logging.FileHandler) and h.baseFilename == str(_log_file.resolve())
+                   for h in _child.handlers):
+            _child.addHandler(_fh)
+            _child.propagate = False
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -223,10 +258,21 @@ with st.sidebar:
     if base_ccy is None:
         base_ccy = ccy_options[st.session_state.get("base_ccy_idx", ccy_default)]
 
-    range_option = st.selectbox(
+    _range_opts = ["All time", "This year", "Last 12 months", "Last 3 months", "Custom"]
+    if "_range" not in st.session_state:
+        st.session_state["_range"] = "All time"
+
+    def _on_range_change():
+        st.session_state["_range"] = st.session_state["range_widget"]
+
+    st.selectbox(
         "Range",
-        ["All time", "This year", "Last 12 months", "Last 3 months", "Custom"],
+        _range_opts,
+        key="range_widget",
+        index=_range_opts.index(st.session_state["_range"]),
+        on_change=_on_range_change,
     )
+    range_option = st.session_state["_range"]
     if range_option == "All time":
         chart_start, chart_end = start_date_cfg, today
     elif range_option == "This year":
@@ -239,10 +285,12 @@ with st.sidebar:
         ca, cb = st.columns(2)
         with ca:
             chart_start = st.date_input("From", value=start_date_cfg,
-                                        min_value=start_date_cfg, max_value=today)
+                                        min_value=start_date_cfg, max_value=today,
+                                        key="range_from")
         with cb:
             chart_end = st.date_input("To", value=today,
-                                      min_value=start_date_cfg, max_value=today)
+                                      min_value=start_date_cfg, max_value=today,
+                                      key="range_to")
 
     with st.expander("⚙️ Settings"):
         st.subheader("Ticker rules")
@@ -584,6 +632,7 @@ all_snapshots: list[dict] = st.session_state[cache_key]
 BENCHMARKS = {
     "NASDAQ 100 (SXRV.DE)": "SXRV.DE",
     "S&P 500 (I500.DE)": "I500.DE",
+    "Vanguard FTSE All-World (VWCE.DE)": "VWCE.DE",
     "Emerging Markets (IS3N.DE)": "IS3N.DE",
     "Bitcoin (BTCE.DE)": "BTCE.DE",
     "Gold (4GLD.DE)": "4GLD.DE",
@@ -591,17 +640,46 @@ BENCHMARKS = {
 BENCH_COLORS = {
     "NASDAQ 100 (SXRV.DE)": "#06b6d4",
     "S&P 500 (I500.DE)": "#22c55e",
+    "Vanguard FTSE All-World (VWCE.DE)": "#f97316",
     "Emerging Markets (IS3N.DE)": "#8b5cf6",
     "Bitcoin (BTCE.DE)": "#ef4444",
     "Gold (4GLD.DE)": "#eab308",
 }
 
+# ── Download data for selected benchmarks ─────────────────────────────────────
+bench_persist = st.session_state.get("bench_persist", [])
+if bench_persist:
+    bench_date_start = date.fromisoformat(all_snapshots[0]["date"])
+    bench_date_end = date.fromisoformat(all_snapshots[-1]["date"])
+    bench_tickers_needed = [BENCHMARKS[k] for k in bench_persist if k in BENCHMARKS]
+    bench_missing = [
+        t for t in bench_tickers_needed
+        if t not in storage.SUPPORTED_CURRENCIES
+        and not storage.has_price_year(t, today.year)
+    ]
+    if bench_missing:
+        bench_dl = st.progress(0, text="Downloading benchmark data…")
+        for i, t in enumerate(bench_missing):
+            bench_dl.progress(i / len(bench_missing), text=f"Downloading {t}…")
+            try:
+                ensure_ticker(t, bench_date_start, bench_date_end,
+                              force_refresh_current_year=True)
+            except Exception as e:
+                st.warning(f"Could not download {t}: {e}")
+        bench_dl.progress(1.0, text="Done")
+        bench_dl.empty()
+        # Clear benchmark cache so new data is used
+        for k in list(st.session_state.keys()):
+            if k.startswith("benchmarks_"):
+                del st.session_state[k]
+
 # ── Compute & cache benchmarks ────────────────────────────────────────────────
 
-bench_cache_key = f"benchmarks_{base_ccy}_{len(all_snapshots)}"
+bench_cache_key = f"benchmarks_{base_ccy}_{len(all_snapshots)}_{len(BENCHMARKS)}"
 if bench_cache_key not in st.session_state:
     cached = storage.load_benchmarks(base_ccy)
-    if cached and len(cached) == len(all_snapshots):
+    if (cached and len(cached) == len(all_snapshots)
+            and all(k in cached[0] for k in BENCHMARKS.values())):
         st.session_state[bench_cache_key] = cached
     else:
         bench_date_start = date.fromisoformat(all_snapshots[0]["date"])
@@ -731,7 +809,7 @@ st.markdown("""
         width: 100% !important;
         transition: all 0.2s ease !important;
         color: #E6EDF3 !important;
-        font-size: 1.5rem !important;
+        font-size: 1.7rem !important;
         font-weight: 600 !important;
     }
     div[data-testid="stHorizontalBlock"] > div:has(button[kind="secondary"]) button[kind="secondary"]:hover,
@@ -745,7 +823,7 @@ st.markdown("""
         box-shadow: 0 2px 12px rgba(108,99,255,0.2) !important;
     }
     div[data-testid="stHorizontalBlock"] button p {
-        font-size: 1.2rem !important;
+        font-size: 1.4rem !important;
         font-weight: 600 !important;
     }
 </style>
@@ -782,47 +860,48 @@ fig = go.Figure()
 
 if chart_mode == "amount":
     fig.add_trace(go.Scatter(
-        x=dates, y=values,
+        x=dates, y=[round(v, 2) for v in values],
         name=f"Portfolio ({base_ccy})",
         fill="tozeroy",
         line=dict(color="#6C63FF", width=2.5),
         fillcolor="rgba(108,99,255,0.08)",
-        customdata=[f"Portfolio: {v:,.1f} {base_ccy}" for v in values],
-        hovertemplate="%{x|%d %b %y}<br><b>%{customdata}</b><extra></extra>",
+        customdata=[f"{v:,.2f}".replace(",", " ") + f" {base_ccy}" for v in values],
+        hovertemplate="%{customdata}<extra>Portfolio</extra>",
     ))
     fig.add_trace(go.Scatter(
-        x=dates, y=investeds,
-        name="Invested capital",
+        x=dates, y=[round(v, 2) for v in investeds],
+        name="Invested",
         line=dict(color="#94a3b8", width=1.5, dash="dot"),
-        customdata=[f"Invested: {v:,.1f} {base_ccy}" for v in investeds],
-        hovertemplate="%{x|%d %b %y}<br>%{customdata}<extra></extra>",
+        customdata=[f"{v:,.2f}".replace(",", " ") + f" {base_ccy}" for v in investeds],
+        hovertemplate="%{customdata}<extra>Invested</extra>",
     ))
     yaxis_cfg = dict(
         showgrid=True, gridcolor="rgba(48,54,61,0.6)",
-        zeroline=False, tickfont=dict(size=11, color="#8B949E"), tickformat=",.1f",
+        zeroline=False, tickfont=dict(size=20, color="#8B949E"), tickformat=",.2f",
         ticksuffix=f" {base_ccy}" if base_ccy == "PLN" else "",
         tickprefix="" if base_ccy == "PLN" else SYM[base_ccy],
+        title=dict(font=dict(size=18, color="#8B949E")),
     )
 else:
     pct_values = []
     for v, inv in zip(values, investeds):
-        pct_values.append(((v / inv) - 1.0) * 100.0 if inv else 0.0)
+        pct_values.append(round(((v / inv) - 1.0) * 100.0, 2) if inv else 0.0)
     fig.add_trace(go.Scatter(
         x=dates, y=pct_values,
         name="Return (%)",
         fill="tozeroy",
         line=dict(color="#6C63FF", width=2.5),
         fillcolor="rgba(108,99,255,0.08)",
-        customdata=[f"Return: {v:+.1f}%" for v in pct_values],
-        hovertemplate="%{x|%d %b %y}<br><b>%{customdata}</b><extra></extra>",
+        hovertemplate="%{y:+.2f}%<extra>Return</extra>",
     ))
     span = max(abs(min(pct_values)), abs(max(pct_values))) if pct_values else 1
     yaxis_cfg = dict(
         showgrid=True, gridcolor="rgba(48,54,61,0.6)",
         zeroline=True, zerolinecolor="rgba(48,54,61,0.8)",
-        tickfont=dict(size=11, color="#8B949E"),
+        tickfont=dict(size=20, color="#8B949E"),
         ticksuffix="%",
         tickformat="+.1f",
+        title=dict(font=dict(size=18, color="#8B949E")),
     )
 
 bench_selected = {
@@ -837,42 +916,58 @@ for bench_label, bench_ticker in BENCHMARKS.items():
     bench_vals = [bench_by_date.get(d, {}).get(bench_ticker, 0.0) for d in dates]
     if chart_mode == "percent":
         bench_pcts = [
-            ((bv / inv) - 1.0) * 100.0 if inv else 0.0
+            round(((bv / inv) - 1.0) * 100.0, 2) if inv else 0.0
             for bv, inv in zip(bench_vals, investeds)
         ]
         fig.add_trace(go.Scatter(
             x=dates, y=bench_pcts,
             name=bench_label,
             line=dict(color=BENCH_COLORS[bench_label], width=1.5, dash="dot"),
-            customdata=[f"{bench_label}: {v:+.1f}%" for v in bench_pcts],
-            hovertemplate=f"%{{x|%d %b %y}}<br>%{{customdata}}<extra></extra>",
+            hovertemplate="%{y:+.2f}%<extra>" + bench_label + "</extra>",
         ))
     else:
         fig.add_trace(go.Scatter(
             x=dates, y=bench_vals,
             name=bench_label,
             line=dict(color=BENCH_COLORS[bench_label], width=1.5, dash="dot"),
-            customdata=[f"{bench_label}: {v:,.1f} {base_ccy}" for v in bench_vals],
-            hovertemplate=f"%{{x|%d %b %y}}<br>%{{customdata}}<extra></extra>",
+            customdata=[f"{v:,.2f}".replace(",", " ") + f" {base_ccy}" for v in bench_vals],
+            hovertemplate="%{customdata}<extra>" + bench_label + "</extra>",
         ))
 
+if chart_mode == "amount":
+    ys = [v for tr in fig.data if tr.y is not None for v in tr.y if v is not None]
+    if ys:
+        lo, hi = min(ys), max(ys)
+        pad = (hi - lo) * 0.05 or 1.0
+        yaxis_cfg["range"] = [lo - pad, hi + pad]
+
 fig.update_layout(
-    height=450,
-    margin=dict(l=0, r=0, t=16, b=0),
+    height=700,
+    margin=dict(l=0, r=0, t=20, b=0),
     paper_bgcolor="rgba(0,0,0,0)",
     plot_bgcolor="rgba(0,0,0,0)",
     legend=dict(
-        orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
-        font=dict(size=12, color="#8B949E"),
+        orientation="h", yanchor="bottom", y=1.03, xanchor="right", x=1,
+        font=dict(size=20, color="#8B949E"),
     ),
-    xaxis=dict(showgrid=False, zeroline=False, tickfont=dict(size=11, color="#8B949E")),
+    xaxis=dict(
+        showgrid=False, zeroline=False,
+        tickfont=dict(size=20, color="#8B949E"),
+        title=dict(font=dict(size=18, color="#8B949E")),
+    ),
     yaxis=yaxis_cfg,
     hovermode="x unified",
-    font=dict(family="sans-serif"),
+    hoverlabel=dict(
+        bgcolor="rgba(22,27,34,0.95)",
+        bordercolor="#30363D",
+        font=dict(size=18, color="#E6EDF3", family="sans-serif"),
+        namelength=-1,
+    ),
+    font=dict(family="sans-serif", size=20),
 )
 st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
-st.multiselect(
+bench_selected_keys = st.multiselect(
     "What-if benchmarks",
     options=list(BENCHMARKS.keys()),
     key="bench_select",
@@ -953,13 +1048,13 @@ if latest["assets"]:
 
     table_html = f"""
     <style>
-    .holdings-table {{ width:100%; border-collapse:collapse; font-size:1.15rem; }}
+    .holdings-table {{ width:100%; border-collapse:collapse; font-size:1.3rem; }}
     .holdings-table th {{
-        text-align:left; padding:10px 14px; font-weight:600; font-size:0.95rem;
+        text-align:left; padding:12px 16px; font-weight:600; font-size:1.1rem;
         text-transform:uppercase; letter-spacing:0.06em; color:#8B949E;
         border-bottom:1px solid #30363D;
     }}
-    .holdings-table td {{ padding:10px 14px; border-bottom:1px solid #21262D; color:#C9D1D9; }}
+    .holdings-table td {{ padding:12px 16px; border-bottom:1px solid #21262D; color:#C9D1D9; }}
     .holdings-table tr:hover td {{ background:rgba(108,99,255,0.06); }}
     .holdings-table .num {{ text-align:right; font-variant-numeric:tabular-nums; }}
     .ticker-cell {{ position:relative; overflow:hidden; }}
@@ -967,8 +1062,8 @@ if latest["assets"]:
         position:absolute; top:0; left:0; height:100%; opacity:0.10;
         border-radius:4px; transition:width 0.3s ease;
     }}
-    .ticker-text {{ position:relative; font-weight:600; color:#E6EDF3; }}
-    .ticker-sub {{ position:relative; display:block; font-size:0.78em; color:#8B949E; font-weight:400; }}
+    .ticker-text {{ position:relative; font-weight:600; color:#E6EDF3; font-size:1.2rem; }}
+    .ticker-sub {{ position:relative; display:block; font-size:0.85em; color:#8B949E; font-weight:400; }}
     </style>
     <table class="holdings-table">
     <thead>{header}</thead>

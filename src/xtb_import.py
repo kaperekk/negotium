@@ -11,6 +11,7 @@ Comment patterns:
 """
 from __future__ import annotations
 
+import logging
 import re
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -22,6 +23,8 @@ import storage
 import config as cfg_module
 from transactions import get_all_transactions
 from ticker_translate import translate_ticker
+
+log = logging.getLogger(__name__)
 
 SHARE_RE = re.compile(r"(?:OPEN|CLOSE)\s+BUY\s+([\d.]+)")
 TRANSFER_RATE_RE = re.compile(r"Exchange rate:\s*([\d.]+)")
@@ -111,18 +114,22 @@ def validate_xtb_file(file_path: str | Path) -> tuple[bool, str]:
 def parse_xtb_excel(file_path: str | Path, currency: str) -> list[dict]:
     currency = currency.upper()
     rules = cfg_module.load().get("ticker_rules", [])
+    log.info("Parsing %s (currency=%s)", file_path, currency)
 
     wb, engine = _open_workbook(file_path)
 
     raw: list[dict] = []
+    header: list[str] = []
 
     if engine == "openpyxl":
         ws = wb["Cash Operations"]
         rows_iter = ws.iter_rows(values_only=True)
         for i, row in enumerate(rows_iter):
-            if i < 5:
+            if not header and any(str(c).strip().lower() == "type" for c in row if c):
+                header = [str(c) if c else "" for c in row]
                 continue
-            raw.append(row)
+            if header:
+                raw.append(row)
         wb.close()
     else:
         df = wb.parse("Cash Operations", header=None)
@@ -132,30 +139,55 @@ def parse_xtb_excel(file_path: str | Path, currency: str) -> list[dict]:
         for idx, row in df.iterrows():
             if row.iloc[0] == "Type":
                 header_idx = idx + 1
+                header = [str(c) if c else "" for c in row]
                 break
         df.columns = df.iloc[header_idx - 1].values
         df = df.iloc[header_idx:].reset_index(drop=True)
         raw = [tuple(row) for _, row in df.iterrows()]
 
+    # Build column index map from header (handles different XTB export layouts)
+    col = {name.strip().lower(): i for i, name in enumerate(header) if name.strip()}
+    log.info("Columns detected: %s", list(col.keys()))
+
+    def _col(name: str) -> int | None:
+        return col.get(name.lower())
+
+    idx_type     = _col("type")
+    idx_ticker   = _col("ticker")
+    idx_time     = _col("time")
+    idx_amount   = _col("amount")
+    idx_comment  = _col("comment")
+
+    skipped_no_type = 0
+    skipped_no_amount = 0
+    skipped_no_time = 0
+    skipped_unknown_type = 0
     transactions: list[dict] = []
+    seen_types: dict[str, int] = {}
     for row in raw:
-        op_type = row[0]
-        ticker = row[1]
-        time_val = row[3]
-        amount = row[4]
-        comment = row[6] if len(row) > 6 else None
+        op_type     = row[idx_type]     if idx_type     is not None and idx_type     < len(row) else None
+        ticker      = row[idx_ticker]   if idx_ticker   is not None and idx_ticker   < len(row) else None
+        time_val    = row[idx_time]     if idx_time     is not None and idx_time     < len(row) else None
+        amount      = row[idx_amount]   if idx_amount   is not None and idx_amount   < len(row) else None
+        comment     = row[idx_comment]  if idx_comment  is not None and idx_comment  < len(row) else None
 
         if not op_type or op_type == "Total":
+            skipped_no_type += 1
             continue
         if amount is None or (isinstance(amount, float) and pd.isna(amount)):
+            skipped_no_amount += 1
             continue
+
+        seen_types[op_type] = seen_types.get(op_type, 0) + 1
 
         if isinstance(time_val, str):
             try:
                 time_val = datetime.fromisoformat(time_val)
             except ValueError:
+                skipped_no_time += 1
                 continue
         if not isinstance(time_val, datetime):
+            skipped_no_time += 1
             continue
 
         date_str = time_val.strftime("%Y-%m-%d")
@@ -191,6 +223,10 @@ def parse_xtb_excel(file_path: str | Path, currency: str) -> list[dict]:
         if entries:
             transactions.append({"date": date_str, "entries": entries})
 
+    log.info("Row types seen: %s", dict(seen_types))
+    log.info("Skipped: %d no type/total, %d no amount, %d no valid time",
+             skipped_no_type, skipped_no_amount, skipped_no_time)
+
     transactions.sort(key=lambda r: r["date"])
 
     merged: list[dict] = []
@@ -200,7 +236,11 @@ def parse_xtb_excel(file_path: str | Path, currency: str) -> list[dict]:
         else:
             merged.append({"date": rec["date"], "entries": list(rec["entries"])})
 
+    log.info("Parsed %d raw transactions, merged to %d daily records", len(transactions), len(merged))
+
     _fix_negative_positions(merged, currency)
+
+    log.info("Final: %d records with %d total entries", len(merged), sum(len(r["entries"]) for r in merged))
 
     return merged
 
@@ -217,8 +257,10 @@ def _existing_keys() -> set[tuple[str, str, float]]:
 
 
 def import_xtb(file_path: str | Path, currency: str) -> dict:
+    log.info("=== XTB import: %s (currency=%s) ===", file_path, currency)
     valid, msg = validate_xtb_file(file_path)
     if not valid:
+        log.error("Validation failed: %s", msg)
         return {"success": False, "error": msg}
 
     transactions = parse_xtb_excel(file_path, currency)
@@ -238,4 +280,5 @@ def import_xtb(file_path: str | Path, currency: str) -> dict:
         else:
             skipped += 1
 
+    log.info("Result: %d imported, %d skipped (duplicates)", imported, skipped)
     return {"success": True, "imported": imported, "skipped": skipped}
