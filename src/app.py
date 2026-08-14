@@ -27,6 +27,7 @@ from portfolio import FX_TICKERS
 from transactions import (
     add_transaction, get_all_transactions, get_all_tickers,
     set_account_operation, delete_transaction, update_transaction,
+    get_ticker_history, rebuild_balance, compute_cagr, compute_irr,
 )
 from portfolio import build_portfolio, snapshots_to_series
 from xtb_import import import_xtb
@@ -196,8 +197,38 @@ precision      = "D"
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
 with st.sidebar:
+    st.markdown("""
+    <style>
+    [data-testid="stSidebar"] .stSelectbox > div > div,
+    [data-testid="stSidebar"] .stRadio > div,
+    [data-testid="stSidebar"] [data-testid="stExpander"] {
+        background: rgba(14,17,23,0.6) !important;
+        border: 1px solid rgba(255,255,255,0.08) !important;
+        border-radius: 0.75rem !important;
+    }
+    [data-testid="stSidebar"] .stButton > button {
+        background: rgba(14,17,23,0.6) !important;
+        border: 1px solid rgba(255,255,255,0.08) !important;
+        border-radius: 0.75rem !important;
+        color: #fff !important;
+    }
+    [data-testid="stSidebar"] .stButton > button:hover {
+        border-color: rgba(255,255,255,0.2) !important;
+    }
+    [data-testid="stSidebar"] label {
+        color: rgba(255,255,255,0.5) !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    project_name = html.escape(storage.get_current_project())
     st.markdown(
-        f"<h1 style='text-align:center;font-size:2.2rem;margin-top:-0.5rem;margin-bottom:0.3rem;'>📈 {html.escape(storage.get_current_project())}</h1>",
+        f"""<div style="
+            padding:0.8rem 1.2rem; border-radius:0.75rem; text-align:center;
+            background:rgba(14,17,23,0.6); border:1px solid rgba(255,255,255,0.08);
+            margin-top:-1rem; margin-bottom:0.5rem;
+        ">
+            <div style="font-size:1.6rem; font-weight:700; color:#fff;">📈 {project_name}</div>
+        </div>""",
         unsafe_allow_html=True,
     )
 
@@ -518,6 +549,9 @@ with st.sidebar:
 
     if st.button("📈  Refresh market data", width="stretch"):
         st.session_state.pop(f"snapshots_{base_ccy}_{precision}", None)
+        for k in list(st.session_state.keys()):
+            if k.startswith("benchmarks_"):
+                st.session_state.pop(k)
         st.session_state["force_refresh"] = True
         st.rerun()
 
@@ -580,6 +614,11 @@ if missing:
             "These positions will be missing from the chart. "
             "Check your internet connection and try **Refresh market data**."
         )
+
+# ── Rebuild balance after price refresh (fixes stale avg_price) ──────────────
+
+if force_refresh:
+    rebuild_balance()
 
 # Warn if we have stock tickers but zero price files at all
 stock_tickers = [t for t in tickers_needed
@@ -655,7 +694,7 @@ if bench_persist:
     bench_missing = [
         t for t in bench_tickers_needed
         if t not in storage.SUPPORTED_CURRENCIES
-        and not storage.has_price_year(t, today.year)
+        and (force_refresh or not storage.has_price_year(t, today.year))
     ]
     if bench_missing:
         bench_dl = st.progress(0, text="Downloading benchmark data…")
@@ -663,7 +702,7 @@ if bench_persist:
             bench_dl.progress(i / len(bench_missing), text=f"Downloading {t}…")
             try:
                 ensure_ticker(t, bench_date_start, bench_date_end,
-                              force_refresh_current_year=True)
+                              force_refresh_current_year=force_refresh)
             except Exception as e:
                 st.warning(f"Could not download {t}: {e}")
         bench_dl.progress(1.0, text="Done")
@@ -677,7 +716,7 @@ if bench_persist:
 
 bench_cache_key = f"benchmarks_{base_ccy}_{len(all_snapshots)}_{len(BENCHMARKS)}"
 if bench_cache_key not in st.session_state:
-    cached = storage.load_benchmarks(base_ccy)
+    cached = storage.load_benchmarks(base_ccy) if not force_refresh else None
     if (cached and len(cached) == len(all_snapshots)
             and all(k in cached[0] for k in BENCHMARKS.values())):
         st.session_state[bench_cache_key] = cached
@@ -689,7 +728,7 @@ if bench_cache_key not in st.session_state:
         for b_label, b_ticker in BENCHMARKS.items():
             try:
                 ensure_ticker(b_ticker, bench_date_start, bench_date_end,
-                              force_refresh_current_year=False)
+                              force_refresh_current_year=force_refresh)
             except Exception:
                 continue
 
@@ -775,17 +814,53 @@ def fmt(v: float) -> str:
         return f"{formatted} PLN"
     return f"{SYM[base_ccy]}{formatted}"
 
-c1, c2, c3 = st.columns(3)
-with c1:
-    st.metric("Total value", fmt(cur_value), label_visibility="visible")
-with c2:
-    st.metric("Invested", fmt(contrib), label_visibility="visible")
-with c3:
-    if latest["assets"]:
-        best = max(latest["assets"], key=lambda a: a["value_base"])
-        st.metric("Largest position", best["ticker"], label_visibility="visible")
-    else:
-        st.metric("Largest position", "—", label_visibility="visible")
+cagr = compute_cagr(cur_value)
+irr = compute_irr(cur_value)
+
+best_ticker = max(latest["assets"], key=lambda a: a["value_base"])["ticker"] if latest["assets"] else "—"
+
+cagr_str = f"{cagr * 100:.1f}%" if cagr is not None else "—"
+irr_str = f"{irr * 100:.1f}%" if irr is not None else "—"
+
+st.markdown(f"""
+<style>
+.stat-row {{ display:flex; gap:1rem; margin:0.5rem 0 1rem 0; }}
+.stat-card {{
+  flex:1; padding:0.8rem 1.2rem; border-radius:0.75rem;
+  background:linear-gradient(135deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.02) 100%);
+  border:1px solid rgba(255,255,255,0.08);
+}}
+.stat-card .label {{ font-size:0.75rem; color:rgba(255,255,255,0.5); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.2rem; }}
+.stat-card .value {{ font-size:1.4rem; font-weight:700; color:#fff; }}
+.green .value {{ color:#22c55e; }}
+.blue .value {{ color:#3b82f6; }}
+.purple .value {{ color:#a78bfa; }}
+.amber .value {{ color:#f59e0b; }}
+.cyan .value {{ color:#06b6d4; }}
+</style>
+<div class="stat-row">
+  <div class="stat-card cyan" title="Current market value of all holdings in {base_ccy}">
+    <div class="label">Total Value</div>
+    <div class="value">{fmt(cur_value)}</div>
+  </div>
+  <div class="stat-card blue" title="Net deposits minus withdrawals across all accounts">
+    <div class="label">Invested</div>
+    <div class="value">{fmt(contrib)}</div>
+  </div>
+  <div class="stat-card purple" title="The position with the highest current value">
+    <div class="label">Largest Position</div>
+    <div class="value">{best_ticker}</div>
+  </div>
+  <div class="stat-card green" title="Compound Annual Growth Rate — smoothed yearly return since first deposit">
+    <div class="label">CAGR</div>
+    <div class="value">{cagr_str}</div>
+  </div>
+  <div class="stat-card amber" title="Internal Rate of Return — accounts for exact timing of every deposit">
+    <div class="label">IRR</div>
+    <div class="value">{irr_str}</div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
 
 # ── P&L toggle blocks ────────────────────────────────────────────────────────
@@ -974,6 +1049,95 @@ bench_selected_keys = st.multiselect(
     on_change=lambda: st.session_state.update(bench_persist=list(st.session_state.bench_select)),
 )
 
+# ── Trade-history dialog ────────────────────────────────────────────────────────
+
+@st.dialog("Trade history", width="large")
+def _show_trade_dialog(ticker: str, name: str, ccy: str):
+    st.subheader(f"{name} ({ticker})")
+
+    st.markdown("""
+    <style>
+    [data-testid="stDialog"] { min-width:95vw !important; min-height:85vh !important; max-width:95vw !important; }
+    [data-testid="stDialog"] > div { width:100% !important; max-width:100% !important; height:100% !important; }
+    [data-testid="stDialog"] .stMetric label { font-size:3rem !important; }
+    [data-testid="stDialog"] .stMetric [data-testid="stMetricValue"] { font-size:3rem !important; }
+    [data-testid="stDialog"] h3 { font-size:3.5rem !important; }
+    </style>
+    """, unsafe_allow_html=True)
+
+    history = get_ticker_history(ticker)
+    if not history:
+        st.info("No trades found for this position.")
+        return
+
+    current_price = get_price(ticker, today.isoformat(), {}, today.year)
+
+    price_cache: dict = {}
+    fx_cache: dict = {}
+    enriched = []
+    for trade in history:
+        yr = int(trade["date"][:4])
+        price = get_price(ticker, trade["date"], price_cache, yr)
+        if ccy != base_ccy:
+            fx = get_fx_rate(ccy, base_ccy, trade["date"], fx_cache, yr)
+        else:
+            fx = 1.0
+        val_native = trade["amount"] * price if price is not None else None
+        val_base = val_native * fx if val_native is not None else None
+        if trade["side"] == "Buy" and price is not None and current_price is not None:
+            ret = (current_price / price) - 1
+        else:
+            ret = None
+        enriched.append({
+            **trade,
+            "price": price,
+            "fx": fx,
+            "value_native": val_native,
+            "value_base": val_base,
+            "ret": ret,
+        })
+
+    total_bought = sum(t["amount"] for t in history if t["side"] == "Buy")
+    total_sold = sum(abs(t["amount"]) for t in history if t["side"] == "Sell")
+
+    sc1, sc2, sc3 = st.columns(3)
+    sc1.metric("Bought", f"{total_bought:.4f}")
+    sc2.metric("Sold", f"{total_sold:.4f}")
+    sc3.metric("Net", f"{total_bought - total_sold:.4f}")
+
+    trade_df = pd.DataFrame([{
+        "Date": t["date"],
+        "Side": t["side"],
+        "Shares": f'{t["amount"]:.4f}' if t["amount"] is not None else None,
+        "Price": f'{t["price"]:.2f}' if t["price"] is not None else None,
+        "Value": f'{t["value_native"]:.2f}' if t["value_native"] is not None else None,
+        "FX": f'{t["fx"]:.4f}' if ccy != base_ccy and t["fx"] is not None else None,
+        f"Value ({base_ccy})": f'{t["value_base"]:.2f}' if t["value_base"] is not None else None,
+        "Return": f'{t["ret"] * 100:.1f}%' if t["ret"] is not None else None,
+    } for t in enriched])
+
+    import streamlit.components.v1 as components
+
+    headers = list(trade_df.columns)
+    rows_html = ""
+    for _, row in trade_df.iterrows():
+        cells = "".join(f"<td style='padding:4px 12px;border-bottom:1px solid #333'>{row[h]}</td>" for h in headers)
+        rows_html += f"<tr>{cells}</tr>"
+    header_html = "".join(f"<th style='padding:4px 12px;border-bottom:2px solid #555;text-align:left;font-weight:600'>{h}</th>" for h in headers)
+    components.html(
+        f"""<style>
+        body {{ margin:0; font-family:system-ui,-apple-system,sans-serif; background:transparent; color:#e0e0e0; }}
+        table {{ width:100%; border-collapse:collapse; font-size:24px; }}
+        tr:hover {{ background:rgba(255,255,255,0.05); }}
+        </style>
+        <table>
+        <thead><tr>{header_html}</tr></thead>
+        <tbody>{rows_html}</tbody>
+        </table>""",
+        height=50 + 48 * len(trade_df),
+        scrolling=True,
+    )
+
 # ── Holdings table ────────────────────────────────────────────────────────────
 
 if latest["assets"]:
@@ -1019,58 +1183,55 @@ if latest["assets"]:
 
     max_weight = max((r["weight"] for r in rows), default=1) or 1
 
-    header = (
-        "<tr>"
-        "<th>Ticker</th><th>CCY</th><th>Weight</th>"
-        "<th>Shares</th><th>Value</th><th>Return %</th>"
-        "</tr>"
-    )
-    body_rows = []
+    st.markdown("""
+    <style>
+    .holdings-row { border-bottom:1px solid #21262D; }
+    .holdings-row:last-child { border-bottom:none; }
+    .h-hdr { border-bottom:1px solid #30363D; padding:10px 0; margin-bottom:2px; }
+    .h-hdr span { color:#8B949E; font-size:1.0rem; font-weight:600;
+        text-transform:uppercase; letter-spacing:0.05em; text-align:center; display:block; }
+    .h-cell { padding:12px 0; font-size:1.5rem; font-family:sans-serif; color:#C9D1D9; text-align:center; }
+    .h-ticker { position:relative; overflow:hidden; }
+    .h-bar { position:absolute; top:0; left:0; height:100%; opacity:0.10;
+        border-radius:4px; transition:width 0.3s ease; }
+    .h-name { position:relative; font-weight:600; color:#E6EDF3; font-size:1.5rem; }
+    .h-sub { position:relative; display:block; font-size:0.85em; color:#8B949E; font-weight:400; }
+    </style>
+    """, unsafe_allow_html=True)
+
+    _hdr = st.columns([5, 1, 1, 1, 2, 1, 0.5])
+    for _ch, _label in zip(_hdr, ["Ticker", "CCY", "Weight", "Shares", "Value", "Return %", ""]):
+        with _ch:
+            st.markdown(f"<span>{_label}</span>", unsafe_allow_html=True)
+    st.markdown("<div class='h-hdr'></div>", unsafe_allow_html=True)
+
     for r in rows:
         bar_pct = r["weight"]
-        bar_color = "#6C63FF"
         ret_col = _ret_color(r["ret_pct"])
-        name_html = f"<span class='ticker-sub'>{html.escape(r['ticker'])}</span>" if r["name"] != r["ticker"] else ""
-        body_rows.append(
-            "<tr>"
-            f"<td class='ticker-cell'>"
-            f"<div class='ticker-bar' style='width:{bar_pct / max_weight * 100:.1f}%;background:{bar_color};'></div>"
-            f"<span class='ticker-text'>{html.escape(r['name'])}</span>"
-            f"{name_html}"
-            f"</td>"
-            f"<td>{r['ccy']}</td>"
-            f"<td class='num'>{r['weight']:.1f}%</td>"
-            f"<td class='num'>{r['shares']:.4f}</td>"
-            f"<td class='num'>{_fmt_val(r['value'])}</td>"
-            f"<td class='num' style='color:{ret_col};font-weight:600'>{_fmt_ret(r['ret_pct'])}</td>"
-            "</tr>"
-        )
+        name_html = f"<span class='h-sub'>{html.escape(r['ticker'])}</span>" if r["name"] != r["ticker"] else ""
 
-    table_html = f"""
-    <style>
-    .holdings-table {{ width:100%; border-collapse:collapse; font-size:1.3rem; }}
-    .holdings-table th {{
-        text-align:left; padding:12px 16px; font-weight:600; font-size:1.1rem;
-        text-transform:uppercase; letter-spacing:0.06em; color:#8B949E;
-        border-bottom:1px solid #30363D;
-    }}
-    .holdings-table td {{ padding:12px 16px; border-bottom:1px solid #21262D; color:#C9D1D9; }}
-    .holdings-table tr:hover td {{ background:rgba(108,99,255,0.06); }}
-    .holdings-table .num {{ text-align:right; font-variant-numeric:tabular-nums; }}
-    .ticker-cell {{ position:relative; overflow:hidden; }}
-    .ticker-bar {{
-        position:absolute; top:0; left:0; height:100%; opacity:0.10;
-        border-radius:4px; transition:width 0.3s ease;
-    }}
-    .ticker-text {{ position:relative; font-weight:600; color:#E6EDF3; font-size:1.2rem; }}
-    .ticker-sub {{ position:relative; display:block; font-size:0.85em; color:#8B949E; font-weight:400; }}
-    </style>
-    <table class="holdings-table">
-    <thead>{header}</thead>
-    <tbody>{"".join(body_rows)}</tbody>
-    </table>
-    """
-    st.markdown(table_html, unsafe_allow_html=True)
+        _c1, _c2, _c3, _c4, _c5, _c6, _c7 = st.columns([5, 1, 1, 1, 2, 1, 0.5])
+        with _c1:
+            st.markdown(
+                f"<div class='h-cell h-ticker'>"
+                f"<div class='h-bar' style='width:{bar_pct / max_weight * 100:.1f}%;background:#6C63FF;'></div>"
+                f"<span class='h-name'>{html.escape(r['name'])}</span>{name_html}</div>",
+                unsafe_allow_html=True,
+            )
+        with _c2:
+            st.markdown(f"<div class='h-cell'>{r['ccy']}</div>", unsafe_allow_html=True)
+        with _c3:
+            st.markdown(f"<div class='h-cell'>{r['weight']:.1f}%</div>", unsafe_allow_html=True)
+        with _c4:
+            st.markdown(f"<div class='h-cell'>{r['shares']:.4f}</div>", unsafe_allow_html=True)
+        with _c5:
+            st.markdown(f"<div class='h-cell'>{_fmt_val(r['value'])}</div>", unsafe_allow_html=True)
+        with _c6:
+            st.markdown(f"<div class='h-cell' style='color:{ret_col};font-weight:600'>{_fmt_ret(r['ret_pct'])}</div>", unsafe_allow_html=True)
+        with _c7:
+            if st.button("↗", key=f"hbtn_{r['ticker']}", help=f"Trade history for {r['ticker']}"):
+                _show_trade_dialog(r["ticker"], r["name"], r["ccy"])
+        st.markdown("<div class='holdings-row'></div>", unsafe_allow_html=True)
 
 # ── Footer ────────────────────────────────────────────────────────────────────
 

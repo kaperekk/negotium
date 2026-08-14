@@ -1688,6 +1688,65 @@ def test_return_eur_stock_not_inflated(tmp: Path):
         f"Return ~{ret_pct_native:.1f}% looks inflated (FX conversion may be missing)"
 
 
+# ── Ticker history tests ──────────────────────────────────────────────────────
+
+def test_get_ticker_history_buys_and_sells(tmp: Path):
+    """get_ticker_history returns chronological buys/sells with correct sides."""
+    import transactions
+
+    transactions.add_transaction("2023-01-03", [
+        {"ticker": "AAPL", "amount": 10.0},
+        {"ticker": "USD",  "amount": -1250.0},
+    ])
+    transactions.add_transaction("2023-06-01", [
+        {"ticker": "AAPL", "amount": -4.0},
+        {"ticker": "USD",  "amount": 500.0},
+    ])
+
+    hist = transactions.get_ticker_history("AAPL")
+    assert len(hist) == 2
+    assert hist[0]["side"] == "Buy"
+    assert hist[0]["amount"] == 10.0
+    assert hist[0]["date"] == "2023-01-03"
+    assert hist[1]["side"] == "Sell"
+    assert hist[1]["amount"] == -4.0
+    assert hist[1]["date"] == "2023-06-01"
+
+
+def test_get_ticker_history_running_shares(tmp: Path):
+    """Running position tracks cumulative shares across trades."""
+    import transactions
+
+    transactions.add_transaction("2023-01-03", [{"ticker": "GOOG", "amount": 10.0}])
+    transactions.add_transaction("2023-03-01", [{"ticker": "GOOG", "amount": 5.0}])
+    transactions.add_transaction("2023-06-01", [{"ticker": "GOOG", "amount": -8.0}])
+
+    hist = transactions.get_ticker_history("GOOG")
+    assert len(hist) == 3
+    assert hist[0]["running"] == 10.0
+    assert hist[1]["running"] == 15.0
+    assert hist[2]["running"] == 7.0
+
+
+def test_get_ticker_history_excludes_cash(tmp: Path):
+    """Cash tickers (USD, EUR, PLN) are excluded from history."""
+    import transactions
+
+    transactions.add_transaction("2023-01-03", [
+        {"ticker": "AAPL", "amount": 10.0},
+        {"ticker": "USD",  "amount": -1250.0},
+    ])
+
+    hist_aapl = transactions.get_ticker_history("AAPL")
+    assert len(hist_aapl) == 1
+
+    hist_usd = transactions.get_ticker_history("USD")
+    assert len(hist_usd) == 0
+
+    hist_pln = transactions.get_ticker_history("PLN")
+    assert len(hist_pln) == 0
+
+
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 ALL_TESTS = [
@@ -1768,6 +1827,9 @@ ALL_TESTS = [
     ("Avg price: USD stock in USD",           test_avg_price_usd_stored_in_usd),
     ("Cost basis: EUR stock → PLN",           test_cost_basis_eur_stock_converts_to_pln),
     ("Return: EUR stock not inflated",        test_return_eur_stock_not_inflated),
+    ("Ticker history: buys and sells",        test_get_ticker_history_buys_and_sells),
+    ("Ticker history: running shares",        test_get_ticker_history_running_shares),
+    ("Ticker history: excludes cash",         test_get_ticker_history_excludes_cash),
 ]
 
 

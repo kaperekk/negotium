@@ -278,6 +278,124 @@ def _update_avg_prices(balance: dict[str, dict], rec: dict, base_ccy: str) -> No
             balance[ticker]["avg_price"] = new_avg
 
 
+def rebuild_balance() -> None:
+    """Rebuild balance.json from scratch by replaying the entire ledger."""
+    records = get_all_transactions()
+    _rebuild_balance(records)
+
+
+def compute_cagr(current_value: float) -> float | None:
+    """Compute Compound Annual Growth Rate from first deposit to now.
+
+    Returns CAGR as a decimal (e.g. 0.12 for 12%), or None if not enough data.
+    """
+    from ticker_data import get_fx_rate
+    from datetime import date as _date
+
+    records = get_all_transactions()
+    base_ccy = cfg_module.load().get("default_currency", "PLN")
+    today = _date.today()
+
+    first_date = None
+    net_invested = 0.0
+    for rec in records:
+        for e in rec["entries"]:
+            if e.get("account_operation"):
+                amt = float(e["amount"])
+                ccy = e["ticker"].upper()
+                if ccy in storage.SUPPORTED_CURRENCIES:
+                    fx = get_fx_rate(ccy, base_ccy, rec["date"], {}, int(rec["date"][:4])) if ccy != base_ccy else 1.0
+                    net_invested += amt * fx
+                    if first_date is None:
+                        first_date = rec["date"]
+
+    if first_date is None or net_invested <= 0:
+        return None
+
+    years = (today - _date.fromisoformat(first_date)).days / 365.25
+    if years <= 0:
+        return None
+
+    return (current_value / net_invested) ** (1.0 / years) - 1.0
+
+
+def compute_irr(current_value: float) -> float | None:
+    """Compute Internal Rate of Return (money-weighted) using all cash flows.
+
+    Deposits are negative (money out of pocket), withdrawals positive.
+    The current portfolio value is the final positive cash flow.
+    Returns IRR as a decimal (e.g. 0.12 for 12%), or None if not solvable.
+    """
+    from ticker_data import get_fx_rate
+    from datetime import date as _date
+
+    records = get_all_transactions()
+    base_ccy = cfg_module.load().get("default_currency", "PLN")
+    today = _date.today()
+
+    cash_flows: list[tuple[str, float]] = []
+    for rec in records:
+        for e in rec["entries"]:
+            if e.get("account_operation"):
+                amt = float(e["amount"])
+                ccy = e["ticker"].upper()
+                if ccy in storage.SUPPORTED_CURRENCIES:
+                    fx = get_fx_rate(ccy, base_ccy, rec["date"], {}, int(rec["date"][:4])) if ccy != base_ccy else 1.0
+                    # Negate: positive account_op = deposit (money out of pocket)
+                    cash_flows.append((rec["date"], -amt * fx))
+
+    if not cash_flows:
+        return None
+
+    # Merge cash flows on the same date
+    merged: dict[str, float] = {}
+    for d, amt in cash_flows:
+        merged[d] = merged.get(d, 0.0) + amt
+
+    # Add current portfolio value as final cash flow (positive — you own it)
+    cf_list = sorted(merged.items())
+    cf_list.append((today.isoformat(), current_value))
+
+    # Convert dates to years from first cash flow
+    start = _date.fromisoformat(cf_list[0][0])
+    cf_years = [(_date.fromisoformat(d) - start).days / 365.25 for d, _ in cf_list]
+    cf_amounts = [a for _, a in cf_list]
+
+    def npv(rate: float) -> float:
+        return sum(a / (1.0 + rate) ** t for a, t in zip(cf_amounts, cf_years))
+
+    def npv_deriv(rate: float) -> float:
+        return sum(-t * a / (1.0 + rate) ** (t + 1) for a, t in zip(cf_amounts, cf_years))
+
+    # Newton-Raphson with bisection fallback
+    rate = 0.1
+    for _ in range(100):
+        f = npv(rate)
+        if abs(f) < 0.001:
+            return rate
+        fp = npv_deriv(rate)
+        if abs(fp) < 1e-12:
+            break
+        new_rate = rate - f / fp
+        if new_rate < -0.5:
+            new_rate = -0.5
+        if new_rate > 5.0:
+            new_rate = 5.0
+        rate = new_rate
+
+    # Bisection fallback
+    lo, hi = -0.5, 5.0
+    for _ in range(200):
+        mid = (lo + hi) / 2.0
+        if npv(mid) > 0:
+            lo = mid
+        else:
+            hi = mid
+        if abs(hi - lo) < 1e-8:
+            break
+    return (lo + hi) / 2.0
+
+
 def get_all_transactions() -> list[dict]:
     """Return all transactions, chronologically."""
     return storage.read_jsonl(storage.TRANSACTIONS_PATH)
@@ -348,6 +466,40 @@ def existing_keys() -> set[tuple[str, str, float]]:
         for e in rec["entries"]:
             keys.add((rec["date"], e["ticker"].upper(), round(e["amount"], 8)))
     return keys
+
+
+def get_ticker_history(ticker: str) -> list[dict]:
+    """Return chronological buy/sell history for a single ticker.
+
+    Scans the full ledger and returns one dict per matching entry:
+      {date, amount, side, account_operation, running}
+    where:
+      - amount > 0 = buy, < 0 = sell
+      - side is "Buy" / "Sell"
+      - running is the cumulative position after this trade
+    Cash / supported-currency entries are excluded.
+    """
+    ticker = ticker.upper()
+    results: list[dict] = []
+    running = 0.0
+    for rec in get_all_transactions():
+        for e in rec["entries"]:
+            if e["ticker"].upper() != ticker:
+                continue
+            if ticker in storage.SUPPORTED_CURRENCIES:
+                continue
+            amt = float(e["amount"])
+            if abs(amt) < 1e-12:
+                continue
+            running += amt
+            results.append({
+                "date": rec["date"],
+                "amount": amt,
+                "side": "Buy" if amt > 0 else "Sell",
+                "account_operation": bool(e.get("account_operation", False)),
+                "running": running,
+            })
+    return results
 
 
 def fix_negative_positions(transactions: list[dict], currency: str) -> None:
