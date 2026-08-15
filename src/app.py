@@ -172,8 +172,7 @@ st.markdown("""
         background: rgba(108,99,255,0.3) !important;
     }
     [data-testid="stMultiSelect"]:has([data-baseweb="select"]) {
-        max-width: 500px !important;
-        margin: 0 auto !important;
+        max-width: 220px !important;
     }
     [data-testid="stSelectbox"] > div > div {
         background: rgba(14,17,23,0.6) !important;
@@ -182,12 +181,14 @@ st.markdown("""
         color: #E6EDF3 !important;
     }
     [data-testid="stSelectbox"]:has([data-baseweb="select"]) {
-        max-width: 500px !important;
-        margin: 0 auto !important;
+        max-width: 180px !important;
     }
-    [data-testid="stHorizontalBlock"]:has([data-baseweb="select"]) > div {
-        display: flex !important;
-        justify-content: center !important;
+    [data-testid="stHorizontalBlock"]:has([data-baseweb="select"]):has([data-baseweb="multiselect"]) {
+        background: rgba(14,17,23,0.6);
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 0.75rem;
+        padding: 0.4rem 0.8rem;
+        gap: 0 !important;
     }
 
     /* ── P&L chart card ──────────────────────────────────────────────── */
@@ -1116,7 +1117,7 @@ fig.update_layout(
 )
 st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
-_bench_col, _range_col = st.columns(2, vertical_alignment="center")
+_bench_col, _range_col = st.columns([1, 1], vertical_alignment="center", gap="xxsmall")
 with _bench_col:
     bench_selected_keys = st.multiselect(
         "What-if benchmarks",
