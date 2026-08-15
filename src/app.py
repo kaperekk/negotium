@@ -60,11 +60,10 @@ st.markdown("""
 
     /* ── Metric cards ──────────────────────────────────────────────────── */
     [data-testid="metric-container"] {
-        background: linear-gradient(135deg, #161B22 0%, #1C2333 100%);
-        border: 1px solid #30363D;
-        border-radius: 16px;
-        padding: 28px 24px 16px 24px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        background: rgba(14,17,23,0.6) !important;
+        border: 1px solid rgba(255,255,255,0.08) !important;
+        border-radius: 16px !important;
+        padding: 28px 24px 16px 24px !important;
     }
     [data-testid="metric-container"] [data-testid="stMetricLabel"],
     [data-testid="metric-container"] [data-testid="stMetricLabel"] p,
@@ -102,8 +101,8 @@ st.markdown("""
         display: none;
     }
     [data-testid="stSidebar"] button[kind="primary"] {
-        background: #6C63FF !important;
-        border: none !important;
+        background: rgba(14,17,23,0.6) !important;
+        border: 1px solid rgba(255,255,255,0.08) !important;
     }
     [data-testid="stSidebar"] [data-testid="stHorizontalBlock"] {
         gap: 0.3rem;
@@ -130,8 +129,74 @@ st.markdown("""
         border-radius: 12px;
     }
 
+    /* ── Buttons (global) ──────────────────────────────────────────────── */
+    .stButton > button,
+    .stDownloadButton > button,
+    div[data-testid="stHorizontalBlock"] button {
+        background: rgba(14,17,23,0.6) !important;
+        border: 1px solid rgba(255,255,255,0.08) !important;
+        border-radius: 0.75rem !important;
+        color: #fff !important;
+    }
+    .stButton > button:hover,
+    .stDownloadButton > button:hover,
+    div[data-testid="stHorizontalBlock"] button:hover {
+        border-color: rgba(255,255,255,0.2) !important;
+    }
+
     /* ── Dividers ──────────────────────────────────────────────────────── */
     hr { border-color: #21262D !important; }
+
+    /* ── Multiselect & Selectbox ──────────────────────────────────────── */
+    [data-testid="stMultiSelect"] [data-baseweb="select"] > div,
+    [data-testid="stMultiSelect"] [data-baseweb="select"],
+    [data-testid="stMultiSelect"] input {
+        background: rgba(14,17,23,0.6) !important;
+        color: #E6EDF3 !important;
+    }
+    [data-testid="stMultiSelect"] [data-baseweb="select"] {
+        background: rgba(14,17,23,0.6) !important;
+        border-color: rgba(255,255,255,0.08) !important;
+        border-radius: 0.75rem !important;
+    }
+    [data-testid="stMultiSelect"] [data-baseweb="tag"] {
+        background: rgba(108,99,255,0.2) !important;
+        border: 1px solid rgba(108,99,255,0.4) !important;
+        border-radius: 0.5rem !important;
+        color: #E6EDF3 !important;
+    }
+    [data-testid="stMultiSelect"] [data-baseweb="tag"] span {
+        color: #E6EDF3 !important;
+    }
+    [data-testid="stMultiSelect"] [aria-label="clear"] {
+        background: rgba(108,99,255,0.3) !important;
+    }
+    [data-testid="stMultiSelect"]:has([data-baseweb="select"]) {
+        max-width: 500px !important;
+        margin: 0 auto !important;
+    }
+    [data-testid="stSelectbox"] > div > div {
+        background: rgba(14,17,23,0.6) !important;
+        border: 1px solid rgba(255,255,255,0.08) !important;
+        border-radius: 0.75rem !important;
+        color: #E6EDF3 !important;
+    }
+    [data-testid="stSelectbox"]:has([data-baseweb="select"]) {
+        max-width: 500px !important;
+        margin: 0 auto !important;
+    }
+    [data-testid="stHorizontalBlock"]:has([data-baseweb="select"]) > div {
+        display: flex !important;
+        justify-content: center !important;
+    }
+
+    /* ── P&L chart card ──────────────────────────────────────────────── */
+    [data-testid="stPlotlyChart"] {
+        background: rgba(14,17,23,0.6);
+        border-radius: 1rem;
+        padding: 0.1rem;
+        margin: 0.5rem 0 0 0;
+    }
 
     /* ── DataFrame ─────────────────────────────────────────────────────── */
     [data-testid="stDataFrame"] {
@@ -206,6 +271,9 @@ with st.sidebar:
         border: 1px solid rgba(255,255,255,0.08) !important;
         border-radius: 0.75rem !important;
     }
+    [data-testid="stSidebar"] [data-testid="stExpander"] summary {
+        padding: 0.6rem 0.8rem !important;
+    }
     [data-testid="stSidebar"] .stButton > button {
         background: rgba(14,17,23,0.6) !important;
         border: 1px solid rgba(255,255,255,0.08) !important;
@@ -217,6 +285,14 @@ with st.sidebar:
     }
     [data-testid="stSidebar"] label {
         color: rgba(255,255,255,0.5) !important;
+    }
+    [data-testid="stSidebar"] h3,
+    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h3 {
+        font-size: 0.8rem !important;
+        color: #8B949E !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.06em !important;
+        margin-top: 0.8rem !important;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -296,13 +372,6 @@ with st.sidebar:
     def _on_range_change():
         st.session_state["_range"] = st.session_state["range_widget"]
 
-    st.selectbox(
-        "Range",
-        _range_opts,
-        key="range_widget",
-        index=_range_opts.index(st.session_state["_range"]),
-        on_change=_on_range_change,
-    )
     range_option = st.session_state["_range"]
     if range_option == "All time":
         chart_start, chart_end = start_date_cfg, today
@@ -560,8 +629,14 @@ with st.sidebar:
 
 all_tx = get_all_transactions()
 if not all_tx:
-    st.info("No transactions yet — add your first one using the sidebar form.")
-    st.caption("Example: Ticker 1 = `AAPL`, Amount 1 = `10` / Ticker 2 = `USD`, Amount 2 = `-1700`")
+    st.markdown("""
+    <div style="text-align:center;padding:4rem 2rem;border-radius:1rem;background:rgba(14,17,23,0.6);border:1px solid rgba(255,255,255,0.08);margin:2rem 0;">
+        <div style="font-size:3rem;margin-bottom:1rem;">📈</div>
+        <div style="font-size:1.4rem;font-weight:600;color:#E6EDF3;margin-bottom:0.5rem;">No transactions yet</div>
+        <div style="font-size:1rem;color:#8B949E;margin-bottom:0.3rem;">Add your first one using the sidebar form.</div>
+        <div style="font-size:0.85rem;color:#8B949E;">Example: Ticker 1 = <code style="color:#6C63FF;">AAPL</code>, Amount 1 = <code style="color:#6C63FF;">10</code> / Ticker 2 = <code style="color:#6C63FF;">USD</code>, Amount 2 = <code style="color:#6C63FF;">-1700</code></div>
+    </div>
+    """, unsafe_allow_html=True)
     st.stop()
 
 # ── Market data download ──────────────────────────────────────────────────────
@@ -827,16 +902,16 @@ st.markdown(f"""
 .stat-row {{ display:flex; gap:1rem; margin:0.5rem 0 1rem 0; }}
 .stat-card {{
   flex:1; padding:0.8rem 1.2rem; border-radius:0.75rem;
-  background:linear-gradient(135deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.02) 100%);
+  background:rgba(14,17,23,0.6);
   border:1px solid rgba(255,255,255,0.08);
 }}
-.stat-card .label {{ font-size:0.75rem; color:rgba(255,255,255,0.5); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.2rem; }}
-.stat-card .value {{ font-size:1.4rem; font-weight:700; color:#fff; }}
-.green .value {{ color:#22c55e; }}
-.blue .value {{ color:#3b82f6; }}
-.purple .value {{ color:#a78bfa; }}
-.amber .value {{ color:#f59e0b; }}
-.cyan .value {{ color:#06b6d4; }}
+.stat-card .label {{ font-size:0.75rem; color:rgba(255,255,255,0.5); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.2rem; text-align:center; }}
+.stat-card .value {{ font-size:1.4rem; font-weight:700; color:#E6EDF3; text-align:center; }}
+.green .value,
+.blue .value,
+.purple .value,
+.amber .value,
+.cyan .value {{ color:#E6EDF3; }}
 </style>
 <div class="stat-row">
   <div class="stat-card cyan" title="Current market value of all holdings in {base_ccy}">
@@ -876,8 +951,8 @@ st.markdown("""
 <style>
     div[data-testid="stHorizontalBlock"] > div:has(button[kind="secondary"]) button[kind="secondary"],
     div[data-testid="stHorizontalBlock"] > div:has(button[kind="primary"]) button[kind="primary"] {
-        background: linear-gradient(135deg, #161B22 0%, #1C2333 100%) !important;
-        border: 1px solid #30363D !important;
+        background: rgba(14,17,23,0.6) !important;
+        border: 1px solid rgba(255,255,255,0.08) !important;
         border-radius: 16px !important;
         padding: 20px 24px !important;
         min-height: 85px !important;
@@ -889,13 +964,11 @@ st.markdown("""
     }
     div[data-testid="stHorizontalBlock"] > div:has(button[kind="secondary"]) button[kind="secondary"]:hover,
     div[data-testid="stHorizontalBlock"] > div:has(button[kind="primary"]) button[kind="primary"]:hover {
-        border-color: #6C63FF !important;
-        box-shadow: 0 2px 12px rgba(108,99,255,0.3) !important;
+        border-color: rgba(255,255,255,0.2) !important;
     }
     div[data-testid="stHorizontalBlock"] > div:has(button[kind="primary"]) button[kind="primary"] {
-        border-color: #6C63FF !important;
-        background: linear-gradient(135deg, #1C2333 0%, #252D44 100%) !important;
-        box-shadow: 0 2px 12px rgba(108,99,255,0.2) !important;
+        border-color: rgba(255,255,255,0.18) !important;
+        background: rgba(255,255,255,0.04) !important;
     }
     div[data-testid="stHorizontalBlock"] button p {
         font-size: 1.4rem !important;
@@ -1018,13 +1091,14 @@ if chart_mode == "amount":
 
 fig.update_layout(
     height=700,
-    margin=dict(l=0, r=0, t=20, b=0),
+    margin=dict(l=0, r=0, t=40, b=70),
     paper_bgcolor="rgba(0,0,0,0)",
     plot_bgcolor="rgba(0,0,0,0)",
-    legend=dict(
-        orientation="h", yanchor="bottom", y=1.03, xanchor="right", x=1,
-        font=dict(size=20, color="#8B949E"),
-    ),
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5,
+            font=dict(size=14, color="#8B949E"),
+            bgcolor="rgba(0,0,0,0)",
+        ),
     xaxis=dict(
         showgrid=False, zeroline=False,
         tickfont=dict(size=20, color="#8B949E"),
@@ -1042,12 +1116,22 @@ fig.update_layout(
 )
 st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
-bench_selected_keys = st.multiselect(
-    "What-if benchmarks",
-    options=list(BENCHMARKS.keys()),
-    key="bench_select",
-    on_change=lambda: st.session_state.update(bench_persist=list(st.session_state.bench_select)),
-)
+_bench_col, _range_col = st.columns(2, vertical_alignment="center")
+with _bench_col:
+    bench_selected_keys = st.multiselect(
+        "What-if benchmarks",
+        options=list(BENCHMARKS.keys()),
+        key="bench_select",
+        on_change=lambda: st.session_state.update(bench_persist=list(st.session_state.bench_select)),
+    )
+with _range_col:
+    st.selectbox(
+        "Range",
+        _range_opts,
+        key="range_widget",
+        index=_range_opts.index(st.session_state["_range"]),
+        on_change=_on_range_change,
+    )
 
 # ── Trade-history dialog ────────────────────────────────────────────────────────
 
@@ -1061,13 +1145,18 @@ def _show_trade_dialog(ticker: str, name: str, ccy: str):
     [data-testid="stDialog"] > div { width:100% !important; max-width:100% !important; height:100% !important; }
     [data-testid="stDialog"] .stMetric label { font-size:3rem !important; }
     [data-testid="stDialog"] .stMetric [data-testid="stMetricValue"] { font-size:3rem !important; }
-    [data-testid="stDialog"] h3 { font-size:3.5rem !important; }
+    [data-testid="stDialog"] h3 { font-size:1.5rem !important; font-weight:600 !important; color:#8B949E !important; }
     </style>
     """, unsafe_allow_html=True)
 
     history = get_ticker_history(ticker)
     if not history:
-        st.info("No trades found for this position.")
+        st.markdown("""
+        <div style="text-align:center;padding:3rem 2rem;border-radius:1rem;background:rgba(14,17,23,0.6);border:1px solid rgba(255,255,255,0.08);margin:1rem 0;">
+            <div style="font-size:1.2rem;font-weight:600;color:#E6EDF3;margin-bottom:0.3rem;">No trades found</div>
+            <div style="font-size:0.9rem;color:#8B949E;">This position has no trade history yet.</div>
+        </div>
+        """, unsafe_allow_html=True)
         return
 
     current_price = get_price(ticker, today.isoformat(), {}, today.year)
@@ -1099,11 +1188,94 @@ def _show_trade_dialog(ticker: str, name: str, ccy: str):
 
     total_bought = sum(t["amount"] for t in history if t["side"] == "Buy")
     total_sold = sum(abs(t["amount"]) for t in history if t["side"] == "Sell")
+    net = total_bought - total_sold
 
-    sc1, sc2, sc3 = st.columns(3)
-    sc1.metric("Bought", f"{total_bought:.4f}")
-    sc2.metric("Sold", f"{total_sold:.4f}")
-    sc3.metric("Net", f"{total_bought - total_sold:.4f}")
+    st.markdown(f"""
+    <div style="display:flex;gap:1rem;margin:0.5rem 0 1.5rem 0;">
+      <div style="flex:1;padding:0.8rem 1.2rem;border-radius:0.75rem;background:rgba(14,17,23,0.6);border:1px solid rgba(255,255,255,0.08);text-align:center;">
+        <div style="font-size:0.75rem;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.3rem;">Bought</div>
+        <div style="font-size:1.4rem;font-weight:700;color:#22c55e;">{total_bought:.4f}</div>
+      </div>
+      <div style="flex:1;padding:0.8rem 1.2rem;border-radius:0.75rem;background:rgba(14,17,23,0.6);border:1px solid rgba(255,255,255,0.08);text-align:center;">
+        <div style="font-size:0.75rem;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.3rem;">Sold</div>
+        <div style="font-size:1.4rem;font-weight:700;color:#ef4444;">{total_sold:.4f}</div>
+      </div>
+      <div style="flex:1;padding:0.8rem 1.2rem;border-radius:0.75rem;background:rgba(14,17,23,0.6);border:1px solid rgba(255,255,255,0.08);text-align:center;">
+        <div style="font-size:0.75rem;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.3rem;">Net</div>
+        <div style="font-size:1.4rem;font-weight:700;color:#E6EDF3;">{net:.4f}</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Price chart with buy/sell markers ──────────────────────────────────────
+    first_trade_date = date.fromisoformat(history[0]["date"])
+    last_trade_date = date.fromisoformat(history[-1]["date"])
+    chart_start = first_trade_date.replace(year=first_trade_date.year - 1) if first_trade_date.month > 1 else first_trade_date.replace(year=first_trade_date.year - 1)
+
+    all_prices: dict[str, float] = {}
+    for yr in range(chart_start.year, today.year + 1):
+        year_data = storage.load_price_year(ticker, yr)
+        all_prices.update(year_data)
+
+    if all_prices:
+        sorted_dates = sorted(all_prices.keys())
+        price_dates = [date.fromisoformat(d) for d in sorted_dates]
+        price_values = [all_prices[d] for d in sorted_dates]
+
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=price_dates, y=price_values,
+            mode="lines", name="Price",
+            line=dict(color="#6C63FF", width=2),
+            hovertemplate="%{x|%Y-%m-%d}<br>%{y:.2f}<extra></extra>",
+        ))
+
+        buys = [t for t in enriched if t["side"] == "Buy" and t["price"] is not None]
+        sells = [t for t in enriched if t["side"] == "Sell" and t["price"] is not None]
+
+        if buys:
+            fig.add_trace(go.Scatter(
+                x=[date.fromisoformat(t["date"]) for t in buys],
+                y=[t["price"] for t in buys],
+                mode="markers", name="Buy",
+                marker=dict(color="#22c55e", size=12, symbol="triangle-up"),
+                hovertemplate="%{x|%Y-%m-%d}<br>Buy %{y:.2f}<extra></extra>",
+            ))
+        if sells:
+            fig.add_trace(go.Scatter(
+                x=[date.fromisoformat(t["date"]) for t in sells],
+                y=[t["price"] for t in sells],
+                mode="markers", name="Sell",
+                marker=dict(color="#ef4444", size=12, symbol="triangle-down"),
+                hovertemplate="%{x|%Y-%m-%d}<br>Sell %{y:.2f}<extra></extra>",
+            ))
+
+        fig.update_layout(
+            xaxis_title="Date",
+            yaxis_title="Price",
+            template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            margin=dict(l=0, r=0, t=30, b=0),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            xaxis=dict(
+                rangeslider=dict(visible=True, thickness=0.05),
+                rangeselector=dict(
+                    buttons=[
+                        dict(count=1, label="1M", step="month", stepmode="backward"),
+                        dict(count=3, label="3M", step="month", stepmode="backward"),
+                        dict(count=6, label="6M", step="month", stepmode="backward"),
+                        dict(count=1, label="1Y", step="year", stepmode="backward"),
+                        dict(step="all", label="All"),
+                    ],
+                    bgcolor="rgba(255,255,255,0.05)",
+                    activecolor="rgba(108,99,255,0.3)",
+                    font=dict(color="#E6EDF3"),
+                ),
+            ),
+        )
+
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
     trade_df = pd.DataFrame([{
         "Date": t["date"],
@@ -1141,7 +1313,6 @@ def _show_trade_dialog(ticker: str, name: str, ccy: str):
 # ── Holdings table ────────────────────────────────────────────────────────────
 
 if latest["assets"]:
-    st.subheader("Current holdings")
     total_val = latest["total_value"] or 1.0
     bal = storage.load_balance()
 
@@ -1185,24 +1356,26 @@ if latest["assets"]:
 
     st.markdown("""
     <style>
-    .holdings-row { border-bottom:1px solid #21262D; }
+    .holdings-row { border-bottom:1px solid rgba(255,255,255,0.05); }
     .holdings-row:last-child { border-bottom:none; }
-    .h-hdr { border-bottom:1px solid #30363D; padding:10px 0; margin-bottom:2px; }
-    .h-hdr span { color:#8B949E; font-size:1.0rem; font-weight:600;
-        text-transform:uppercase; letter-spacing:0.05em; text-align:center; display:block; }
+    .h-hdr { border-bottom:2px solid rgba(255,255,255,0.08); padding:0; margin-bottom:4px; }
+    .h-col-hdr { color:#8B949E; font-size:0.75rem; font-weight:700;
+        text-transform:uppercase; letter-spacing:0.08em; text-align:center; display:block;
+        padding:0.5rem 0; background:rgba(255,255,255,0.03); border-radius:0.5rem; }
     .h-cell { padding:12px 0; font-size:1.5rem; font-family:sans-serif; color:#C9D1D9; text-align:center; }
     .h-ticker { position:relative; overflow:hidden; }
     .h-bar { position:absolute; top:0; left:0; height:100%; opacity:0.10;
         border-radius:4px; transition:width 0.3s ease; }
     .h-name { position:relative; font-weight:600; color:#E6EDF3; font-size:1.5rem; }
     .h-sub { position:relative; display:block; font-size:0.85em; color:#8B949E; font-weight:400; }
+    [data-testid="stSidebar"] [data-testid="stCaptionContainer"] p { font-size:0.75rem; }
     </style>
     """, unsafe_allow_html=True)
 
-    _hdr = st.columns([5, 1, 1, 1, 2, 1, 0.5])
-    for _ch, _label in zip(_hdr, ["Ticker", "CCY", "Weight", "Shares", "Value", "Return %", ""]):
+    _hdr = st.columns([5, 1, 1, 1, 2, 1])
+    for _ch, _label in zip(_hdr, ["Ticker", "CCY", "Weight", "Shares", "Value", "Return %"]):
         with _ch:
-            st.markdown(f"<span>{_label}</span>", unsafe_allow_html=True)
+            st.markdown(f"<span class='h-col-hdr'>{_label}</span>", unsafe_allow_html=True)
     st.markdown("<div class='h-hdr'></div>", unsafe_allow_html=True)
 
     for r in rows:
@@ -1210,12 +1383,19 @@ if latest["assets"]:
         ret_col = _ret_color(r["ret_pct"])
         name_html = f"<span class='h-sub'>{html.escape(r['ticker'])}</span>" if r["name"] != r["ticker"] else ""
 
-        _c1, _c2, _c3, _c4, _c5, _c6, _c7 = st.columns([5, 1, 1, 1, 2, 1, 0.5])
+        _c1, _c2, _c3, _c4, _c5, _c6 = st.columns([5, 1, 1, 1, 2, 1])
         with _c1:
+            btn_label = f"{html.escape(r['name'])}" + (f"  {r['ticker']}" if r["name"] != r["ticker"] else "")
+            if st.button(
+                btn_label,
+                key=f"hbtn_{r['ticker']}",
+                help=f"Trade history for {r['ticker']}",
+                use_container_width=True,
+            ):
+                _show_trade_dialog(r["ticker"], r["name"], r["ccy"])
             st.markdown(
-                f"<div class='h-cell h-ticker'>"
-                f"<div class='h-bar' style='width:{bar_pct / max_weight * 100:.1f}%;background:#6C63FF;'></div>"
-                f"<span class='h-name'>{html.escape(r['name'])}</span>{name_html}</div>",
+                f"<div style='margin-top:-0.6rem;margin-bottom:0.2rem;border-radius:4px;overflow:hidden;height:4px;background:rgba(255,255,255,0.05);'>"
+                f"<div style='width:{bar_pct / max_weight * 100:.1f}%;height:100%;background:#6C63FF;border-radius:4px;'></div></div>",
                 unsafe_allow_html=True,
             )
         with _c2:
@@ -1228,9 +1408,6 @@ if latest["assets"]:
             st.markdown(f"<div class='h-cell'>{_fmt_val(r['value'])}</div>", unsafe_allow_html=True)
         with _c6:
             st.markdown(f"<div class='h-cell' style='color:{ret_col};font-weight:600'>{_fmt_ret(r['ret_pct'])}</div>", unsafe_allow_html=True)
-        with _c7:
-            if st.button("↗", key=f"hbtn_{r['ticker']}", help=f"Trade history for {r['ticker']}"):
-                _show_trade_dialog(r["ticker"], r["name"], r["ccy"])
         st.markdown("<div class='holdings-row'></div>", unsafe_allow_html=True)
 
 # ── Footer ────────────────────────────────────────────────────────────────────
