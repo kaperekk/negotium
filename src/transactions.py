@@ -80,8 +80,8 @@ def add_transaction(
         # Fast append — new date after everything
         rec = {"date": date_str, "entries": entries}
         storage.append_jsonl(storage.TRANSACTIONS_PATH, rec)
-        yesterday_str = (date.today() - timedelta(days=1)).isoformat()
-        if date_str <= yesterday_str:
+        today_str = date.today().isoformat()
+        if date_str <= today_str:
             bal = storage.load_balance()
             base_ccy = cfg_module.load().get("default_currency", "PLN")
             _update_avg_prices(bal, rec, base_ccy)
@@ -195,7 +195,7 @@ def _rebuild_balance(records: list[dict], from_date: str | None = None) -> None:
     on top of the existing balance. Otherwise replays everything from scratch.
     """
     base_ccy = cfg_module.load().get("default_currency", "PLN")
-    yesterday_str = (date.today() - timedelta(days=1)).isoformat()
+    today_str = date.today().isoformat()
 
     if from_date:
         balance = storage.load_balance()
@@ -209,7 +209,7 @@ def _rebuild_balance(records: list[dict], from_date: str | None = None) -> None:
         balance = {}
 
     for rec in records:
-        if rec["date"] > yesterday_str:
+        if rec["date"] > today_str:
             continue
         _update_avg_prices(balance, rec, base_ccy)
         _apply_entries(balance, rec["entries"])

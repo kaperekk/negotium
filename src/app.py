@@ -172,7 +172,8 @@ st.markdown("""
         background: rgba(108,99,255,0.3) !important;
     }
     [data-testid="stMultiSelect"]:has([data-baseweb="select"]) {
-        max-width: 220px !important;
+        max-width: 600px !important;
+        width: 100% !important;
     }
     [data-testid="stSelectbox"] > div > div {
         background: rgba(14,17,23,0.6) !important;
@@ -181,7 +182,8 @@ st.markdown("""
         color: #E6EDF3 !important;
     }
     [data-testid="stSelectbox"]:has([data-baseweb="select"]) {
-        max-width: 180px !important;
+        max-width: 600px !important;
+        width: 100% !important;
     }
     [data-testid="stHorizontalBlock"]:has([data-baseweb="select"]):has([data-baseweb="multiselect"]) {
         background: rgba(14,17,23,0.6);
@@ -618,6 +620,7 @@ with st.sidebar:
             st.rerun()
 
     if st.button("📈  Refresh market data", width="stretch"):
+        storage.invalidate_portfolio_from((today - timedelta(days=1)).isoformat())
         st.session_state.pop(f"snapshots_{base_ccy}_{precision}", None)
         for k in list(st.session_state.keys()):
             if k.startswith("benchmarks_"):

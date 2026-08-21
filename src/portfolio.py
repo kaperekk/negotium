@@ -126,10 +126,10 @@ def build_portfolio(
         cumulative_contrib = 0.0
 
     # -- Load transactions once ------------------------------------------------
-    yesterday_str = (date.today() - timedelta(days=1)).isoformat()
+    today_str = date.today().isoformat()
     all_tx     = get_all_transactions()
     resume_str = resume_from.isoformat()
-    pending_tx = [r for r in all_tx if r["date"] >= resume_str and r["date"] <= yesterday_str]
+    pending_tx = [r for r in all_tx if r["date"] >= resume_str and r["date"] <= today_str]
     tx_idx     = 0
     n_tx       = len(pending_tx)
 

@@ -1494,21 +1494,21 @@ def test_isin_resolve_from_config(tmp: Path):
     assert unresolved["DE0005793303"] == "unknown fund"
 
 
-# ── Skip-today transaction tests ──────────────────────────────────────────────
+# ── Include-today transaction tests ──────────────────────────────────────────
 
-def test_portfolio_skips_today_transactions(tmp: Path):
-    """build_portfolio excludes transactions dated today."""
+def test_portfolio_includes_today_transactions(tmp: Path):
+    """build_portfolio includes transactions dated today."""
     from unittest.mock import patch
     import transactions, portfolio
     from datetime import date as _real_date
 
     fx.inject_fake_prices(tmp)
 
-    # Yesterday's transaction — should be included
+    # Yesterday's transaction
     transactions.add_transaction("2023-01-04", [
         {"ticker": "AAPL", "amount": 10.0},
     ])
-    # Today's transaction — should be skipped
+    # Today's transaction — should now be included
     transactions.add_transaction("2023-01-05", [
         {"ticker": "AAPL", "amount": 5.0},
     ])
@@ -1530,13 +1530,13 @@ def test_portfolio_skips_today_transactions(tmp: Path):
 
     snap = next(s for s in snapshots if s["date"] == "2023-01-05")
     aapl = next((a for a in snap["assets"] if a["ticker"] == "AAPL"), None)
-    assert aapl is not None, "AAPL from yesterday should appear"
-    assert abs(aapl["amount"] - 10.0) < 1e-6, \
-        f"Should hold 10 AAPL (today's +5 skipped), got {aapl['amount']}"
+    assert aapl is not None, "AAPL should appear"
+    assert abs(aapl["amount"] - 15.0) < 1e-6, \
+        f"Should hold 15 AAPL (today's +5 included), got {aapl['amount']}"
 
 
-def test_rebuild_balance_skips_today_transactions(tmp: Path):
-    """_rebuild_balance excludes today's records from balance and avg_price."""
+def test_rebuild_balance_includes_today_transactions(tmp: Path):
+    """_rebuild_balance includes today's records in balance and avg_price."""
     from unittest.mock import patch
     import transactions, storage
     from datetime import date as _real_date
@@ -1560,8 +1560,8 @@ def test_rebuild_balance_skips_today_transactions(tmp: Path):
         transactions._rebuild_balance(records)
 
     bal = storage.load_balance()
-    assert abs(bal["AAPL"]["amount"] - 10.0) < 1e-6, \
-        f"Balance should be 10 AAPL (today's +5 skipped), got {bal['AAPL']['amount']}"
+    assert abs(bal["AAPL"]["amount"] - 15.0) < 1e-6, \
+        f"Balance should be 15 AAPL (today's +5 included), got {bal['AAPL']['amount']}"
 
 
 # ── Holdings return calculation tests ─────────────────────────────────────────
@@ -1821,8 +1821,8 @@ ALL_TESTS = [
     ("Manual: parse and import",              test_manual_parse_and_import),
     ("BOSSA: validate errors",               test_bossa_validate_errors),
     ("ISIN: resolve from config",            test_isin_resolve_from_config),
-    ("Portfolio: skips today transactions",   test_portfolio_skips_today_transactions),
-    ("Rebuild balance: skips today",          test_rebuild_balance_skips_today_transactions),
+    ("Portfolio: includes today transactions",  test_portfolio_includes_today_transactions),
+    ("Rebuild balance: includes today",         test_rebuild_balance_includes_today_transactions),
     ("Avg price: stored in native currency",  test_avg_price_stored_in_native_currency),
     ("Avg price: USD stock in USD",           test_avg_price_usd_stored_in_usd),
     ("Cost basis: EUR stock → PLN",           test_cost_basis_eur_stock_converts_to_pln),
