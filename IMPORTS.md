@@ -50,7 +50,7 @@ Example:
 ### How to export
 
 1. Log in to your XTB account at [xstation5.xtb.com](https://xstation5.xtb.com)
-2. Go to **Eksport (NEW)**
+2. Go to **Eksport**
 3. Select the time range you want to export
 4. Select the accounts to include
 5. Export the file
