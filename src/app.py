@@ -416,21 +416,14 @@ with st.sidebar:
 
         rename_val = st.text_input("Rename project to", value=current or "",
                                    key="rename_proj_input")
-        rc1, rc2 = st.columns(2)
-        with rc1:
-            if st.button("Rename", key="rename_proj_btn"):
-                if rename_val and rename_val.strip() and rename_val.strip() != current:
-                    try:
-                        storage.rename_project(current, rename_val.strip())
-                        st.session_state.clear()
-                        st.rerun()
-                    except ValueError as e:
-                        st.error(str(e))
-        with rc2:
-            if st.button("Delete project", key="delete_proj_btn", type="primary"):
-                storage.delete_project(current)
-                st.session_state.clear()
-                st.rerun()
+        if st.button("Rename", key="rename_proj_btn"):
+            if rename_val and rename_val.strip() and rename_val.strip() != current:
+                try:
+                    storage.rename_project(current, rename_val.strip())
+                    st.session_state.clear()
+                    st.rerun()
+                except ValueError as e:
+                    st.error(str(e))
 
     with st.expander("➕ Add transaction"):
         with st.form("add_tx", clear_on_submit=True):
@@ -482,144 +475,86 @@ with st.sidebar:
         broker_dir = storage.IMPORTS_DIR / broker.lower()
         broker_dir.mkdir(parents=True, exist_ok=True)
 
+        if broker == "XTB":
+            st.info("ℹ️ Name your file starting with the currency code, e.g. `EUR_history.xlsx` — the currency is auto-detected from the prefix.")
+
         file_types = ["csv"] if broker == "BOSSA" else ["json"] if broker == "Custom" else ["xlsx"]
         uploaded_files = st.file_uploader(
             f"Upload {broker} files", type=file_types,
-            accept_multiple_files=True, key="xtb_upload",
+            accept_multiple_files=True, key=f"{broker}_upload",
             label_visibility="collapsed",
         )
 
-        for uf in uploaded_files:
-            dest = broker_dir / uf.name
-            if not dest.exists():
+        if uploaded_files:
+            for uf in uploaded_files:
+                dest = broker_dir / uf.name
                 dest.write_bytes(uf.getvalue())
-
-        broker_files = sorted(broker_dir.glob("*.xlsx")) + sorted(broker_dir.glob("*.csv")) + sorted(broker_dir.glob("*.json"))
-
-        if broker_files:
-            for fpath in broker_files:
-                detected = _detect_currency(fpath.name)
+                detected = _detect_currency(uf.name)
                 if broker == "BOSSA":
                     ccy = "Many"
-                    c1, c2 = st.columns([4, 1])
-                    with c1:
-                        st.caption(f"📄 {fpath.name} (currency: auto)")
-                    with c2:
-                        if st.button("⬇", key=f"imp_{broker}_{fpath.name}",
-                                     help="Import this file"):
-                            if fpath.suffix.lower() == ".csv":
-                                with st.spinner("Importing…"):
-                                    result = import_bossa(str(fpath), ccy)
-                            else:
-                                result = import_xtb(str(fpath), ccy)
-                            if result["success"]:
-                                n = result["imported"]
-                                s = result["skipped"]
-                                msg = f"**{fpath.name}** — {n} imported"
-                                if s:
-                                    msg += f", {s} skipped (duplicates)"
-                                st.success(msg)
-                                st.session_state.pop(f"snapshots_{base_ccy}_{precision}", None)
-                                st.rerun()
-                            else:
-                                st.error(f"**{fpath.name}** — {result['error']}")
+                    with st.spinner(f"Importing {uf.name}…"):
+                        result = import_bossa(str(dest), ccy)
                 elif broker == "Custom":
-                    c1, c2 = st.columns([4, 1])
-                    with c1:
-                        st.caption(f"📄 {fpath.name}")
-                    with c2:
-                        if st.button("⬇", key=f"imp_{broker}_{fpath.name}",
-                                     help="Import this file"):
-                            result = import_manual(str(fpath))
-                            if result["success"]:
-                                n = result["imported"]
-                                s = result["skipped"]
-                                msg = f"**{fpath.name}** — {n} imported"
-                                if s:
-                                    msg += f", {s} skipped (duplicates)"
-                                st.success(msg)
-                                st.session_state.pop(f"snapshots_{base_ccy}_{precision}", None)
-                                st.rerun()
-                            else:
-                                st.error(f"**{fpath.name}** — {result['error']}")
+                    with st.spinner(f"Importing {uf.name}…"):
+                        result = import_manual(str(dest))
                 else:
                     ccy_options = BROKER_CURRENCIES.get(broker, ["EUR", "PLN", "USD"])
-                    default_ccy = ccy_options[0]
                     if detected not in ccy_options:
-                        detected = default_ccy
-                    c1, c2, c3 = st.columns([2, 2, 1])
-                    with c1:
-                        st.caption(f"📄 {fpath.name}")
-                    with c2:
-                        ccy = st.selectbox(
-                            "Currency", ccy_options,
-                            index=ccy_options.index(detected),
-                            key=f"ccy_{broker}_{fpath.name}",
-                            label_visibility="collapsed",
-                        )
-                    with c3:
-                        if st.button("⬇", key=f"imp_{broker}_{fpath.name}",
-                                     help="Import this file"):
-                            if ccy != detected:
-                                new_name = f"{ccy}_{fpath.name}"
-                                new_path = broker_dir / new_name
-                                fpath.rename(new_path)
-                                fpath = new_path
-                            result = import_xtb(str(fpath), ccy)
-                            if result["success"]:
-                                n = result["imported"]
-                                s = result["skipped"]
-                                msg = f"**{fpath.name}** — {n} imported"
-                                if s:
-                                    msg += f", {s} skipped (duplicates)"
-                                st.success(msg)
-                                st.session_state.pop(f"snapshots_{base_ccy}_{precision}", None)
-                                st.rerun()
-                            else:
-                                st.error(f"**{fpath.name}** — {result['error']}")
-        else:
-            st.caption("No files uploaded yet.")
-
-        if st.button("♻️  Rebuild from ALL imports", width="stretch"):
-            for p in [storage.TRANSACTIONS_PATH, storage.PORTFOLIO_PATH, storage.BALANCE_PATH]:
-                p.write_text("")
-
-            all_files = []
-            for b in BROKERS:
-                bdir = storage.IMPORTS_DIR / b.lower()
-                if not bdir.exists():
-                    continue
-                for fpath in sorted(bdir.glob("*.xlsx")):
-                    all_files.append(("xtb", fpath))
-                for fpath in sorted(bdir.glob("*.csv")):
-                    all_files.append(("bossa", fpath))
-                for fpath in sorted(bdir.glob("*.json")):
-                    all_files.append(("custom", fpath))
-
-            if all_files:
-                bar = st.progress(0, text="Importing…")
-                total_imported = 0
-                for idx, (kind, fpath) in enumerate(all_files):
-                    ccy = _detect_currency(fpath.name)
-                    bar.progress(idx / len(all_files), text=f"Importing {fpath.name}…")
-                    if kind == "bossa":
-                        result = import_bossa(str(fpath), ccy)
-                    elif kind == "custom":
-                        result = import_manual(str(fpath))
-                    else:
-                        result = import_xtb(str(fpath), ccy)
-                    if result["success"]:
-                        total_imported += result["imported"]
-                bar.progress(1.0, text="Done")
-                bar.empty()
-            else:
-                total_imported = 0
-
-            st.success(f"Rebuilt from {len(all_files)} files — {total_imported} transactions imported.")
+                        detected = ccy_options[0]
+                    with st.spinner(f"Importing {uf.name}…"):
+                        result = import_xtb(str(dest), detected)
+                if result["success"]:
+                    n = result["imported"]
+                    s = result["skipped"]
+                    msg = f"**{uf.name}** — {n} imported"
+                    if s:
+                        msg += f", {s} skipped (duplicates)"
+                    st.success(msg)
+                else:
+                    st.error(f"**{uf.name}** — {result['error']}")
             st.session_state.pop(f"snapshots_{base_ccy}_{precision}", None)
             st.rerun()
 
+        broker_files = sorted(broker_dir.glob("*.xlsx")) + sorted(broker_dir.glob("*.csv")) + sorted(broker_dir.glob("*.json"))
+        if broker_files:
+            for fpath in broker_files:
+                st.caption(f"📄 {fpath.name}")
+        else:
+            st.caption("No files uploaded yet.")
+
     if st.button("📈  Refresh market data", width="stretch"):
+        all_files = []
+        for b in BROKERS:
+            bdir = storage.IMPORTS_DIR / b.lower()
+            if not bdir.exists():
+                continue
+            for fpath in sorted(bdir.glob("*.xlsx")):
+                all_files.append(("xtb", fpath))
+            for fpath in sorted(bdir.glob("*.csv")):
+                all_files.append(("bossa", fpath))
+            for fpath in sorted(bdir.glob("*.json")):
+                all_files.append(("custom", fpath))
+
+        if all_files:
+            bar = st.progress(0, text="Importing…")
+            total_imported = 0
+            for idx, (kind, fpath) in enumerate(all_files):
+                ccy = _detect_currency(fpath.name)
+                bar.progress(idx / len(all_files), text=f"Importing {fpath.name}…")
+                if kind == "bossa":
+                    result = import_bossa(str(fpath), ccy)
+                elif kind == "custom":
+                    result = import_manual(str(fpath))
+                else:
+                    result = import_xtb(str(fpath), ccy)
+                if result["success"]:
+                    total_imported += result["imported"]
+            bar.progress(1.0, text="Done")
+            bar.empty()
+            st.success(f"Refreshed from {len(all_files)} files — {total_imported} transactions imported.")
+        else:
+            st.info("No import files found.")
+
         storage.invalidate_portfolio_from((today - timedelta(days=1)).isoformat())
         st.session_state.pop(f"snapshots_{base_ccy}_{precision}", None)
         for k in list(st.session_state.keys()):
@@ -893,8 +828,8 @@ def fmt(v: float) -> str:
         return f"{formatted} PLN"
     return f"{SYM[base_ccy]}{formatted}"
 
-cagr = compute_cagr(cur_value)
-irr = compute_irr(cur_value)
+cagr = compute_cagr(cur_value, base_ccy)
+irr = compute_irr(cur_value, base_ccy)
 
 best_ticker = max(latest["assets"], key=lambda a: a["value_base"])["ticker"] if latest["assets"] else "—"
 
@@ -1421,33 +1356,3 @@ st.caption(
     f"Daily · {len(latest.get('assets', [])) if latest else 0} positions"
 )
 
-# ── Danger zone ──────────────────────────────────────────────────────────────
-st.divider()
-st.markdown(
-    """
-    <style>
-    div[data-testid="stButton"] > button[kind="primary"] {
-        background-color: #dc3545;
-        color: white;
-        font-weight: bold;
-        border: none;
-    }
-    div[data-testid="stButton"] > button[kind="primary"]:hover {
-        background-color: #c82333;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-_, center, _ = st.columns([1, 2, 1])
-with center:
-    if st.button(
-        "Clean up data",
-        type="primary",
-        key="nuke_all",
-    ):
-        for path in [storage.TRANSACTIONS_PATH, storage.PORTFOLIO_PATH, storage.BALANCE_PATH]:
-            if path.exists():
-                path.unlink()
-        st.session_state.clear()
-        st.rerun()

@@ -284,8 +284,12 @@ def rebuild_balance() -> None:
     _rebuild_balance(records)
 
 
-def compute_cagr(current_value: float) -> float | None:
+def compute_cagr(current_value: float, base_currency: str | None = None) -> float | None:
     """Compute Compound Annual Growth Rate from first deposit to now.
+
+    current_value must be expressed in the same currency as base_currency
+    (the portfolio snapshot's total_value). Falls back to config's
+    default_currency when base_currency is not given.
 
     Returns CAGR as a decimal (e.g. 0.12 for 12%), or None if not enough data.
     """
@@ -293,21 +297,28 @@ def compute_cagr(current_value: float) -> float | None:
     from datetime import date as _date
 
     records = get_all_transactions()
-    base_ccy = cfg_module.load().get("default_currency", "PLN")
+    if base_currency is None:
+        base_currency = cfg_module.load().get("default_currency", "PLN")
+    base_ccy = base_currency.upper()
     today = _date.today()
 
     first_date = None
     net_invested = 0.0
     for rec in records:
-        for e in rec["entries"]:
-            if e.get("account_operation"):
-                amt = float(e["amount"])
-                ccy = e["ticker"].upper()
-                if ccy in storage.SUPPORTED_CURRENCIES:
-                    fx = get_fx_rate(ccy, base_ccy, rec["date"], {}, int(rec["date"][:4])) if ccy != base_ccy else 1.0
-                    net_invested += amt * fx
-                    if first_date is None:
-                        first_date = rec["date"]
+        entries_list = rec["entries"]
+        all_cash = all(
+            e["ticker"].upper() in storage.SUPPORTED_CURRENCIES
+            for e in entries_list
+        )
+        for e in entries_list:
+            is_entry_op = e.get("account_operation", False)
+            t = e["ticker"].upper()
+            amt = float(e["amount"])
+            if is_entry_op or (all_cash and t in storage.SUPPORTED_CURRENCIES):
+                fx = get_fx_rate(t, base_ccy, rec["date"], {}, int(rec["date"][:4])) if t != base_ccy else 1.0
+                net_invested += amt * fx
+                if first_date is None:
+                    first_date = rec["date"]
 
     if first_date is None or net_invested <= 0:
         return None
@@ -319,30 +330,41 @@ def compute_cagr(current_value: float) -> float | None:
     return (current_value / net_invested) ** (1.0 / years) - 1.0
 
 
-def compute_irr(current_value: float) -> float | None:
+def compute_irr(current_value: float, base_currency: str | None = None) -> float | None:
     """Compute Internal Rate of Return (money-weighted) using all cash flows.
 
     Deposits are negative (money out of pocket), withdrawals positive.
     The current portfolio value is the final positive cash flow.
+    current_value must be expressed in the same currency as base_currency
+    (the portfolio snapshot's total_value). Falls back to config's
+    default_currency when base_currency is not given.
+
     Returns IRR as a decimal (e.g. 0.12 for 12%), or None if not solvable.
     """
     from ticker_data import get_fx_rate
     from datetime import date as _date
 
     records = get_all_transactions()
-    base_ccy = cfg_module.load().get("default_currency", "PLN")
+    if base_currency is None:
+        base_currency = cfg_module.load().get("default_currency", "PLN")
+    base_ccy = base_currency.upper()
     today = _date.today()
 
     cash_flows: list[tuple[str, float]] = []
     for rec in records:
-        for e in rec["entries"]:
-            if e.get("account_operation"):
-                amt = float(e["amount"])
-                ccy = e["ticker"].upper()
-                if ccy in storage.SUPPORTED_CURRENCIES:
-                    fx = get_fx_rate(ccy, base_ccy, rec["date"], {}, int(rec["date"][:4])) if ccy != base_ccy else 1.0
-                    # Negate: positive account_op = deposit (money out of pocket)
-                    cash_flows.append((rec["date"], -amt * fx))
+        entries_list = rec["entries"]
+        all_cash = all(
+            e["ticker"].upper() in storage.SUPPORTED_CURRENCIES
+            for e in entries_list
+        )
+        for e in entries_list:
+            is_entry_op = e.get("account_operation", False)
+            t = e["ticker"].upper()
+            amt = float(e["amount"])
+            if is_entry_op or (all_cash and t in storage.SUPPORTED_CURRENCIES):
+                fx = get_fx_rate(t, base_ccy, rec["date"], {}, int(rec["date"][:4])) if t != base_ccy else 1.0
+                # Negate: positive account_op = deposit (money out of pocket)
+                cash_flows.append((rec["date"], -amt * fx))
 
     if not cash_flows:
         return None
