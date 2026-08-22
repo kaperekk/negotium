@@ -21,6 +21,7 @@ DEFAULTS: dict = {
     "graph_precision": "1D",   # "1D" or "1W"
     "ticker_rules": [],
     "isin_tickers": [],
+    "theme": "dark",
 }
 
 
@@ -86,3 +87,13 @@ def get_precision(cfg: dict) -> str:
 
 
 SUPPORTED_CURRENCIES = {"USD", "EUR", "PLN"}
+
+
+def get_theme(cfg: dict) -> str:
+    return cfg.get("theme", "dark")
+
+
+def save_theme(theme: str) -> None:
+    g = _load_global()
+    g["theme"] = theme
+    _save_file(GLOBAL_CONFIG_PATH, g)
