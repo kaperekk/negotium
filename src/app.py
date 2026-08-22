@@ -10,7 +10,6 @@ import time
 import json
 import html
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from datetime import date, datetime, timedelta
 
@@ -22,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import config as cfg_module
 import storage
-from ticker_data import ensure as ensure_ticker, get_price, get_fx_rate, get_ticker_name
+from ticker_data import ensure_batch, get_price, get_fx_rate, get_ticker_name
 from portfolio import FX_TICKERS
 from transactions import (
     add_transaction, get_all_transactions, get_all_tickers,
@@ -37,6 +36,71 @@ from manual_import import import_manual
 BROKERS = ["XTB", "BOSSA", "Custom"]
 BROKER_CURRENCIES = {"XTB": ["EUR", "PLN", "USD"], "BOSSA": ["EUR", "PLN", "Many"]}
 
+THEMES = {
+    "dark": {
+        "card_bg": "rgba(14,17,23,0.6)",
+        "border": "rgba(255,255,255,0.08)",
+        "border_hover": "rgba(255,255,255,0.2)",
+        "border_active": "rgba(255,255,255,0.18)",
+        "border_strong": "#30363D",
+        "text": "#E6EDF3",
+        "text_cell": "#C9D1D9",
+        "text_muted": "#8B949E",
+        "text_faint": "rgba(255,255,255,0.5)",
+        "panel_bg": "#161B22",
+        "hr": "#21262D",
+        "accent": "#6C63FF",
+        "accent_tag_bg": "rgba(108,99,255,0.2)",
+        "accent_tag_border": "rgba(108,99,255,0.4)",
+        "accent_tag_hover": "rgba(108,99,255,0.3)",
+        "card_btn_active": "rgba(255,255,255,0.04)",
+        "card_faint": "rgba(255,255,255,0.03)",
+        "chart_grid": "rgba(48,54,61,0.6)",
+        "chart_zeroline": "rgba(48,54,61,0.8)",
+        "hover_bg": "rgba(22,27,34,0.95)",
+        "plotly_template": "plotly_dark",
+        "page_bg": "#0E1117",
+        "range_bg": "rgba(255,255,255,0.05)",
+        "range_active": "rgba(108,99,255,0.3)",
+        "table_border": "#333",
+        "table_header_border": "#555",
+        "table_hover": "rgba(255,255,255,0.05)",
+        "table_text": "#e0e0e0",
+        "holdings_bar_bg": "rgba(255,255,255,0.05)",
+    },
+    "light": {
+        "card_bg": "rgba(255,255,255,0.9)",
+        "border": "rgba(0,0,0,0.10)",
+        "border_hover": "rgba(0,0,0,0.20)",
+        "border_active": "rgba(0,0,0,0.16)",
+        "border_strong": "#D0D7DE",
+        "text": "#1F2328",
+        "text_cell": "#3B4045",
+        "text_muted": "#656D76",
+        "text_faint": "rgba(0,0,0,0.45)",
+        "panel_bg": "#F6F8FA",
+        "hr": "#D8DEE4",
+        "accent": "#6C63FF",
+        "accent_tag_bg": "rgba(108,99,255,0.12)",
+        "accent_tag_border": "rgba(108,99,255,0.35)",
+        "accent_tag_hover": "rgba(108,99,255,0.22)",
+        "card_btn_active": "rgba(108,99,255,0.08)",
+        "card_faint": "rgba(0,0,0,0.03)",
+        "chart_grid": "rgba(200,205,212,0.5)",
+        "chart_zeroline": "rgba(200,205,212,0.7)",
+        "hover_bg": "rgba(255,255,255,0.96)",
+        "plotly_template": "plotly_white",
+        "page_bg": "#F7F8FA",
+        "range_bg": "rgba(0,0,0,0.04)",
+        "range_active": "rgba(108,99,255,0.15)",
+        "table_border": "#D0D7DE",
+        "table_header_border": "#AFB8C1",
+        "table_hover": "rgba(0,0,0,0.04)",
+        "table_text": "#24292F",
+        "holdings_bar_bg": "rgba(0,0,0,0.05)",
+    },
+}
+
 
 def _detect_currency(filename: str) -> str:
     prefix = filename.strip()[:3].upper()
@@ -50,166 +114,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
-
-st.markdown("""
-<style>
-    /* ── Global ─────────────────────────────────────────────────────────── */
-    html, body, [class*="css"] {
-        font-size: 18px !important;
-    }
-
-    /* ── Metric cards ──────────────────────────────────────────────────── */
-    [data-testid="metric-container"] {
-        background: rgba(14,17,23,0.6) !important;
-        border: 1px solid rgba(255,255,255,0.08) !important;
-        border-radius: 16px !important;
-        padding: 28px 24px 16px 24px !important;
-    }
-    [data-testid="metric-container"] [data-testid="stMetricLabel"],
-    [data-testid="metric-container"] [data-testid="stMetricLabel"] p,
-    [data-testid="metric-container"] label,
-    [data-testid="metric-container"] label p,
-    [data-testid="metric-container"] [class*="Label"],
-    [data-testid="metric-container"] [class*="Label"] p {
-        color: #8B949E !important;
-        font-size: 1rem !important;
-        font-weight: 600 !important;
-        text-transform: uppercase;
-        letter-spacing: 0.06em;
-        visibility: visible !important;
-    }
-    [data-testid="metric-container"] [data-testid="stMetricValue"],
-    [data-testid="metric-container"] [class*="Value"],
-    [data-testid="metric-container"] [class*="Value"] p {
-        font-size: 2rem !important;
-        font-weight: 700 !important;
-    }
-
-    /* ── Sidebar ───────────────────────────────────────────────────────── */
-    [data-testid="stSidebar"] {
-        min-width: 380px;
-        max-width: 420px;
-        border-right: 1px solid #30363D;
-    }
-    [data-testid="stSidebar"] [data-testid="stVerticalBlock"] > div {
-        margin-top: -0.4rem;
-    }
-    [data-testid="stSidebar"] [data-testid="stVerticalBlock"] > div:first-child {
-        margin-top: 0;
-    }
-    [data-testid="stSidebar"] hr {
-        display: none;
-    }
-    [data-testid="stSidebar"] button[kind="primary"] {
-        background: rgba(14,17,23,0.6) !important;
-        border: 1px solid rgba(255,255,255,0.08) !important;
-    }
-    [data-testid="stSidebar"] [data-testid="stHorizontalBlock"] {
-        gap: 0.3rem;
-    }
-    [data-testid="stSidebar"] [data-testid="stMarkdown"] h1 {
-        font-size: 2rem !important;
-        text-align: center !important;
-        margin-top: -1rem !important;
-        padding-top: 0 !important;
-    }
-
-    /* ── Main content spacing ──────────────────────────────────────────── */
-    .block-container {
-        padding-top: 2.5rem !important;
-        padding-left: 1rem !important;
-        padding-right: 1rem !important;
-        max-width: 100% !important;
-    }
-
-    /* ── Expanders ─────────────────────────────────────────────────────── */
-    details[data-testid="stExpander"] {
-        background: #161B22;
-        border: 1px solid #30363D;
-        border-radius: 12px;
-    }
-
-    /* ── Buttons (global) ──────────────────────────────────────────────── */
-    .stButton > button,
-    .stDownloadButton > button,
-    div[data-testid="stHorizontalBlock"] button {
-        background: rgba(14,17,23,0.6) !important;
-        border: 1px solid rgba(255,255,255,0.08) !important;
-        border-radius: 0.75rem !important;
-        color: #fff !important;
-    }
-    .stButton > button:hover,
-    .stDownloadButton > button:hover,
-    div[data-testid="stHorizontalBlock"] button:hover {
-        border-color: rgba(255,255,255,0.2) !important;
-    }
-
-    /* ── Dividers ──────────────────────────────────────────────────────── */
-    hr { border-color: #21262D !important; }
-
-    /* ── Multiselect & Selectbox ──────────────────────────────────────── */
-    [data-testid="stMultiSelect"] [data-baseweb="select"] > div,
-    [data-testid="stMultiSelect"] [data-baseweb="select"],
-    [data-testid="stMultiSelect"] input {
-        background: rgba(14,17,23,0.6) !important;
-        color: #E6EDF3 !important;
-    }
-    [data-testid="stMultiSelect"] [data-baseweb="select"] {
-        background: rgba(14,17,23,0.6) !important;
-        border-color: rgba(255,255,255,0.08) !important;
-        border-radius: 0.75rem !important;
-    }
-    [data-testid="stMultiSelect"] [data-baseweb="tag"] {
-        background: rgba(108,99,255,0.2) !important;
-        border: 1px solid rgba(108,99,255,0.4) !important;
-        border-radius: 0.5rem !important;
-        color: #E6EDF3 !important;
-    }
-    [data-testid="stMultiSelect"] [data-baseweb="tag"] span {
-        color: #E6EDF3 !important;
-    }
-    [data-testid="stMultiSelect"] [aria-label="clear"] {
-        background: rgba(108,99,255,0.3) !important;
-    }
-    [data-testid="stMultiSelect"]:has([data-baseweb="select"]) {
-        max-width: 600px !important;
-        width: 100% !important;
-    }
-    [data-testid="stSelectbox"] > div > div {
-        background: rgba(14,17,23,0.6) !important;
-        border: 1px solid rgba(255,255,255,0.08) !important;
-        border-radius: 0.75rem !important;
-        color: #E6EDF3 !important;
-    }
-    [data-testid="stSelectbox"]:has([data-baseweb="select"]) {
-        max-width: 600px !important;
-        width: 100% !important;
-    }
-    [data-testid="stHorizontalBlock"]:has([data-baseweb="select"]):has([data-baseweb="multiselect"]) {
-        background: rgba(14,17,23,0.6);
-        border: 1px solid rgba(255,255,255,0.08);
-        border-radius: 0.75rem;
-        padding: 0.4rem 0.8rem;
-        gap: 0 !important;
-    }
-
-    /* ── P&L chart card ──────────────────────────────────────────────── */
-    [data-testid="stPlotlyChart"] {
-        background: rgba(14,17,23,0.6);
-        border-radius: 1rem;
-        padding: 0.1rem;
-        margin: 0.5rem 0 0 0;
-    }
-
-    /* ── DataFrame ─────────────────────────────────────────────────────── */
-    [data-testid="stDataFrame"] {
-        border: 1px solid #30363D;
-        border-radius: 12px;
-        overflow: hidden;
-    }
-</style>
-""", unsafe_allow_html=True)
-
 # ── Project init ───────────────────────────────────────────────────────────────
 
 migrated = storage.init_legacy_project()
@@ -262,51 +166,414 @@ start_date_cfg = cfg_module.get_start_date(cfg)
 today          = date.today()
 precision      = "D"
 
+if "theme" not in st.session_state:
+    st.session_state["theme"] = cfg_module.get_theme(cfg)
+T = THEMES[st.session_state["theme"]]
+
+
+st.markdown(f"""
+<style>
+    html, body, [class*="css"] {{ font-size: 18px !important; }}
+
+    /* ── App-level backgrounds & text ──────────────────────────────────── */
+    .stApp {{ background-color: {T["page_bg"]}; }}
+    [data-testid="stHeader"] {{ background-color: {T["page_bg"]}; }}
+    section[data-testid="stSidebar"] {{ background-color: {T["panel_bg"]}; }}
+    [data-testid="stSidebar"] [data-testid="stSidebarContent"] {{ background-color: {T["panel_bg"]}; }}
+
+    /* ── Override Streamlit dark-mode CSS variables ────────────────────── */
+    :root, [data-theme="dark"] {{
+        --background-color: {T["page_bg"]};
+        --secondary-background-color: {T["panel_bg"]};
+        --text-color: {T["text"]};
+        --primary-color: {T["accent"]};
+    }}
+    /* BaseWeb / ThemedSelect overrides */
+    [data-baseweb="select"] {{
+        background-color: {T["card_bg"]} !important;
+        color: {T["text"]} !important;
+        border-color: {T["border"]} !important;
+    }}
+    [data-baseweb="select"] > div {{
+        background-color: {T["card_bg"]} !important;
+    }}
+    [data-baseweb="input"] {{
+        background-color: {T["card_bg"]} !important;
+        color: {T["text"]} !important;
+    }}
+    [data-baseweb="tag"] {{
+        background-color: {T["accent_tag_bg"]} !important;
+        color: {T["text"]} !important;
+    }}
+    .stMarkdown p, .stMarkdown li, .stMarkdown span, .stMarkdown div,
+    .stMarkdown h1, .stMarkdown h2, .stMarkdown h3, .stMarkdown h4,
+    .stMarkdown h5, .stMarkdown h6 {{ color: {T["text"]}; }}
+    .stCaption p, .stCaption span {{ color: {T["text_muted"]}; }}
+    h1, h2, h3, h4, h5, h6 {{ color: {T["text"]}; }}
+    label, [data-baseweb="label"] {{ color: {T["text"]} !important; }}
+    input, textarea, select {{ color: {T["text"]} !important; }}
+    p, li, span {{ color: {T["text"]}; }}
+
+    /* ── Text inputs & text areas ──────────────────────────────────────── */
+    [data-testid="stTextInput"] input,
+    [data-testid="stTextArea"] textarea,
+    [data-testid="stNumberInput"] input,
+    [data-testid="stDateInput"] input {{
+        background: {T["card_bg"]} !important;
+        color: {T["text"]} !important;
+        border-color: {T["border"]} !important;
+    }}
+    [data-testid="stTextInput"] > div > div,
+    [data-testid="stTextArea"] > div > div,
+    [data-testid="stNumberInput"] > div > div {{
+        background: {T["card_bg"]} !important;
+        border-color: {T["border"]} !important;
+    }}
+
+    /* ── Selectboxes & multiselects ────────────────────────────────────── */
+    [data-testid="stSelectbox"] > div > div,
+    [data-testid="stSelectbox"] [data-baseweb="select"],
+    [data-testid="stSelectbox"] [data-baseweb="select"] > div,
+    [data-testid="stMultiSelect"] > div > div,
+    [data-testid="stMultiSelect"] [data-baseweb="select"],
+    [data-testid="stMultiSelect"] [data-baseweb="select"] > div {{
+        background: {T["card_bg"]} !important;
+        border: 1px solid {T["border"]} !important;
+        border-radius: 0.75rem !important;
+        color: {T["text"]} !important;
+    }}
+    [data-testid="stMultiSelect"]:has([data-baseweb="select"]),
+    [data-testid="stSelectbox"]:has([data-baseweb="select"]) {{
+        max-width: 600px !important;
+        width: 100% !important;
+    }}
+    [data-testid="stMultiSelect"] input,
+    [data-testid="stSelectbox"] input {{
+        background: {T["card_bg"]} !important;
+        color: {T["text"]} !important;
+    }}
+    [data-testid="stMultiSelect"] [data-baseweb="tag"] {{
+        background: {T["accent_tag_bg"]} !important;
+        border: 1px solid {T["accent_tag_border"]} !important;
+        border-radius: 0.5rem !important;
+        color: {T["text"]} !important;
+    }}
+    [data-testid="stMultiSelect"] [data-baseweb="tag"] span {{
+        color: {T["text"]} !important;
+    }}
+    [data-testid="stMultiSelect"] [aria-label="clear"] {{
+        background: {T["accent_tag_hover"]} !important;
+    }}
+    /* Multiselect/select placeholder text ("Choose options").
+       Streamlit's BaseWeb StyledPlaceholder renders with class "st-fh"
+       (emotion-generated hash) and NO stable id. Its own rule has no !important,
+       so our !important wins outright. */
+    .st-fh {{
+        color: {T["text"]} !important;
+    }}
+    [data-testid="stHorizontalBlock"]:has([data-baseweb="select"]):has([data-baseweb="multiselect"]) {{
+        background: {T["card_bg"]};
+        border: 1px solid {T["border"]};
+        border-radius: 0.75rem;
+        padding: 0.4rem 0.8rem;
+        gap: 0 !important;
+    }}
+
+    /* ── BaseWeb dropdown popups (portalled outside widget) ─────────────── */
+    /* Streamlit dark theme sets [data-theme="dark"] on body, portalled popups inherit it */
+    [data-theme="dark"] [data-baseweb="popover"],
+    [data-baseweb="popover"] {{
+        background: {T["panel_bg"]} !important;
+        border: 1px solid {T["border"]} !important;
+    }}
+    [data-theme="dark"] [data-baseweb="menu"],
+    [data-theme="dark"] [data-baseweb="menu"] ul,
+    [data-baseweb="menu"],
+    [data-baseweb="menu"] ul {{
+        background: {T["panel_bg"]} !important;
+        border-color: {T["border"]} !important;
+    }}
+    [data-theme="dark"] [data-baseweb="list"],
+    [data-baseweb="list"] {{
+        background: {T["panel_bg"]} !important;
+    }}
+    [data-theme="dark"] [data-baseweb="list"] li,
+    [data-baseweb="list"] li {{
+        color: {T["text"]} !important;
+        background: {T["panel_bg"]} !important;
+    }}
+    [data-theme="dark"] [role="option"],
+    [data-theme="dark"] [role="listbox"] > div,
+    [data-theme="dark"] [role="listbox"] > li,
+    [role="option"],
+    [role="listbox"] > div,
+    [role="listbox"] > li {{
+        color: {T["text"]} !important;
+        background: transparent !important;
+    }}
+    [data-theme="dark"] [role="option"]:hover,
+    [data-theme="dark"] [role="option"]:focus,
+    [data-theme="dark"] [role="listbox"] > div:hover,
+    [role="option"]:hover,
+    [role="option"]:focus,
+    [role="listbox"] > div:hover {{
+        background: {T["card_bg"]} !important;
+    }}
+    [data-theme="dark"] [role="option"][aria-selected="true"],
+    [role="option"][aria-selected="true"] {{
+        background: {T["accent_tag_bg"]} !important;
+    }}
+    [data-theme="dark"] [role="option"] [data-baseweb="highlight"],
+    [role="option"] [data-baseweb="highlight"] {{
+        background: {T["accent_tag_bg"]} !important;
+    }}
+    /* Nuclear override: force all descendants of portalled popover */
+    [data-baseweb="popover"] [data-baseweb="menu"] [role="option"] {{
+        background-color: {T["panel_bg"]} !important;
+        color: {T["text"]} !important;
+    }}
+    [data-baseweb="popover"] [data-baseweb="menu"] [role="option"]:hover {{
+        background-color: {T["card_bg"]} !important;
+    }}
+    [data-baseweb="popover"] [data-baseweb="menu"] {{
+        background-color: {T["panel_bg"]} !important;
+    }}
+
+    /* ── Metric cards ──────────────────────────────────────────────────── */
+    [data-testid="metric-container"] {{
+        background: {T["card_bg"]} !important;
+        border: 1px solid {T["border"]} !important;
+        border-radius: 16px !important;
+        padding: 28px 24px 16px 24px !important;
+    }}
+    [data-testid="metric-container"] [data-testid="stMetricLabel"],
+    [data-testid="metric-container"] [data-testid="stMetricLabel"] p,
+    [data-testid="metric-container"] label,
+    [data-testid="metric-container"] label p,
+    [data-testid="metric-container"] [class*="Label"],
+    [data-testid="metric-container"] [class*="Label"] p {{
+        color: {T["text_muted"]} !important;
+        font-size: 1rem !important;
+        font-weight: 600 !important;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        visibility: visible !important;
+    }}
+    [data-testid="metric-container"] [data-testid="stMetricValue"],
+    [data-testid="metric-container"] [class*="Value"],
+    [data-testid="metric-container"] [class*="Value"] p {{
+        font-size: 2rem !important;
+        font-weight: 700 !important;
+        color: {T["text"]} !important;
+    }}
+
+    /* ── Sidebar ───────────────────────────────────────────────────────── */
+    [data-testid="stSidebar"] {{
+        min-width: 380px;
+        max-width: 420px;
+        border-right: 1px solid {T["border_strong"]};
+    }}
+    [data-testid="stSidebar"] [data-testid="stVerticalBlock"] > div {{ margin-top: -0.4rem; }}
+    [data-testid="stSidebar"] [data-testid="stVerticalBlock"] > div:first-child {{ margin-top: 0; }}
+    [data-testid="stSidebar"] hr {{ display: none; }}
+    [data-testid="stSidebar"] button[kind="primary"] {{
+        background: {T["card_bg"]} !important;
+        border: 1px solid {T["border"]} !important;
+    }}
+    [data-testid="stSidebar"] [data-testid="stHorizontalBlock"] {{ gap: 0.3rem; }}
+    [data-testid="stSidebar"] [data-testid="stMarkdown"] h1 {{
+        font-size: 2rem !important;
+        text-align: center !important;
+        margin-top: -1rem !important;
+        padding-top: 0 !important;
+    }}
+    [data-testid="stSidebar"] label,
+    [data-testid="stSidebar"] [data-baseweb="label"] {{
+        color: {T["text_muted"]} !important;
+    }}
+    [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] span,
+    [data-testid="stSidebar"] div {{
+        color: {T["text"]};
+    }}
+    [data-testid="stSidebar"] [data-testid="stCaptionContainer"] p {{
+        color: {T["text_muted"]};
+    }}
+
+    /* ── Main content spacing ──────────────────────────────────────────── */
+    .block-container {{
+        padding-top: 2.5rem !important;
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
+        max-width: 100% !important;
+    }}
+
+    /* ── Expanders ─────────────────────────────────────────────────────── */
+    details[data-testid="stExpander"] {{
+        background: {T["panel_bg"]} !important;
+        background-color: {T["panel_bg"]} !important;
+        border: 1px solid {T["border_strong"]} !important;
+        border-radius: 12px !important;
+        --secondary-background-color: {T["panel_bg"]};
+    }}
+    details[data-testid="stExpander"] summary,
+    details[data-testid="stExpander"] summary span,
+    details[data-testid="stExpander"] summary p {{
+        color: {T["text"]} !important;
+        background: transparent !important;
+        background-color: transparent !important;
+        --secondary-background-color: {T["panel_bg"]};
+    }}
+    details[data-testid="stExpander"]:hover,
+    details[data-testid="stExpander"][open] {{
+        background: {T["panel_bg"]} !important;
+        border-color: {T["border_strong"]} !important;
+    }}
+    details[data-testid="stExpander"] summary:hover,
+    details[data-testid="stExpander"] summary:focus,
+    details[data-testid="stExpander"] summary:active {{
+        background: {T["card_bg"]} !important;
+        color: {T["text"]} !important;
+        outline: none !important;
+        border-color: transparent !important;
+    }}
+
+    /* ── Buttons (global) ──────────────────────────────────────────────── */
+    .stButton > button,
+    .stDownloadButton > button,
+    div[data-testid="stHorizontalBlock"] button {{
+        background: {T["card_bg"]} !important;
+        border: 1px solid {T["border"]} !important;
+        border-radius: 0.75rem !important;
+        color: {T["text"]} !important;
+    }}
+    .stButton > button:hover,
+    .stDownloadButton > button:hover,
+    div[data-testid="stHorizontalBlock"] button:hover {{
+        border-color: {T["border_hover"]} !important;
+    }}
+
+    /* ── Dividers ──────────────────────────────────────────────────────── */
+    hr {{ border-color: {T["hr"]} !important; }}
+
+    /* ── Plotly chart card ─────────────────────────────────────────────── */
+    [data-testid="stPlotlyChart"] {{
+        background: {T["card_bg"]};
+        border-radius: 1rem;
+        padding: 0.1rem;
+        margin: 0.5rem 0 0 0;
+    }}
+
+    /* ── DataFrame ─────────────────────────────────────────────────────── */
+    [data-testid="stDataFrame"] {{
+        border: 1px solid {T["border_strong"]};
+        border-radius: 12px;
+        overflow: hidden;
+    }}
+
+    /* ── Info / Warning / Error / Success boxes ────────────────────────── */
+    [data-testid="stAlert"] {{
+        background: {T["card_bg"]} !important;
+        color: {T["text"]} !important;
+        border-color: {T["border"]} !important;
+    }}
+
+    /* ── Tabs ──────────────────────────────────────────────────────────── */
+    [data-baseweb="tab-list"] {{ background: {T["panel_bg"]} !important; }}
+    [data-baseweb="tab"] {{ color: {T["text_muted"]} !important; }}
+    [data-baseweb="tab"][aria-selected="true"] {{ color: {T["text"]} !important; }}
+    [data-baseweb="tab-border"] {{ border-color: {T["border"]} !important; }}
+    [data-baseweb="tab-highlight"] {{ background-color: {T["accent"]} !important; }}
+
+    /* ── Code blocks ───────────────────────────────────────────────────── */
+    code {{ color: {T["text"]} !important; background: {T["card_bg"]} !important; }}
+    pre {{ background: {T["card_bg"]} !important; border: 1px solid {T["border"]} !important; }}
+    pre code {{ color: {T["text_cell"]} !important; }}
+
+    /* ── Checkboxes & radio buttons ────────────────────────────────────── */
+    [data-testid="stCheckbox"] label,
+    [data-testid="stRadio"] label {{
+        color: {T["text"]} !important;
+    }}
+
+    /* ── Date input dropdowns ──────────────────────────────────────────── */
+    [data-testid="stDateInput"] [data-baseweb="input"] {{
+        background: {T["card_bg"]} !important;
+        color: {T["text"]} !important;
+    }}
+
+    /* ── Form submit buttons ───────────────────────────────────────────── */
+    .stFormSubmitButton > button {{
+        background: {T["accent"]} !important;
+        color: #fff !important;
+        border: none !important;
+    }}
+</style>
+""", unsafe_allow_html=True)
+
+
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.markdown("""
+    st.markdown(f"""
     <style>
     [data-testid="stSidebar"] .stSelectbox > div > div,
     [data-testid="stSidebar"] .stRadio > div,
-    [data-testid="stSidebar"] [data-testid="stExpander"] {
-        background: rgba(14,17,23,0.6) !important;
-        border: 1px solid rgba(255,255,255,0.08) !important;
+    [data-testid="stSidebar"] [data-testid="stExpander"] {{
+        background: {T["card_bg"]} !important;
+        border: 1px solid {T["border"]} !important;
         border-radius: 0.75rem !important;
-    }
-    [data-testid="stSidebar"] [data-testid="stExpander"] summary {
+    }}
+    [data-testid="stSidebar"] [data-testid="stExpander"] summary {{
         padding: 0.6rem 0.8rem !important;
-    }
-    [data-testid="stSidebar"] .stButton > button {
-        background: rgba(14,17,23,0.6) !important;
-        border: 1px solid rgba(255,255,255,0.08) !important;
+    }}
+    [data-testid="stSidebar"] .stButton > button {{
+        background: {T["card_bg"]} !important;
+        border: 1px solid {T["border"]} !important;
         border-radius: 0.75rem !important;
-        color: #fff !important;
-    }
-    [data-testid="stSidebar"] .stButton > button:hover {
-        border-color: rgba(255,255,255,0.2) !important;
-    }
-    [data-testid="stSidebar"] label {
-        color: rgba(255,255,255,0.5) !important;
-    }
+        color: {T["text"]} !important;
+    }}
+    [data-testid="stSidebar"] .stButton > button:hover {{
+        border-color: {T["border_hover"]} !important;
+    }}
+    [data-testid="stSidebar"] label {{
+        color: {T["text_muted"]} !important;
+    }}
+    [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] span {{
+        color: {T["text"]};
+    }}
+    [data-testid="stSidebar"] [data-testid="stTextInput"] input,
+    [data-testid="stSidebar"] [data-testid="stTextArea"] textarea,
+    [data-testid="stSidebar"] [data-testid="stNumberInput"] input {{
+        background: {T["card_bg"]} !important;
+        color: {T["text"]} !important;
+        border-color: {T["border"]} !important;
+    }}
+    [data-testid="stSidebar"] [data-testid="stTextInput"] > div > div,
+    [data-testid="stSidebar"] [data-testid="stTextArea"] > div > div,
+    [data-testid="stSidebar"] [data-testid="stNumberInput"] > div > div {{
+        background: {T["card_bg"]} !important;
+        border-color: {T["border"]} !important;
+    }}
     [data-testid="stSidebar"] h3,
-    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h3 {
+    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h3 {{
         font-size: 0.8rem !important;
-        color: #8B949E !important;
+        color: {T["text_muted"]} !important;
         text-transform: uppercase !important;
         letter-spacing: 0.06em !important;
         margin-top: 0.8rem !important;
-    }
+    }}
     </style>
     """, unsafe_allow_html=True)
     project_name = html.escape(storage.get_current_project())
     st.markdown(
         f"""<div style="
             padding:0.8rem 1.2rem; border-radius:0.75rem; text-align:center;
-            background:rgba(14,17,23,0.6); border:1px solid rgba(255,255,255,0.08);
+            background:{T["card_bg"]}; border:1px solid {T["border"]};
             margin-top:-1rem; margin-bottom:0.5rem;
         ">
-            <div style="font-size:1.6rem; font-weight:700; color:#fff;">📈 {project_name}</div>
+            <div style="font-size:1.6rem; font-weight:700; color:{T["text"]};">📈 {project_name}</div>
         </div>""",
         unsafe_allow_html=True,
     )
@@ -396,6 +663,19 @@ with st.sidebar:
                                       key="range_to")
 
     with st.expander("⚙️ Settings"):
+        st.subheader("Appearance")
+        current_theme = st.session_state.get("theme", "dark")
+        light_on = st.toggle(
+            "Light mode",
+            value=(current_theme == "light"),
+            key="theme_toggle",
+        )
+        new_theme = "light" if light_on else "dark"
+        if new_theme != current_theme:
+            st.session_state["theme"] = new_theme
+            cfg_module.save_theme(new_theme)
+            st.rerun()
+
         st.subheader("Ticker rules")
         rules_text = st.text_area(
             "Rules",
@@ -568,12 +848,12 @@ with st.sidebar:
 
 all_tx = get_all_transactions()
 if not all_tx:
-    st.markdown("""
-    <div style="text-align:center;padding:4rem 2rem;border-radius:1rem;background:rgba(14,17,23,0.6);border:1px solid rgba(255,255,255,0.08);margin:2rem 0;">
+    st.markdown(f"""
+    <div style="text-align:center;padding:4rem 2rem;border-radius:1rem;background:{T["card_bg"]};border:1px solid {T["border"]};margin:2rem 0;">
         <div style="font-size:3rem;margin-bottom:1rem;">📈</div>
-        <div style="font-size:1.4rem;font-weight:600;color:#E6EDF3;margin-bottom:0.5rem;">No transactions yet</div>
-        <div style="font-size:1rem;color:#8B949E;margin-bottom:0.3rem;">Add your first one using the sidebar form.</div>
-        <div style="font-size:0.85rem;color:#8B949E;">Example: Ticker 1 = <code style="color:#6C63FF;">AAPL</code>, Amount 1 = <code style="color:#6C63FF;">10</code> / Ticker 2 = <code style="color:#6C63FF;">USD</code>, Amount 2 = <code style="color:#6C63FF;">-1700</code></div>
+        <div style="font-size:1.4rem;font-weight:600;color:{T["text"]};margin-bottom:0.5rem;">No transactions yet</div>
+        <div style="font-size:1rem;color:{T["text_muted"]};margin-bottom:0.3rem;">Add your first one using the sidebar form.</div>
+        <div style="font-size:0.85rem;color:{T["text_muted"]};">Example: Ticker 1 = <code style="color:{T["accent"]};">AAPL</code>, Amount 1 = <code style="color:{T["accent"]};">10</code> / Ticker 2 = <code style="color:{T["accent"]};">USD</code>, Amount 2 = <code style="color:{T["accent"]};">-1700</code></div>
     </div>
     """, unsafe_allow_html=True)
     st.stop()
@@ -593,34 +873,20 @@ missing = [
 download_errors: list[str] = []
 
 if missing:
-    dl_bar     = st.progress(0)
-    dl_status  = st.empty()
+    dl_bar = st.progress(0, text=f"Downloading {len(missing)} tickers…")
 
-    results: dict[str, bool] = {}
-
-    def _fetch(ticker: str) -> tuple[str, bool, str]:
-        try:
-            ensure_ticker(ticker, start_date=start_date_cfg,
-                          force_refresh_current_year=True)
-            return ticker, True, ""
-        except Exception as e:
-            return ticker, False, str(e)
-
-    with ThreadPoolExecutor(max_workers=6) as pool:
-        futures = {pool.submit(_fetch, t): t for t in missing}
-        done = 0
-        for future in as_completed(futures):
-            ticker, ok, err = future.result()
-            done += 1
-            dl_bar.progress(done / len(missing))
-            if ok:
-                dl_status.caption(f"✓ Downloaded {ticker}")
-            else:
-                dl_status.caption(f"⚠ {ticker}: {err}")
-                download_errors.append(ticker)
+    try:
+        download_errors = ensure_batch(
+            missing,
+            start_date=start_date_cfg,
+            force_refresh_current_year=True,
+            progress_cb=lambda msg: dl_bar.progress(0, text=msg),
+        )
+    except Exception as e:
+        download_errors = list(missing)
+        st.caption(f"⚠ Batch download failed: {e}")
 
     dl_bar.empty()
-    dl_status.empty()
 
     if download_errors:
         st.warning(
@@ -712,13 +978,12 @@ if bench_persist:
     ]
     if bench_missing:
         bench_dl = st.progress(0, text="Downloading benchmark data…")
-        for i, t in enumerate(bench_missing):
-            bench_dl.progress(i / len(bench_missing), text=f"Downloading {t}…")
-            try:
-                ensure_ticker(t, bench_date_start, bench_date_end,
-                              force_refresh_current_year=force_refresh)
-            except Exception as e:
-                st.warning(f"Could not download {t}: {e}")
+        try:
+            ensure_batch(bench_missing, bench_date_start, bench_date_end,
+                         force_refresh_current_year=force_refresh,
+                         progress_cb=lambda msg: bench_dl.progress(0, text=msg))
+        except Exception as e:
+            st.warning(f"Could not download benchmarks: {e}")
         bench_dl.progress(1.0, text="Done")
         bench_dl.empty()
         # Clear benchmark cache so new data is used
@@ -738,12 +1003,17 @@ if bench_cache_key not in st.session_state:
         bench_date_start = date.fromisoformat(all_snapshots[0]["date"])
         bench_date_end = date.fromisoformat(all_snapshots[-1]["date"])
         bench_result: list[dict] = []
+        bench_tickers = [b_ticker for b_ticker in BENCHMARKS.values()
+                         if any(not storage.has_price_year(b_ticker, y)
+                                or (force_refresh and y == today.year)
+                                for y in range(bench_date_start.year, bench_date_end.year + 1))]
+        if bench_tickers:
+            ensure_batch(bench_tickers, bench_date_start, bench_date_end,
+                         force_refresh_current_year=force_refresh)
 
         for b_label, b_ticker in BENCHMARKS.items():
-            try:
-                ensure_ticker(b_ticker, bench_date_start, bench_date_end,
-                              force_refresh_current_year=force_refresh)
-            except Exception:
+            if not any(storage.has_price_year(b_ticker, y)
+                       for y in range(bench_date_start.year, bench_date_end.year + 1)):
                 continue
 
             fx_c: dict = {}
@@ -841,16 +1111,16 @@ st.markdown(f"""
 .stat-row {{ display:flex; gap:1rem; margin:0.5rem 0 1rem 0; }}
 .stat-card {{
   flex:1; padding:0.8rem 1.2rem; border-radius:0.75rem;
-  background:rgba(14,17,23,0.6);
-  border:1px solid rgba(255,255,255,0.08);
+  background:{T["card_bg"]};
+  border:1px solid {T["border"]};
 }}
-.stat-card .label {{ font-size:0.75rem; color:rgba(255,255,255,0.5); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.2rem; text-align:center; }}
-.stat-card .value {{ font-size:1.4rem; font-weight:700; color:#E6EDF3; text-align:center; }}
+.stat-card .label {{ font-size:0.75rem; color:{T["text_faint"]}; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.2rem; text-align:center; }}
+.stat-card .value {{ font-size:1.4rem; font-weight:700; color:{T["text"]}; text-align:center; }}
 .green .value,
 .blue .value,
 .purple .value,
 .amber .value,
-.cyan .value {{ color:#E6EDF3; }}
+.cyan .value {{ color:{T["text"]}; }}
 </style>
 <div class="stat-row">
   <div class="stat-card cyan" title="Current market value of all holdings in {base_ccy}">
@@ -886,33 +1156,33 @@ sign = "+" if pnl >= 0 else ""
 is_amount = st.session_state.chart_mode == "amount"
 is_percent = not is_amount
 
-st.markdown("""
+st.markdown(f"""
 <style>
     div[data-testid="stHorizontalBlock"] > div:has(button[kind="secondary"]) button[kind="secondary"],
-    div[data-testid="stHorizontalBlock"] > div:has(button[kind="primary"]) button[kind="primary"] {
-        background: rgba(14,17,23,0.6) !important;
-        border: 1px solid rgba(255,255,255,0.08) !important;
+    div[data-testid="stHorizontalBlock"] > div:has(button[kind="primary"]) button[kind="primary"] {{
+        background: {T["card_bg"]} !important;
+        border: 1px solid {T["border"]} !important;
         border-radius: 16px !important;
         padding: 20px 24px !important;
         min-height: 85px !important;
         width: 100% !important;
         transition: all 0.2s ease !important;
-        color: #E6EDF3 !important;
+        color: {T["text"]} !important;
         font-size: 1.7rem !important;
         font-weight: 600 !important;
-    }
+    }}
     div[data-testid="stHorizontalBlock"] > div:has(button[kind="secondary"]) button[kind="secondary"]:hover,
-    div[data-testid="stHorizontalBlock"] > div:has(button[kind="primary"]) button[kind="primary"]:hover {
-        border-color: rgba(255,255,255,0.2) !important;
-    }
-    div[data-testid="stHorizontalBlock"] > div:has(button[kind="primary"]) button[kind="primary"] {
-        border-color: rgba(255,255,255,0.18) !important;
-        background: rgba(255,255,255,0.04) !important;
-    }
-    div[data-testid="stHorizontalBlock"] button p {
+    div[data-testid="stHorizontalBlock"] > div:has(button[kind="primary"]) button[kind="primary"]:hover {{
+        border-color: {T["border_hover"]} !important;
+    }}
+    div[data-testid="stHorizontalBlock"] > div:has(button[kind="primary"]) button[kind="primary"] {{
+        border-color: {T["border_active"]} !important;
+        background: {T["card_btn_active"]} !important;
+    }}
+    div[data-testid="stHorizontalBlock"] button p {{
         font-size: 1.4rem !important;
         font-weight: 600 !important;
-    }
+    }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -963,11 +1233,11 @@ if chart_mode == "amount":
         hovertemplate="%{customdata}<extra>Invested</extra>",
     ))
     yaxis_cfg = dict(
-        showgrid=True, gridcolor="rgba(48,54,61,0.6)",
-        zeroline=False, tickfont=dict(size=20, color="#8B949E"), tickformat=",.2f",
+        showgrid=True, gridcolor=T["chart_grid"],
+        zeroline=False, tickfont=dict(size=20, color=T["text_muted"]), tickformat=",.2f",
         ticksuffix=f" {base_ccy}" if base_ccy == "PLN" else "",
         tickprefix="" if base_ccy == "PLN" else SYM[base_ccy],
-        title=dict(font=dict(size=18, color="#8B949E")),
+        title=dict(font=dict(size=18, color=T["text_muted"]))
     )
 else:
     pct_values = []
@@ -983,12 +1253,12 @@ else:
     ))
     span = max(abs(min(pct_values)), abs(max(pct_values))) if pct_values else 1
     yaxis_cfg = dict(
-        showgrid=True, gridcolor="rgba(48,54,61,0.6)",
-        zeroline=True, zerolinecolor="rgba(48,54,61,0.8)",
-        tickfont=dict(size=20, color="#8B949E"),
+        showgrid=True, gridcolor=T["chart_grid"],
+        zeroline=True, zerolinecolor=T["chart_zeroline"],
+        tickfont=dict(size=20, color=T["text_muted"]),
         ticksuffix="%",
         tickformat="+.1f",
-        title=dict(font=dict(size=18, color="#8B949E")),
+        title=dict(font=dict(size=18, color=T["text_muted"]))
     )
 
 bench_selected = {
@@ -1035,20 +1305,20 @@ fig.update_layout(
     plot_bgcolor="rgba(0,0,0,0)",
         legend=dict(
             orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5,
-            font=dict(size=14, color="#8B949E"),
+            font=dict(size=14, color=T["text_muted"]),
             bgcolor="rgba(0,0,0,0)",
         ),
     xaxis=dict(
         showgrid=False, zeroline=False,
-        tickfont=dict(size=20, color="#8B949E"),
-        title=dict(font=dict(size=18, color="#8B949E")),
+        tickfont=dict(size=20, color=T["text_muted"]),
+        title=dict(font=dict(size=18, color=T["text_muted"]))
     ),
     yaxis=yaxis_cfg,
     hovermode="x unified",
     hoverlabel=dict(
-        bgcolor="rgba(22,27,34,0.95)",
-        bordercolor="#30363D",
-        font=dict(size=18, color="#E6EDF3", family="sans-serif"),
+        bgcolor=T["hover_bg"],
+        bordercolor=T["border_strong"],
+        font=dict(size=18, color=T["text"], family="sans-serif"),
         namelength=-1,
     ),
     font=dict(family="sans-serif", size=20),
@@ -1078,22 +1348,30 @@ with _range_col:
 def _show_trade_dialog(ticker: str, name: str, ccy: str):
     st.subheader(f"{name} ({ticker})")
 
-    st.markdown("""
+    st.markdown(f"""
     <style>
-    [data-testid="stDialog"] { min-width:95vw !important; min-height:85vh !important; max-width:95vw !important; }
-    [data-testid="stDialog"] > div { width:100% !important; max-width:100% !important; height:100% !important; }
-    [data-testid="stDialog"] .stMetric label { font-size:3rem !important; }
-    [data-testid="stDialog"] .stMetric [data-testid="stMetricValue"] { font-size:3rem !important; }
-    [data-testid="stDialog"] h3 { font-size:1.5rem !important; font-weight:600 !important; color:#8B949E !important; }
+    [role="dialog"],
+    [data-testid="stDialog"] {{ min-width:95vw !important; min-height:85vh !important; max-width:95vw !important; background-color:{T["panel_bg"]} !important; border:1px solid {T["border_strong"]} !important; }}
+    [role="dialog"] > div,
+    [data-testid="stDialog"] > div {{ width:100% !important; max-width:100% !important; height:100% !important; background-color:{T["panel_bg"]} !important; border:1px solid {T["border_strong"]} !important; }}
+    [role="dialog"] [data-testid="stVerticalBlock"],
+    [data-testid="stDialog"] [data-testid="stVerticalBlock"] {{ background-color:{T["panel_bg"]} !important; }}
+    [data-testid="stDialog"] .stMetric label {{ font-size:3rem !important; }}
+    [data-testid="stDialog"] .stMetric [data-testid="stMetricValue"] {{ font-size:3rem !important; }}
+    [data-testid="stDialog"] h3 {{ font-size:1.5rem !important; font-weight:600 !important; color:{T["text_muted"]} !important; }}
+    [role="dialog"] button[aria-label="Close"],
+    [data-testid="stDialog"] button[aria-label="Close"] {{ color:{T["text"]} !important; background-color:transparent !important; }}
+    [role="dialog"] button[aria-label="Close"]:hover,
+    [data-testid="stDialog"] button[aria-label="Close"]:hover {{ background-color:{T["card_bg"]} !important; }}
     </style>
     """, unsafe_allow_html=True)
 
     history = get_ticker_history(ticker)
     if not history:
-        st.markdown("""
-        <div style="text-align:center;padding:3rem 2rem;border-radius:1rem;background:rgba(14,17,23,0.6);border:1px solid rgba(255,255,255,0.08);margin:1rem 0;">
-            <div style="font-size:1.2rem;font-weight:600;color:#E6EDF3;margin-bottom:0.3rem;">No trades found</div>
-            <div style="font-size:0.9rem;color:#8B949E;">This position has no trade history yet.</div>
+        st.markdown(f"""
+        <div style="text-align:center;padding:3rem 2rem;border-radius:1rem;background:{T["card_bg"]};border:1px solid {T["border"]};margin:1rem 0;">
+            <div style="font-size:1.2rem;font-weight:600;color:{T["text"]};margin-bottom:0.3rem;">No trades found</div>
+            <div style="font-size:0.9rem;color:{T["text_muted"]};">This position has no trade history yet.</div>
         </div>
         """, unsafe_allow_html=True)
         return
@@ -1131,17 +1409,17 @@ def _show_trade_dialog(ticker: str, name: str, ccy: str):
 
     st.markdown(f"""
     <div style="display:flex;gap:1rem;margin:0.5rem 0 1.5rem 0;">
-      <div style="flex:1;padding:0.8rem 1.2rem;border-radius:0.75rem;background:rgba(14,17,23,0.6);border:1px solid rgba(255,255,255,0.08);text-align:center;">
-        <div style="font-size:0.75rem;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.3rem;">Bought</div>
+      <div style="flex:1;padding:0.8rem 1.2rem;border-radius:0.75rem;background:{T["card_bg"]};border:1px solid {T["border"]};text-align:center;">
+        <div style="font-size:0.75rem;color:{T["text_faint"]};text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.3rem;">Bought</div>
         <div style="font-size:1.4rem;font-weight:700;color:#22c55e;">{total_bought:.4f}</div>
       </div>
-      <div style="flex:1;padding:0.8rem 1.2rem;border-radius:0.75rem;background:rgba(14,17,23,0.6);border:1px solid rgba(255,255,255,0.08);text-align:center;">
-        <div style="font-size:0.75rem;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.3rem;">Sold</div>
+      <div style="flex:1;padding:0.8rem 1.2rem;border-radius:0.75rem;background:{T["card_bg"]};border:1px solid {T["border"]};text-align:center;">
+        <div style="font-size:0.75rem;color:{T["text_faint"]};text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.3rem;">Sold</div>
         <div style="font-size:1.4rem;font-weight:700;color:#ef4444;">{total_sold:.4f}</div>
       </div>
-      <div style="flex:1;padding:0.8rem 1.2rem;border-radius:0.75rem;background:rgba(14,17,23,0.6);border:1px solid rgba(255,255,255,0.08);text-align:center;">
-        <div style="font-size:0.75rem;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.3rem;">Net</div>
-        <div style="font-size:1.4rem;font-weight:700;color:#E6EDF3;">{net:.4f}</div>
+      <div style="flex:1;padding:0.8rem 1.2rem;border-radius:0.75rem;background:{T["card_bg"]};border:1px solid {T["border"]};text-align:center;">
+        <div style="font-size:0.75rem;color:{T["text_faint"]};text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.3rem;">Net</div>
+        <div style="font-size:1.4rem;font-weight:700;color:{T["text"]};">{net:.4f}</div>
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -1192,7 +1470,7 @@ def _show_trade_dialog(ticker: str, name: str, ccy: str):
         fig.update_layout(
             xaxis_title="Date",
             yaxis_title="Price",
-            template="plotly_dark",
+            template=T["plotly_template"],
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
             margin=dict(l=0, r=0, t=30, b=0),
@@ -1207,9 +1485,9 @@ def _show_trade_dialog(ticker: str, name: str, ccy: str):
                         dict(count=1, label="1Y", step="year", stepmode="backward"),
                         dict(step="all", label="All"),
                     ],
-                    bgcolor="rgba(255,255,255,0.05)",
-                    activecolor="rgba(108,99,255,0.3)",
-                    font=dict(color="#E6EDF3"),
+                    bgcolor=T["range_bg"],
+                    activecolor=T["range_active"],
+                    font=dict(color=T["text"]),
                 ),
             ),
         )
@@ -1237,7 +1515,7 @@ def _show_trade_dialog(ticker: str, name: str, ccy: str):
     header_html = "".join(f"<th style='padding:4px 12px;border-bottom:2px solid #555;text-align:left;font-weight:600'>{h}</th>" for h in headers)
     components.html(
         f"""<style>
-        body {{ margin:0; font-family:system-ui,-apple-system,sans-serif; background:transparent; color:#e0e0e0; }}
+        body {{ margin:0; font-family:system-ui,-apple-system,sans-serif; background:transparent; color:{T["table_text"]}; }}
         table {{ width:100%; border-collapse:collapse; font-size:24px; }}
         tr:hover {{ background:rgba(255,255,255,0.05); }}
         </style>
@@ -1293,21 +1571,21 @@ if latest["assets"]:
 
     max_weight = max((r["weight"] for r in rows), default=1) or 1
 
-    st.markdown("""
+    st.markdown(f"""
     <style>
-    .holdings-row { border-bottom:1px solid rgba(255,255,255,0.05); }
-    .holdings-row:last-child { border-bottom:none; }
-    .h-hdr { border-bottom:2px solid rgba(255,255,255,0.08); padding:0; margin-bottom:4px; }
-    .h-col-hdr { color:#8B949E; font-size:0.75rem; font-weight:700;
+    .holdings-row {{ border-bottom:1px solid {T["holdings_bar_bg"]}; }}
+    .holdings-row:last-child {{ border-bottom:none; }}
+    .h-hdr {{ border-bottom:2px solid {T["border"]}; padding:0; margin-bottom:4px; }}
+    .h-col-hdr {{ color:{T["text_muted"]}; font-size:0.75rem; font-weight:700;
         text-transform:uppercase; letter-spacing:0.08em; text-align:center; display:block;
-        padding:0.5rem 0; background:rgba(255,255,255,0.03); border-radius:0.5rem; }
-    .h-cell { padding:12px 0; font-size:1.5rem; font-family:sans-serif; color:#C9D1D9; text-align:center; }
-    .h-ticker { position:relative; overflow:hidden; }
-    .h-bar { position:absolute; top:0; left:0; height:100%; opacity:0.10;
-        border-radius:4px; transition:width 0.3s ease; }
-    .h-name { position:relative; font-weight:600; color:#E6EDF3; font-size:1.5rem; }
-    .h-sub { position:relative; display:block; font-size:0.85em; color:#8B949E; font-weight:400; }
-    [data-testid="stSidebar"] [data-testid="stCaptionContainer"] p { font-size:0.75rem; }
+        padding:0.5rem 0; background:{T["card_faint"]}; border-radius:0.5rem; }}
+    .h-cell {{ padding:12px 0; font-size:1.5rem; font-family:sans-serif; color:{T["text_cell"]}; text-align:center; }}
+    .h-ticker {{ position:relative; overflow:hidden; }}
+    .h-bar {{ position:absolute; top:0; left:0; height:100%; opacity:0.10;
+        border-radius:4px; transition:width 0.3s ease; }}
+    .h-name {{ position:relative; font-weight:600; color:{T["text"]}; font-size:1.5rem; }}
+    .h-sub {{ position:relative; display:block; font-size:0.85em; color:{T["text_muted"]}; font-weight:400; }}
+    [data-testid="stSidebar"] [data-testid="stCaptionContainer"] p {{ font-size:0.75rem; }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -1320,11 +1598,10 @@ if latest["assets"]:
     for r in rows:
         bar_pct = r["weight"]
         ret_col = _ret_color(r["ret_pct"])
-        name_html = f"<span class='h-sub'>{html.escape(r['ticker'])}</span>" if r["name"] != r["ticker"] else ""
 
         _c1, _c2, _c3, _c4, _c5, _c6 = st.columns([5, 1, 1, 1, 2, 1])
         with _c1:
-            btn_label = f"{html.escape(r['name'])}" + (f"  {r['ticker']}" if r["name"] != r["ticker"] else "")
+            btn_label = f"{r['ticker']}  |  {r['name']}" if r["name"] != r["ticker"] else r["ticker"]
             if st.button(
                 btn_label,
                 key=f"hbtn_{r['ticker']}",
@@ -1333,7 +1610,7 @@ if latest["assets"]:
             ):
                 _show_trade_dialog(r["ticker"], r["name"], r["ccy"])
             st.markdown(
-                f"<div style='margin-top:-0.6rem;margin-bottom:0.2rem;border-radius:4px;overflow:hidden;height:4px;background:rgba(255,255,255,0.05);'>"
+                f"<div style='margin-top:-0.6rem;margin-bottom:0.2rem;border-radius:4px;overflow:hidden;height:4px;background:{T["holdings_bar_bg"]};'>"
                 f"<div style='width:{bar_pct / max_weight * 100:.1f}%;height:100%;background:#6C63FF;border-radius:4px;'></div></div>",
                 unsafe_allow_html=True,
             )
@@ -1355,4 +1632,209 @@ st.caption(
     f":material/info: Yahoo Finance · {today} · {base_ccy} · "
     f"Daily · {len(latest.get('assets', [])) if latest else 0} positions"
 )
+
+# ── Late-stage theme override (injected last, beats Streamlit's dark CSS) ──
+st.markdown(f"""<style>
+    /* Portalled dropdown menus — override Streamlit dark theme */
+    [data-theme="dark"] [data-baseweb="popover"],
+    [data-baseweb="popover"],
+    [data-baseweb="popover"] > div {{
+        background: {T["panel_bg"]} !important;
+        border-color: {T["border"]} !important;
+    }}
+    [data-theme="dark"] [data-baseweb="menu"],
+    [data-theme="dark"] [data-baseweb="menu"] > div,
+    [data-theme="dark"] [data-baseweb="menu"] > ul,
+    [data-baseweb="menu"],
+    [data-baseweb="menu"] > div,
+    [data-baseweb="menu"] > ul {{
+        background: {T["panel_bg"]} !important;
+    }}
+    [data-theme="dark"] [role="option"],
+    [data-theme="dark"] [role="listbox"] > div,
+    [role="option"],
+    [role="listbox"] > div {{
+        background: {T["panel_bg"]} !important;
+        color: {T["text"]} !important;
+    }}
+    [data-theme="dark"] [role="option"]:hover,
+    [data-theme="dark"] [role="listbox"] > div:hover,
+    [role="option"]:hover,
+    [role="listbox"] > div:hover {{
+        background: {T["card_bg"]} !important;
+    }}
+    [data-theme="dark"] [data-baseweb="menu"] [role="option"],
+    [data-baseweb="menu"] [role="option"] {{
+        background-color: {T["panel_bg"]} !important;
+        color: {T["text"]} !important;
+    }}
+    [data-theme="dark"] [data-baseweb="menu"] [role="option"]:hover,
+    [data-baseweb="menu"] [role="option"]:hover,
+    [data-theme="dark"] [role="option"]:focus,
+    [data-theme="dark"] [role="option"]:active,
+    [data-theme="dark"] [role="option"][aria-selected="true"],
+    [role="option"]:focus,
+    [role="option"]:active,
+    [role="option"][aria-selected="true"] {{
+        background-color: {T["card_bg"]} !important;
+        color: {T["text"]} !important;
+    }}
+    /* Streamlit active-option class */
+    [data-theme="dark"] [data-baseweb="option"],
+    [data-baseweb="option"] {{
+        background-color: {T["panel_bg"]} !important;
+        color: {T["text"]} !important;
+    }}
+    [data-theme="dark"] [data-baseweb="option"]:hover,
+    [data-theme="dark"] [data-baseweb="option"]:focus,
+    [data-theme="dark"] [data-baseweb="option"]:active,
+    [data-baseweb="option"]:hover,
+    [data-baseweb="option"]:focus,
+    [data-baseweb="option"]:active {{
+        background-color: {T["card_bg"]} !important;
+    }}
+    /* Streamlit's own highlight/focus ring */
+    [data-theme="dark"] [data-baseweb="menu"] li[aria-selected],
+    [data-baseweb="menu"] li[aria-selected] {{
+        background-color: {T["card_bg"]} !important;
+        color: {T["text"]} !important;
+    }}
+    [data-theme="dark"] [data-baseweb="menu"] li[aria-selected]:focus,
+    [data-theme="dark"] [data-baseweb="menu"] li[aria-selected]:hover,
+    [data-baseweb="menu"] li[aria-selected]:focus,
+    [data-baseweb="menu"] li[aria-selected]:hover {{
+        background-color: {T["card_bg"]} !important;
+    }}
+    /* Streamlit sets these CSS vars for BaseWeb theming */
+    /* BaseWeb + Streamlit dark theme CSS vars — apply in BOTH modes */
+    :root,
+    [data-theme="dark"] {{
+        --SDS-colorBackground-body: {T["page_bg"]};
+        --SDS-colorBackground-iteration0: {T["panel_bg"]};
+        --SDS-colorBackground-constructionRotation0: {T["card_bg"]};
+        --SDS-colorBase-positive: {T["accent"]};
+        --secondary-background-color: {T["panel_bg"]};
+    }}
+    /* Expander — override dark background entirely (Streamlit paints #1F2328
+       on the <details> box AND on the emotion-cache wrapper spans inside <summary>) */
+    details[data-testid="stExpander"] {{
+        background-color: {T["panel_bg"]} !important;
+        border-color: {T["border_strong"]} !important;
+    }}
+    details[data-testid="stExpander"] summary {{
+        background-color: {T["panel_bg"]} !important;
+        color: {T["text"]} !important;
+    }}
+    details[data-testid="stExpander"] summary * {{
+        background-color: transparent !important;
+        color: {T["text"]} !important;
+    }}
+    details[data-testid="stExpander"] summary:hover,
+    details[data-testid="stExpander"] summary:focus,
+    details[data-testid="stExpander"] summary:active {{
+        background-color: {T["card_bg"]} !important;
+        outline: none !important;
+    }}
+    /* Dialog (portalled) — override Streamlit's dark modal background.
+       The outer dialog element carries role="dialog" (class .st-bb paints #0F172A),
+       and does NOT have data-testid="stDialog", so target role="dialog" too. */
+    [role="dialog"],
+    [data-testid="stDialog"],
+    [role="dialog"] > div,
+    [data-testid="stDialog"] > div,
+    [role="dialog"] [data-testid="stVerticalBlock"],
+    [data-testid="stDialog"] [data-testid="stVerticalBlock"] {{
+        background-color: {T["panel_bg"]} !important;
+    }}
+    [role="dialog"],
+    [data-testid="stDialog"],
+    [role="dialog"] > div,
+    [data-testid="stDialog"] > div {{
+        border: 1px solid {T["border_strong"]} !important;
+    }}
+    [role="dialog"] button[aria-label="Close"],
+    [data-testid="stDialog"] button[aria-label="Close"] {{
+        color: {T["text"]} !important;
+        background-color: transparent !important;
+    }}
+    [role="dialog"] button[aria-label="Close"]:hover,
+    [data-testid="stDialog"] button[aria-label="Close"]:hover {{
+        background-color: {T["card_bg"]} !important;
+    }}
+    /* BaseWeb tooltip (button help text, e.g. "Trade history for SXRV.DE") */
+    [data-baseweb="tooltip"],
+    .stTooltipContent {{
+        background-color: {T["panel_bg"]} !important;
+        color: {T["text"]} !important;
+        border: 1px solid {T["border_strong"]} !important;
+        --colorBackgroundTooltip: {T["panel_bg"]};
+    }}
+    [data-baseweb="tooltip"] *,
+    [data-baseweb="tooltip"] div {{
+        background-color: {T["panel_bg"]} !important;
+        color: {T["text"]} !important;
+    }}
+</style>""", unsafe_allow_html=True)
+
+# ── JS injection: beat Streamlit's dynamically-injected emotion-cache CSS ──────
+import streamlit.components.v1 as components
+
+components.html(f"""
+<script>
+(function() {{
+    var doc;
+    try {{ doc = window.parent.document; }} catch(e) {{ doc = document; }}
+    function injectExpanderFix() {{
+        var id = 'negotium-expander-fix';
+        var existing = doc.getElementById(id);
+        if (existing) existing.parentNode.removeChild(existing);
+        var s = doc.createElement('style');
+        s.id = id;
+        s.innerHTML =
+            '[data-testid="stExpander"]{{' +
+                'background-color:{T["panel_bg"]} !important;' +
+                'border-color:{T["border_strong"]} !important;' +
+            '}}' +
+            '[data-testid="stExpander"] summary{{' +
+                'background-color:{T["panel_bg"]} !important;' +
+                'color:{T["text"]} !important;' +
+            '}}' +
+            '[data-testid="stExpander"] summary *{{' +
+                'background-color:transparent !important;' +
+                'color:{T["text"]} !important;' +
+            '}}' +
+            '[data-testid="stExpander"] summary:hover,' +
+            '[data-testid="stExpander"] summary:focus,' +
+            '[data-testid="stExpander"] summary:active{{' +
+                'background-color:{T["card_bg"]} !important;' +
+                'outline:none !important;' +
+            '}}' +
+            /* Multiselect/select placeholder text ("Choose options").
+               Streamlit's BaseWeb StyledPlaceholder uses emotion class "st-fh"
+               (no stable id). Its own rule has no !important, so we win.
+               Also recolor any select element still painted with the dark-muted
+               placeholder color rgba(241,245,249,0.6) — resilient to class renames. */
+            '.st-fh{{color:{T["text"]} !important;}}';
+        doc.head.appendChild(s);
+        function fixPlaceholderColors() {{
+            var muted = 'rgba(241, 245, 249, 0.6)';
+            var selects = doc.querySelectorAll('[data-baseweb="select"]');
+            for (var i = 0; i < selects.length; i++) {{
+                var divs = selects[i].querySelectorAll('div');
+                for (var j = 0; j < divs.length; j++) {{
+                    var st = (doc.defaultView || window).getComputedStyle(divs[j]);
+                    if (st.color === muted && divs[j].textContent.trim() !== '') {{
+                        divs[j].style.color = '{T["text"]}';
+                    }}
+                }}
+            }}
+        }}
+        fixPlaceholderColors();
+        setTimeout(fixPlaceholderColors, 300);
+    }}
+    injectExpanderFix();
+    setTimeout(injectExpanderFix, 300);
+}})();
+</script>
+""", height=0, width=0)
 

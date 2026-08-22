@@ -183,6 +183,149 @@ def ensure(
             save_price_year(ticker, year, prices)
 
 
+def ensure_batch(
+    tickers: list[str],
+    start_date: date,
+    end_date: date | None = None,
+    force_refresh_current_year: bool = True,
+    progress_cb: Callable[[str], None] | None = None,
+) -> list[str]:
+    """
+    Populate price caches for many tickers with a single batched Yahoo download.
+
+    Same cache rules as ensure(): historical years already on disk are kept,
+    the current year is re-fetched so latest closes are picked up.
+
+    Returns tickers for which no data could be retrieved.
+    """
+    import pandas as pd
+
+    today = date.today()
+    if end_date is None:
+        end_date = today
+    end = min(end_date, today)
+
+    def _notify(msg: str) -> None:
+        if progress_cb:
+            progress_cb(msg)
+
+    symbols = [t for t in dict.fromkeys(tickers)
+               if t.upper() not in SUPPORTED_CURRENCIES]
+    if not symbols:
+        return []
+
+    names = load_ticker_names()
+    for t in symbols:
+        if t not in names:
+            get_ticker_name(t)
+
+    needed_years: dict[str, set[int]] = {}
+    for t in symbols:
+        yrs = {
+            y for y in range(start_date.year, end.year + 1)
+            if (y == today.year and force_refresh_current_year)
+            or not has_price_year(t, y)
+        }
+        if yrs:
+            needed_years[t] = yrs
+
+    failed: list[str] = sorted(t for t, yrs in needed_years.items() if not yrs)
+    if not needed_years:
+        return failed
+
+    batch_start = date(min(min(yrs) for yrs in needed_years.values()), 1, 1)
+    pair_by_sym = {_yahoo_symbol(t): t for t in needed_years}
+    sym_list = list(pair_by_sym.keys())
+
+    _notify(f"Downloading {len(sym_list)} tickers ({batch_start.year}–{end.year})…")
+
+    df = None
+    last_exc: Exception | None = None
+    for attempt in range(_RETRY_ATTEMPTS):
+        try:
+            with _suppress_output():
+                df = yf.download(
+                    sym_list,
+                    start=batch_start.isoformat(),
+                    end=(end + timedelta(days=1)).isoformat(),
+                    progress=False,
+                    auto_adjust=True,
+                    group_by="ticker",
+                    threads=True,
+                )
+            last_exc = None
+            break
+        except Exception as exc:
+            last_exc = exc
+            if attempt < _RETRY_ATTEMPTS - 1:
+                time.sleep(_RETRY_DELAY)
+
+    if df is None or df.empty:
+        if last_exc is not None:
+            log.warning("batch download failed: %s", last_exc)
+        return sorted(needed_years.keys())
+
+    # Normalize to {yahoo_symbol: Close series} across yfinance column layouts
+    closes: dict[str, object] = {}
+    field_names = {"Open", "High", "Low", "Close", "Adj Close", "Volume"}
+    if isinstance(df.columns, pd.MultiIndex):
+        lvl0 = list(dict.fromkeys(df.columns.get_level_values(0)))
+        if set(lvl0) <= field_names:
+            if "Close" in lvl0:
+                sub = df["Close"]
+                for sym in sym_list:
+                    if sym in sub.columns:
+                        closes[sym] = sub[sym]
+        else:
+            for sym in sym_list:
+                if sym in lvl0 and "Close" in df[sym].columns:
+                    closes[sym] = df[sym]["Close"]
+    elif "Close" in df.columns and sym_list:
+        closes[sym_list[0]] = df["Close"]
+
+    gbp_cache: dict[str, bool] = {}
+    total = len(needed_years)
+    for i, (sym, ticker) in enumerate(pair_by_sym.items(), start=1):
+        series = closes.get(sym)
+        series = (series if series is not None else pd.Series(dtype=float)).dropna()
+
+        if ticker.endswith(".L") and not series.empty:
+            is_gbp = gbp_cache.get(sym)
+            if is_gbp is None:
+                try:
+                    cur = yf.Ticker(sym).fast_info.currency
+                except Exception:
+                    cur = None
+                is_gbp = (cur == "GBp")
+                gbp_cache[sym] = is_gbp
+            if is_gbp:
+                series = series / 100.0
+
+        saved_any = False
+        for year in sorted(needed_years[ticker]):
+            yr_series = series[series.index.year == year]
+            prices = {str(ts.date()): round(float(v), 6) for ts, v in yr_series.items()}
+            if prices:
+                save_price_year(ticker, year, prices)
+                saved_any = True
+        if not saved_any and ticker not in failed:
+            failed.append(ticker)
+        _notify(f"✓ {ticker} ({i}/{total})")
+
+    # Yahoo sometimes silently drops symbols from large batch requests —
+    # retry stragglers one-by-one with the single-ticker path.
+    for ticker in list(failed):
+        try:
+            ensure(ticker, start_date, end_date, force_refresh_current_year)
+            if any(has_price_year(ticker, y)
+                   for y in needed_years.get(ticker, set())):
+                failed.remove(ticker)
+        except Exception as exc:
+            log.warning("single-ticker fallback failed for %s: %s", ticker, exc)
+
+    return sorted(failed)
+
+
 def get_price(
     ticker: str,
     on_date: str,
