@@ -109,9 +109,4 @@ exec "$PYTHON" -m streamlit run src/app.py \
   --server.port "$PORT" \
   --server.headless true \
   --server.runOnSave true \
-  --browser.gatherUsageStats false \
-  --theme.base dark \
-  --theme.primaryColor "#3b82f6" \
-  --theme.backgroundColor "#0f172a" \
-  --theme.secondaryBackgroundColor "#1e293b" \
-  --theme.textColor "#f1f5f9"
+  --browser.gatherUsageStats false

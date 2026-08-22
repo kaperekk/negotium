@@ -17,6 +17,7 @@ from ui.dashboard import render_dashboard
 from ui.helpers import detect_currency
 from ui.runtime import init_runtime
 from ui.sidebar import render_sidebar
+from ui.styles import build_app_styles
 
 st.set_page_config(
     page_title="Negotium",
@@ -26,6 +27,7 @@ st.set_page_config(
 )
 
 cfg, storage, _theme_name, T, today = init_runtime()
+st.markdown(build_app_styles(T), unsafe_allow_html=True)
 start_date_cfg = cfg_module.get_start_date(cfg)
 base_ccy = render_sidebar(cfg, storage, T, today, start_date_cfg, detect_currency)
 render_dashboard(cfg, storage, T, today, start_date_cfg, base_ccy)
