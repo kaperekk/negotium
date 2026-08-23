@@ -1499,7 +1499,7 @@ def test_isin_resolve_from_config(tmp: Path):
 def test_portfolio_includes_today_transactions(tmp: Path):
     """build_portfolio includes transactions dated today."""
     from unittest.mock import patch
-    import transactions, portfolio
+    import transactions, portfolio, portfolio_core
     from datetime import date as _real_date
 
     fx.inject_fake_prices(tmp)
@@ -1518,8 +1518,7 @@ def test_portfolio_includes_today_transactions(tmp: Path):
         def today(cls):
             return _real_date(2023, 1, 5)
 
-    with patch.object(transactions, "date", _FakeDate), \
-         patch.object(portfolio, "date", _FakeDate):
+    with patch.object(portfolio_core, "date", _FakeDate):
         snapshots = portfolio.build_portfolio(
             start_date=date(2023, 1, 3),
             end_date=date(2023, 1, 5),
@@ -1538,7 +1537,7 @@ def test_portfolio_includes_today_transactions(tmp: Path):
 def test_rebuild_balance_includes_today_transactions(tmp: Path):
     """_rebuild_balance includes today's records in balance and avg_price."""
     from unittest.mock import patch
-    import transactions, storage
+    import transactions, storage, ledger_core
     from datetime import date as _real_date
 
     fx.inject_fake_prices(tmp)
@@ -1555,7 +1554,7 @@ def test_rebuild_balance_includes_today_transactions(tmp: Path):
         def today(cls):
             return _real_date(2023, 1, 5)
 
-    with patch.object(transactions, "date", _FakeDate):
+    with patch.object(ledger_core, "date", _FakeDate):
         records = transactions.get_all_transactions()
         transactions._rebuild_balance(records)
 

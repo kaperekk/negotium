@@ -111,6 +111,9 @@ def render_sidebar(cfg, storage, T, today, start_date_cfg, detect_currency):
                     key="range_to",
                 )
 
+        st.session_state["chart_start"] = chart_start
+        st.session_state["chart_end"] = chart_end
+
         with st.expander("⚙️ Settings"):
             st.subheader("Appearance")
             current_theme = st.session_state.get("theme", "dark")

@@ -268,6 +268,8 @@ def render_dashboard(cfg, storage, T, today, start_date_cfg, base_ccy: str | Non
     bench_by_date: dict[str, dict] = {b["date"]: b for b in all_benchmarks}
 
     # Filter to chart date range
+    chart_start = st.session_state.get("chart_start", start_date_cfg)
+    chart_end = st.session_state.get("chart_end", today)
     cs = chart_start.isoformat()
     ce = chart_end.isoformat()
     snapshots = [s for s in all_snapshots if cs <= s["date"] <= ce]
@@ -326,6 +328,11 @@ def render_dashboard(cfg, storage, T, today, start_date_cfg, base_ccy: str | Non
             on_change=lambda: st.session_state.update(bench_persist=list(st.session_state.bench_select)),
         )
     with _range_col:
+        _range_opts = ["All time", "This year", "Last 12 months", "Last 3 months", "Custom"]
+
+        def _on_range_change():
+            st.session_state["_range"] = st.session_state["range_widget"]
+
         st.selectbox(
             "Range",
             _range_opts,
