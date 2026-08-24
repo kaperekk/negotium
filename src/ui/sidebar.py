@@ -44,7 +44,10 @@ def render_sidebar(cfg, storage, T, today, start_date_cfg, detect_currency):
                     if name and name.strip():
                         try:
                             storage.create_project(name.strip())
-                            st.session_state.clear()
+                            cfg_module.invalidate_config_cache()
+                            for k in list(st.session_state.keys()):
+                                if k.startswith("snapshots_") or k.startswith("benchmarks_") or k == "project_select":
+                                    st.session_state.pop(k)
                             st.rerun()
                         except ValueError as e:
                             st.error(str(e))
@@ -53,17 +56,22 @@ def render_sidebar(cfg, storage, T, today, start_date_cfg, detect_currency):
             _create_dialog()
         elif selected != current:
             storage.set_current_project(selected)
-            st.session_state.clear()
+            cfg_module.invalidate_config_cache()
+            for k in list(st.session_state.keys()):
+                if k.startswith("snapshots_") or k.startswith("benchmarks_"):
+                    st.session_state.pop(k)
             st.rerun()
 
         st.caption("Currency")
         ccy_options = ["PLN", "EUR", "USD"]
         ccy_default = ccy_options.index(cfg.get("default_currency", "PLN"))
+        if "base_ccy_idx" not in st.session_state:
+            st.session_state["base_ccy_idx"] = ccy_default
         ccy_cols = st.columns(3)
         base_ccy = None
         for i, ccy in enumerate(ccy_options):
             with ccy_cols[i]:
-                is_active = st.session_state.get("base_ccy_idx", ccy_default) == i
+                is_active = st.session_state["base_ccy_idx"] == i
                 if st.button(
                     ccy,
                     key=f"ccy_btn_{ccy}",
@@ -74,7 +82,7 @@ def render_sidebar(cfg, storage, T, today, start_date_cfg, detect_currency):
                     base_ccy = ccy
                     st.rerun()
         if base_ccy is None:
-            base_ccy = ccy_options[st.session_state.get("base_ccy_idx", ccy_default)]
+            base_ccy = ccy_options[st.session_state["base_ccy_idx"]]
 
         _range_opts = ["All time", "This year", "Last 12 months", "Last 3 months", "Custom"]
         if "_range" not in st.session_state:
