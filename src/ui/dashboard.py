@@ -304,8 +304,9 @@ def render_dashboard(cfg, storage, T, today, start_date_cfg, base_ccy: str | Non
             return f"{formatted} PLN"
         return f"{SYM[base_ccy]}{formatted}"
 
-    cagr = compute_cagr(cur_value, base_ccy)
-    irr = compute_irr(cur_value, base_ccy)
+    fx_cache: dict = {}
+    cagr = compute_cagr(cur_value, base_ccy, fx_cache=fx_cache)
+    irr = compute_irr(cur_value, base_ccy, fx_cache=fx_cache)
 
     best_ticker = max(latest["assets"], key=lambda a: a["value_base"])["ticker"] if latest["assets"] else "—"
 

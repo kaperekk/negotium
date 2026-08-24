@@ -48,8 +48,15 @@ def _save_file(path: Path, data: dict) -> None:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 
+_config_cache: dict | None = None
+
+
 def load() -> dict:
     """Return merged config: global defaults → per-project overrides."""
+    global _config_cache
+    if _config_cache is not None:
+        return _config_cache
+
     global_cfg = _load_global()
     project_cfg = _load_project()
     merged = {**global_cfg, **project_cfg}
@@ -61,7 +68,14 @@ def load() -> dict:
             changed = True
     if changed and not project_cfg:
         _save_file(GLOBAL_CONFIG_PATH, merged)
+    _config_cache = merged
     return merged
+
+
+def invalidate_config_cache() -> None:
+    """Clear the in-memory config cache (call after save)."""
+    global _config_cache
+    _config_cache = None
 
 
 def save(cfg: dict) -> None:
@@ -69,11 +83,13 @@ def save(cfg: dict) -> None:
     from storage import project_config_path
     p = project_config_path()
     _save_file(p, cfg)
+    invalidate_config_cache()
 
 
 def save_global(cfg: dict) -> None:
     """Save to the global config file."""
     _save_file(GLOBAL_CONFIG_PATH, cfg)
+    invalidate_config_cache()
 
 
 def get_start_date(cfg: dict) -> date:
@@ -97,3 +113,4 @@ def save_theme(theme: str) -> None:
     g = _load_global()
     g["theme"] = theme
     _save_file(GLOBAL_CONFIG_PATH, g)
+    invalidate_config_cache()

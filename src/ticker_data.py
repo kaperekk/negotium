@@ -352,7 +352,11 @@ def get_price(
 
     year_prices = cache[ticker][year]
 
-    # Walk back up to 5 calendar days (covers weekends + holidays)
+    # Fast path: exact date match (most common case — avoids date parsing + loop)
+    if on_date in year_prices:
+        return year_prices[on_date]
+
+    # Walk back up to 7 calendar days (covers weekends + holidays)
     check = date.fromisoformat(on_date)
     for _ in range(7):
         s = check.isoformat()
