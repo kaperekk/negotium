@@ -7,7 +7,6 @@ from datetime import date, datetime, timedelta
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-import streamlit.components.v1 as components
 
 import config as cfg_module
 import storage
@@ -305,8 +304,9 @@ def render_dashboard(cfg, storage, T, today, start_date_cfg, base_ccy: str | Non
             return f"{formatted} PLN"
         return f"{SYM[base_ccy]}{formatted}"
 
-    cagr = compute_cagr(cur_value, base_ccy)
-    irr = compute_irr(cur_value, base_ccy)
+    fx_cache: dict = {}
+    cagr = compute_cagr(cur_value, base_ccy, fx_cache=fx_cache)
+    irr = compute_irr(cur_value, base_ccy, fx_cache=fx_cache)
 
     best_ticker = max(latest["assets"], key=lambda a: a["value_base"])["ticker"] if latest["assets"] else "—"
 
@@ -369,8 +369,6 @@ def render_dashboard(cfg, storage, T, today, start_date_cfg, base_ccy: str | Non
     st.markdown(build_late_theme_override(T), unsafe_allow_html=True)
 
     # ── JS injection: beat Streamlit's dynamically-injected emotion-cache CSS ──────
-    import streamlit.components.v1 as components
-
-    components.html(build_streamlit_fix_script(T), height=0, width=0)
+    st.iframe(build_streamlit_fix_script(T), height=1, width=1)
 
 

@@ -208,15 +208,16 @@ def _rebuild_balance(records: list[dict], from_date: str | None = None) -> None:
     else:
         balance = {}
 
+    price_cache: dict = {}
     for rec in records:
         if rec["date"] > today_str:
             continue
-        _update_avg_prices(balance, rec, base_ccy)
+        _update_avg_prices(balance, rec, base_ccy, price_cache)
         _apply_entries(balance, rec["entries"])
     storage.save_balance(balance)
 
 
-def _update_avg_prices(balance: dict[str, dict], rec: dict, base_ccy: str) -> None:
+def _update_avg_prices(balance: dict[str, dict], rec: dict, base_ccy: str, price_cache: dict | None = None) -> None:
     """After applying entries, compute avg_price in base currency for stock buys.
 
     Uses the ticker's close price on the transaction date to determine cost.
@@ -225,7 +226,8 @@ def _update_avg_prices(balance: dict[str, dict], rec: dict, base_ccy: str) -> No
     entries = rec["entries"]
     tx_date = rec["date"]
     yr = int(tx_date[:4])
-    price_cache: dict = {}
+    if price_cache is None:
+        price_cache = {}
 
     # Accumulate cost and shares per ticker for this transaction
     ticker_cost: dict[str, float] = {}
@@ -284,7 +286,7 @@ def rebuild_balance() -> None:
     _rebuild_balance(records)
 
 
-def compute_cagr(current_value: float, base_currency: str | None = None) -> float | None:
+def compute_cagr(current_value: float, base_currency: str | None = None, fx_cache: dict | None = None) -> float | None:
     """Compute Compound Annual Growth Rate from first deposit to now.
 
     current_value must be expressed in the same currency as base_currency
@@ -301,6 +303,8 @@ def compute_cagr(current_value: float, base_currency: str | None = None) -> floa
         base_currency = cfg_module.load().get("default_currency", "PLN")
     base_ccy = base_currency.upper()
     today = _date.today()
+    if fx_cache is None:
+        fx_cache = {}
 
     first_date = None
     net_invested = 0.0
@@ -315,7 +319,7 @@ def compute_cagr(current_value: float, base_currency: str | None = None) -> floa
             t = e["ticker"].upper()
             amt = float(e["amount"])
             if is_entry_op or (all_cash and t in storage.SUPPORTED_CURRENCIES):
-                fx = get_fx_rate(t, base_ccy, rec["date"], {}, int(rec["date"][:4])) if t != base_ccy else 1.0
+                fx = get_fx_rate(t, base_ccy, rec["date"], fx_cache, int(rec["date"][:4])) if t != base_ccy else 1.0
                 net_invested += amt * fx
                 if first_date is None:
                     first_date = rec["date"]
@@ -330,7 +334,7 @@ def compute_cagr(current_value: float, base_currency: str | None = None) -> floa
     return (current_value / net_invested) ** (1.0 / years) - 1.0
 
 
-def compute_irr(current_value: float, base_currency: str | None = None) -> float | None:
+def compute_irr(current_value: float, base_currency: str | None = None, fx_cache: dict | None = None) -> float | None:
     """Compute Internal Rate of Return (money-weighted) using all cash flows.
 
     Deposits are negative (money out of pocket), withdrawals positive.
@@ -349,6 +353,8 @@ def compute_irr(current_value: float, base_currency: str | None = None) -> float
         base_currency = cfg_module.load().get("default_currency", "PLN")
     base_ccy = base_currency.upper()
     today = _date.today()
+    if fx_cache is None:
+        fx_cache = {}
 
     cash_flows: list[tuple[str, float]] = []
     for rec in records:
@@ -362,7 +368,7 @@ def compute_irr(current_value: float, base_currency: str | None = None) -> float
             t = e["ticker"].upper()
             amt = float(e["amount"])
             if is_entry_op or (all_cash and t in storage.SUPPORTED_CURRENCIES):
-                fx = get_fx_rate(t, base_ccy, rec["date"], {}, int(rec["date"][:4])) if t != base_ccy else 1.0
+                fx = get_fx_rate(t, base_ccy, rec["date"], fx_cache, int(rec["date"][:4])) if t != base_ccy else 1.0
                 # Negate: positive account_op = deposit (money out of pocket)
                 cash_flows.append((rec["date"], -amt * fx))
 
@@ -419,8 +425,17 @@ def compute_irr(current_value: float, base_currency: str | None = None) -> float
 
 
 def get_all_transactions() -> list[dict]:
-    """Return all transactions, chronologically."""
-    return storage.read_jsonl(storage.TRANSACTIONS_PATH)
+    """Return all transactions, chronologically (cached per file mtime)."""
+    import os
+    path = storage.TRANSACTIONS_PATH
+    mtime = os.path.getmtime(path) if path.exists() else 0.0
+    cache_key = ("_tx_cache", mtime)
+    if cache_key not in get_all_transactions._cache:
+        get_all_transactions._cache.clear()
+        get_all_transactions._cache[cache_key] = storage.read_jsonl(path)
+    return get_all_transactions._cache[cache_key]
+
+get_all_transactions._cache: dict = {}
 
 
 def get_transactions_up_to(as_of: str) -> list[dict]:

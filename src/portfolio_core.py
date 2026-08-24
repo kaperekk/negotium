@@ -270,7 +270,11 @@ def _day_range(start: date, end: date, precision: str):
 # -- Series extraction ---------------------------------------------------------
 
 def snapshots_to_series(snapshots: list[dict]) -> tuple[list[str], list[float], list[float]]:
-    dates  = [s["date"]         for s in snapshots]
-    values = [s["total_value"]  for s in snapshots]
-    contrs = [s["invested"] for s in snapshots]
+    dates: list[str] = []
+    values: list[float] = []
+    contrs: list[float] = []
+    for s in snapshots:
+        dates.append(s["date"])
+        values.append(s["total_value"])
+        contrs.append(s["invested"])
     return dates, values, contrs

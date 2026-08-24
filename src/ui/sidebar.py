@@ -131,11 +131,11 @@ def render_sidebar(cfg, storage, T, today, start_date_cfg, detect_currency):
             st.subheader("Ticker rules")
             rules_text = st.text_area(
                 "Rules",
-                value="\\n".join(cfg.get("ticker_rules", [])),
+                value="\n".join(cfg.get("ticker_rules", [])),
                 height=200,
                 key="ticker_rules_text",
                 label_visibility="collapsed",
-                placeholder="AMZN.DE=AMZ.DE\\n*.PL=*.WA\\n.US=",
+                placeholder="AMZN.DE=AMZ.DE\n*.PL=*.WA\n.US=",
             )
             if st.button("Save ticker rules"):
                 new_rules = [line.strip() for line in rules_text.strip().splitlines() if line.strip()]

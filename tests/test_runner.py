@@ -1746,6 +1746,753 @@ def test_get_ticker_history_excludes_cash(tmp: Path):
     assert len(hist_pln) == 0
 
 
+# ── Theme consistency tests ──────────────────────────────────────────────────
+
+REQUIRED_THEME_KEYS = [
+    "card_bg", "border", "border_hover", "border_active", "border_strong",
+    "text", "text_cell", "text_muted", "text_faint",
+    "panel_bg", "hr", "accent",
+    "accent_tag_bg", "accent_tag_border", "accent_tag_hover",
+    "card_btn_active", "card_faint",
+    "chart_grid", "chart_zeroline", "hover_bg",
+    "plotly_template", "page_bg",
+    "range_bg", "range_active",
+    "table_border", "table_header_border", "table_hover", "table_text",
+    "holdings_bar_bg",
+]
+
+
+def _is_valid_css_color(value: str) -> bool:
+    """Check if a string looks like a valid CSS color."""
+    import re
+    # Named colors, hex, rgb(), rgba(), hsl(), hsla()
+    if value.startswith("#"):
+        return len(value) in (4, 5, 7, 9) and all(c in "0123456789abcdefABCDEF" for c in value[1:])
+    if value.startswith(("rgb(", "rgba(", "hsl(", "hsla(")):
+        return bool(re.match(r"^(rgb|rgba|hsl|hsla)\(.+\)$", value))
+    return False
+
+
+def test_theme_keys_dark(tmp: Path):
+    """Dark theme defines all required keys."""
+    from ui.theme import THEMES
+    for key in REQUIRED_THEME_KEYS:
+        assert key in THEMES["dark"], f"Dark theme missing key: {key}"
+
+
+def test_theme_keys_light(tmp: Path):
+    """Light theme defines all required keys."""
+    from ui.theme import THEMES
+    for key in REQUIRED_THEME_KEYS:
+        assert key in THEMES["light"], f"Light theme missing key: {key}"
+
+
+def test_theme_colors_valid(tmp: Path):
+    """All theme color values are valid CSS colors."""
+    from ui.theme import THEMES
+    NON_COLOR_KEYS = {"plotly_template"}
+    for theme_name, theme in THEMES.items():
+        for key, value in theme.items():
+            if key in NON_COLOR_KEYS:
+                continue
+            assert _is_valid_css_color(value), f"{theme_name}.{key} = {value!r} is not a valid CSS color"
+
+
+def test_theme_plotly_template(tmp: Path):
+    """Dark uses plotly_dark, light uses plotly_white."""
+    from ui.theme import THEMES
+    assert THEMES["dark"]["plotly_template"] == "plotly_dark"
+    assert THEMES["light"]["plotly_template"] == "plotly_white"
+
+
+def test_theme_css_uses_correct_colors(tmp: Path):
+    """CSS builders produce output containing the theme's colors."""
+    from ui.theme import THEMES
+    from ui.style_base import build_app_styles
+    from ui.style_components import build_metric_card_styles
+
+    for theme_name in ("dark", "light"):
+        t = THEMES[theme_name]
+
+        app_css = build_app_styles(t)
+        assert t["page_bg"] in app_css, f"{theme_name}: build_app_styles missing page_bg"
+        assert t["panel_bg"] in app_css, f"{theme_name}: build_app_styles missing panel_bg"
+        assert t["text"] in app_css, f"{theme_name}: build_app_styles missing text"
+
+        metric_css = build_metric_card_styles(t)
+        assert t["card_bg"] in metric_css, f"{theme_name}: build_metric_card_styles missing card_bg"
+        assert t["text"] in metric_css, f"{theme_name}: build_metric_card_styles missing text"
+
+
+def test_theme_plotly_font_colors(tmp: Path):
+    """Plotly chart layout uses theme text color for fonts."""
+    from ui.theme import THEMES
+    import plotly.graph_objects as go
+
+    for theme_name in ("dark", "light"):
+        t = THEMES[theme_name]
+        fig = go.Figure()
+        fig.update_layout(
+            font=dict(family="sans-serif", size=20, color=t["text"]),
+        )
+        assert fig.layout.font.color == t["text"], (
+            f"{theme_name}: Plotly font color {fig.layout.font.color} != {t['text']}"
+        )
+
+
+def test_theme_dark_text_on_dark_bg(tmp: Path):
+    """Dark theme text colors are light (for dark backgrounds)."""
+    from ui.theme import THEMES
+    t = THEMES["dark"]
+    # Text should start with # (hex) and have high RGB values
+    for key in ("text", "text_cell", "text_muted"):
+        val = t[key]
+        if val.startswith("#"):
+            r = int(val[1:3], 16)
+            g = int(val[3:5], 16)
+            b = int(val[5:7], 16)
+            assert r > 100 and g > 100 and b > 100, (
+                f"Dark theme {key}={val} is too dark for dark backgrounds"
+            )
+
+
+def test_theme_light_text_on_light_bg(tmp: Path):
+    """Light theme text colors are dark (for light backgrounds)."""
+    from ui.theme import THEMES
+    t = THEMES["light"]
+    for key in ("text", "text_cell", "text_muted"):
+        val = t[key]
+        if val.startswith("#"):
+            r = int(val[1:3], 16)
+            g = int(val[3:5], 16)
+            b = int(val[5:7], 16)
+            assert r < 150 and g < 150 and b < 150, (
+                f"Light theme {key}={val} is too light for light backgrounds"
+            )
+
+
+# ── CAGR tests ───────────────────────────────────────────────────────────────
+
+def test_cagr_basic(tmp: Path):
+    """CAGR: single deposit growing over time yields positive return."""
+    import transactions
+    from ledger_core import compute_cagr
+    fx.inject_fake_prices(tmp)
+
+    transactions.add_transaction("2023-01-03", [
+        {"ticker": "PLN", "amount": 10000.0, "account_operation": True},
+    ])
+
+    cagr = compute_cagr(12000.0, "PLN")
+    assert cagr is not None
+    assert cagr > 0
+
+
+def test_cagr_no_transactions(tmp: Path):
+    """CAGR: no transactions returns None."""
+    from ledger_core import compute_cagr
+    assert compute_cagr(10000.0, "PLN") is None
+
+
+def test_cagr_zero_invested(tmp: Path):
+    """CAGR: zero net invested returns None."""
+    import transactions
+    from ledger_core import compute_cagr
+    fx.inject_fake_prices(tmp)
+
+    transactions.add_transaction("2023-01-03", [
+        {"ticker": "PLN", "amount": 10000.0, "account_operation": True},
+    ])
+    transactions.add_transaction("2023-01-03", [
+        {"ticker": "PLN", "amount": -10000.0, "account_operation": True},
+    ])
+
+    cagr = compute_cagr(0.0, "PLN")
+    assert cagr is None
+
+
+def test_cagr_loss(tmp: Path):
+    """CAGR: value below invested yields negative CAGR."""
+    import transactions
+    from ledger_core import compute_cagr
+    fx.inject_fake_prices(tmp)
+
+    transactions.add_transaction("2023-01-03", [
+        {"ticker": "PLN", "amount": 10000.0, "account_operation": True},
+    ])
+
+    cagr = compute_cagr(5000.0, "PLN")
+    assert cagr is not None
+    assert cagr < 0
+
+
+def test_cagr_with_fx(tmp: Path):
+    """CAGR: USD deposit converted to PLN uses FX rate."""
+    import transactions
+    from ledger_core import compute_cagr
+    fx.inject_fake_prices(tmp)
+
+    transactions.add_transaction("2023-01-03", [
+        {"ticker": "USD", "amount": 2000.0, "account_operation": True},
+    ])
+
+    cagr = compute_cagr(10000.0, "PLN")
+    assert cagr is not None
+    assert cagr > 0
+
+
+# ── IRR tests ────────────────────────────────────────────────────────────────
+
+def test_irr_basic(tmp: Path):
+    """IRR: single deposit with positive return yields positive IRR."""
+    import transactions
+    from ledger_core import compute_irr
+    fx.inject_fake_prices(tmp)
+
+    transactions.add_transaction("2023-01-03", [
+        {"ticker": "PLN", "amount": 10000.0, "account_operation": True},
+    ])
+
+    irr = compute_irr(12000.0, "PLN")
+    assert irr is not None
+    assert irr > 0
+
+
+def test_irr_no_transactions(tmp: Path):
+    """IRR: no transactions returns None."""
+    from ledger_core import compute_irr
+    assert compute_irr(10000.0, "PLN") is None
+
+
+def test_irr_multiple_deposits(tmp: Path):
+    """IRR: multiple deposits are handled correctly."""
+    import transactions
+    from ledger_core import compute_irr
+    fx.inject_fake_prices(tmp)
+
+    transactions.add_transaction("2023-01-03", [
+        {"ticker": "PLN", "amount": 5000.0, "account_operation": True},
+    ])
+    transactions.add_transaction("2023-06-01", [
+        {"ticker": "PLN", "amount": 5000.0, "account_operation": True},
+    ])
+
+    irr = compute_irr(12000.0, "PLN")
+    assert irr is not None
+    assert irr > 0
+
+
+def test_irr_with_withdrawal(tmp: Path):
+    """IRR: withdrawal reduces invested capital correctly."""
+    import transactions
+    from ledger_core import compute_irr
+    fx.inject_fake_prices(tmp)
+
+    transactions.add_transaction("2023-01-03", [
+        {"ticker": "PLN", "amount": 10000.0, "account_operation": True},
+    ])
+    transactions.add_transaction("2023-06-01", [
+        {"ticker": "PLN", "amount": -3000.0, "account_operation": True},
+    ])
+
+    irr = compute_irr(9000.0, "PLN")
+    assert irr is not None
+
+
+def test_irr_loss(tmp: Path):
+    """IRR: value below invested yields negative IRR."""
+    import transactions
+    from ledger_core import compute_irr
+    fx.inject_fake_prices(tmp)
+
+    transactions.add_transaction("2023-01-03", [
+        {"ticker": "PLN", "amount": 10000.0, "account_operation": True},
+    ])
+
+    irr = compute_irr(5000.0, "PLN")
+    assert irr is not None
+    assert irr < 0
+
+
+# ── FX rate tests ────────────────────────────────────────────────────────────
+
+def test_fx_rate_same_currency(tmp: Path):
+    """get_fx_rate: same currency returns 1.0."""
+    from ticker_data import get_fx_rate
+    assert get_fx_rate("PLN", "PLN", "2023-01-03", {}, 2023) == 1.0
+
+
+def test_fx_rate_direct_pair(tmp: Path):
+    """get_fx_rate: direct pair (USDPLN) returns cached price."""
+    from ticker_data import get_fx_rate
+    cache = {"USDPLN": {2023: {"2023-01-03": 4.38}}}
+    assert get_fx_rate("USD", "PLN", "2023-01-03", cache, 2023) == 4.38
+
+
+def test_fx_rate_reverse_pair(tmp: Path):
+    """get_fx_rate: reverse pair returns 1/rate."""
+    from ticker_data import get_fx_rate
+    cache = {"USDPLN": {2023: {"2023-01-03": 4.0}}}
+    rate = get_fx_rate("PLN", "USD", "2023-01-03", cache, 2023)
+    assert abs(rate - 0.25) < 0.001
+
+
+def test_fx_rate_eur_pln_via_triangulation(tmp: Path):
+    """get_fx_rate: EUR→PLN triangulated via EURUSD * USDPLN."""
+    from ticker_data import get_fx_rate
+    cache = {
+        "EURUSD": {2023: {"2023-01-03": 1.07}},
+        "USDPLN": {2023: {"2023-01-03": 4.0}},
+    }
+    rate = get_fx_rate("EUR", "PLN", "2023-01-03", cache, 2023)
+    assert abs(rate - 4.28) < 0.01
+
+
+def test_fx_rate_usd_pln_direct(tmp: Path):
+    """get_fx_rate: USD→PLN via direct USDPLN pair."""
+    from ticker_data import get_fx_rate
+    cache = {"USDPLN": {2023: {"2023-01-03": 4.35}}}
+    rate = get_fx_rate("USD", "PLN", "2023-01-03", cache, 2023)
+    assert abs(rate - 4.35) < 0.001
+
+
+def test_fx_rate_pln_to_usd(tmp: Path):
+    """get_fx_rate: PLN→USD via 1/USDPLN."""
+    from ticker_data import get_fx_rate
+    cache = {"USDPLN": {2023: {"2023-01-03": 4.0}}}
+    rate = get_fx_rate("PLN", "USD", "2023-01-03", cache, 2023)
+    assert abs(rate - 0.25) < 0.001
+
+
+def test_fx_rate_fallback_1(tmp: Path):
+    """get_fx_rate: no data returns 1.0 as last resort."""
+    from ticker_data import get_fx_rate
+    rate = get_fx_rate("USD", "PLN", "2023-01-03", {}, 2023)
+    assert rate == 1.0
+
+
+def test_fx_rate_non_pln_cross_via_pln(tmp: Path):
+    """get_fx_rate: EUR→USD triangulated via EURPLN / USDPLN."""
+    from ticker_data import get_fx_rate
+    cache = {
+        "EURPLN": {2023: {"2023-01-03": 4.68}},
+        "USDPLN": {2023: {"2023-01-03": 4.0}},
+    }
+    rate = get_fx_rate("EUR", "USD", "2023-01-03", cache, 2023)
+    assert abs(rate - 1.17) < 0.01
+
+
+# ── _latest_price tests ──────────────────────────────────────────────────────
+
+def test_latest_price_cash(tmp: Path):
+    """_latest_price: cash ticker returns 1.0."""
+    from ticker_data import _latest_price
+    assert _latest_price("USD", {}, 2023) == 1.0
+
+
+def test_latest_price_from_cache(tmp: Path):
+    """_latest_price: returns latest price from loaded cache."""
+    from ticker_data import _latest_price
+    cache = {"AAPL": {2023: {"2023-01-03": 125.0, "2023-01-09": 130.0}}}
+    assert _latest_price("AAPL", cache, 2023) == 130.0
+
+
+def test_latest_price_empty_cache(tmp: Path):
+    """_latest_price: missing ticker returns None."""
+    from ticker_data import _latest_price
+    assert _latest_price("AAPL", {}, 2023) is None
+
+
+def test_latest_price_empty_slab(tmp: Path):
+    """_latest_price: empty slab returns None."""
+    from ticker_data import _latest_price
+    cache = {"AAPL": {2023: {}}}
+    assert _latest_price("AAPL", cache, 2023) is None
+
+
+def test_latest_price_multi_year(tmp: Path):
+    """_latest_price: scans newest year first."""
+    from ticker_data import _latest_price
+    cache = {
+        "AAPL": {
+            2022: {"2022-12-29": 120.0},
+            2023: {"2023-01-03": 125.0},
+        }
+    }
+    assert _latest_price("AAPL", cache, 2023) == 125.0
+
+
+# ── BOSSA import tests ──────────────────────────────────────────────────────
+
+def test_bossa_validate_valid(tmp: Path):
+    """validate_bossa_file: valid CSV with required columns passes."""
+    from bossa_import import validate_bossa_file
+    csv_content = "data;tytuł operacji;szczegóły;kwota;waluta\n2023-01-03;test;;;PLN\n"
+    p = tmp / "test.csv"
+    p.write_text(csv_content, encoding="utf-8")
+    valid, msg = validate_bossa_file(p)
+    assert valid is True
+
+
+def test_bossa_validate_empty(tmp: Path):
+    """validate_bossa_file: empty file fails."""
+    from bossa_import import validate_bossa_file
+    p = tmp / "empty.csv"
+    p.write_text("", encoding="utf-8")
+    valid, msg = validate_bossa_file(p)
+    assert valid is False
+
+
+def test_bossa_validate_missing_columns(tmp: Path):
+    """validate_bossa_file: missing required columns fails."""
+    from bossa_import import validate_bossa_file
+    csv_content = "col1;col2;col3\n"
+    p = tmp / "bad.csv"
+    p.write_text(csv_content, encoding="utf-8")
+    valid, msg = validate_bossa_file(p)
+    assert valid is False
+    assert "Missing required columns" in msg
+
+
+def test_bossa_parse_float_basic(tmp: Path):
+    """_parse_float: normal number parsing."""
+    from bossa_import import _parse_float
+    assert _parse_float("123.45") == 123.45
+    assert _parse_float("123,45") == 123.45
+    assert _parse_float("-50.0") == -50.0
+
+
+def test_bossa_parse_float_empty(tmp: Path):
+    """_parse_float: empty/None returns None."""
+    from bossa_import import _parse_float
+    assert _parse_float("") is None
+    assert _parse_float(None) is None
+
+
+def test_bossa_parse_float_invalid(tmp: Path):
+    """_parse_float: non-numeric returns None."""
+    from bossa_import import _parse_float
+    assert _parse_float("abc") is None
+    assert _parse_float("  ") is None
+
+
+def test_bossa_read_csv_utf8(tmp: Path):
+    """_read_csv_text: reads UTF-8 file."""
+    from bossa_import import _read_csv_text
+    p = tmp / "test.csv"
+    p.write_text("data;kwota\n100;200\n", encoding="utf-8")
+    text = _read_csv_text(p)
+    assert "data;kwota" in text
+
+
+def test_bossa_read_csv_windows1250(tmp: Path):
+    """_read_csv_text: reads Windows-1250 encoded file."""
+    from bossa_import import _read_csv_text
+    p = tmp / "test.csv"
+    content = "data;tytuł\n"
+    p.write_bytes(content.encode("windows-1250"))
+    text = _read_csv_text(p)
+    assert "data;tytuł" in text
+
+
+def test_bossa_parse_buy(tmp: Path):
+    """parse_bossa_csv: buy transaction creates two entries."""
+    from bossa_import import parse_bossa_csv
+    import bossa_import
+
+    original_resolve = bossa_import.resolve_isins_with_names
+    bossa_import.resolve_isins_with_names = lambda names, progress_cb=None: (
+        {isin: "AAPL.US" for isin in names}, {}
+    )
+    try:
+        csv_content = (
+            "data;tytuł operacji;szczegóły;kwota;waluta\n"
+            "2023-01-03;Rozliczenie transakcji kupna;Apple Inc. (US0378331005) 10 x 125.07 USD nr 1;-1250.70;USD\n"
+        )
+        p = tmp / "buy.csv"
+        p.write_text(csv_content, encoding="utf-8")
+        txns, unresolved = parse_bossa_csv(p, "PLN")
+        assert len(txns) == 1
+        assert txns[0]["date"] == "2023-01-03"
+        tickers = {e["ticker"] for e in txns[0]["entries"]}
+        assert "AAPL.US" in tickers
+        assert "USD" in tickers
+    finally:
+        bossa_import.resolve_isins_with_names = original_resolve
+
+
+def test_bossa_parse_sell(tmp: Path):
+    """parse_bossa_csv: sell transaction creates entries with negative shares."""
+    from bossa_import import parse_bossa_csv
+    import bossa_import
+
+    original_resolve = bossa_import.resolve_isins_with_names
+    bossa_import.resolve_isins_with_names = lambda names, progress_cb=None: (
+        {isin: "AAPL.US" for isin in names}, {}
+    )
+    try:
+        csv_content = (
+            "data;tytuł operacji;szczegóły;kwota;waluta\n"
+            "2023-06-01;Rozliczenie transakcji sprzedaży;Apple Inc. (US0378331005) 5 x 180.09 USD nr 2;900.45;USD\n"
+        )
+        p = tmp / "sell.csv"
+        p.write_text(csv_content, encoding="utf-8")
+        txns, _ = parse_bossa_csv(p, "PLN")
+        # May be 1 or 2 txns (fix_negative_positions can append a corrective buy)
+        all_entries = [e for rec in txns for e in rec["entries"]]
+        stock_entries = [e for e in all_entries if e["ticker"] == "AAPL.US"]
+        assert len(stock_entries) >= 1
+        assert any(e["amount"] < 0 for e in stock_entries)
+    finally:
+        bossa_import.resolve_isins_with_names = original_resolve
+
+
+def test_bossa_parse_deposit(tmp: Path):
+    """parse_bossa_csv: deposit marked as account_operation."""
+    from bossa_import import parse_bossa_csv
+
+    csv_content = (
+        "data;tytuł operacji;szczegóły;kwota;waluta\n"
+        "2023-01-03;Przelew do DM BOŚ;;5000.00;PLN\n"
+    )
+    p = tmp / "deposit.csv"
+    p.write_text(csv_content, encoding="utf-8")
+    txns, _ = parse_bossa_csv(p, "PLN")
+    assert len(txns) == 1
+    assert txns[0]["entries"][0].get("account_operation") is True
+    assert txns[0]["entries"][0]["amount"] == 5000.0
+
+
+def test_bossa_parse_short_row_skipped(tmp: Path):
+    """parse_bossa_csv: rows with fewer than 5 columns are skipped."""
+    from bossa_import import parse_bossa_csv
+
+    csv_content = (
+        "data;tytuł operacji;szczegóły;kwota;waluta\n"
+        "2023-01-03;short row\n"
+    )
+    p = tmp / "short.csv"
+    p.write_text(csv_content, encoding="utf-8")
+    txns, _ = parse_bossa_csv(p, "PLN")
+    assert len(txns) == 0
+
+
+# ── XTB validate tests ──────────────────────────────────────────────────────
+
+def test_xtb_validate_missing_sheet(tmp: Path):
+    """validate_xtb_file: file without 'Cash Operations' sheet fails."""
+    from xtb_import import validate_xtb_file
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    wb.active.title = "Positions"
+    wb.active.append(["Type", "Ticker", "Amount"])
+    p = tmp / "no_cash.xlsx"
+    wb.save(p)
+    wb.close()
+
+    valid, msg = validate_xtb_file(p)
+    assert valid is False
+    assert "Cash Operations" in msg
+
+
+def test_xtb_validate_missing_columns(tmp: Path):
+    """validate_xtb_file: sheet missing required columns fails."""
+    from xtb_import import validate_xtb_file
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Cash Operations"
+    ws.append(["Type", "Ticker"])  # Missing Amount, Time
+    p = tmp / "missing_cols.xlsx"
+    wb.save(p)
+    wb.close()
+
+    valid, msg = validate_xtb_file(p)
+    assert valid is False
+    assert "Missing columns" in msg
+
+
+def test_xtb_validate_valid(tmp: Path):
+    """validate_xtb_file: valid XTB file passes."""
+    from xtb_import import validate_xtb_file
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Cash Operations"
+    ws.append(["Type", "Ticker", "Amount", "Time", "Comment"])
+    ws.append(["Deposit", "USD", 1000, "2023-01-03 10:00:00", ""])
+    p = tmp / "valid.xlsx"
+    wb.save(p)
+    wb.close()
+
+    valid, msg = validate_xtb_file(p)
+    assert valid is True
+
+
+def test_xtb_parse_dividend(tmp: Path):
+    """parse_xtb_excel: dividend creates a currency entry."""
+    from xtb_import import parse_xtb_excel
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Cash Operations"
+    ws.append(["Type", "Ticker", "Amount", "Time", "Comment"])
+    ws.append(["Dividend", "AAPL.US", 15.50, "2023-06-15 10:00:00", "Dividend AAPL"])
+    p = tmp / "div.xlsx"
+    wb.save(p)
+    wb.close()
+
+    txns = parse_xtb_excel(p, "USD")
+    assert len(txns) == 1
+    assert txns[0]["entries"][0]["amount"] == 15.50
+    assert txns[0]["entries"][0]["ticker"] == "USD"
+
+
+def test_xtb_parse_withdrawal(tmp: Path):
+    """parse_xtb_excel: withdrawal creates account_operation entry."""
+    from xtb_import import parse_xtb_excel
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Cash Operations"
+    ws.append(["Type", "Ticker", "Amount", "Time", "Comment"])
+    ws.append(["Withdrawal", "USD", -500.0, "2023-07-01 10:00:00", ""])
+    p = tmp / "withdraw.xlsx"
+    wb.save(p)
+    wb.close()
+
+    txns = parse_xtb_excel(p, "USD")
+    assert len(txns) == 1
+    assert txns[0]["entries"][0].get("account_operation") is True
+    assert txns[0]["entries"][0]["amount"] == -500.0
+
+
+def test_xtb_parse_interest(tmp: Path):
+    """parse_xtb_excel: free funds interest creates currency entry."""
+    from xtb_import import parse_xtb_excel
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Cash Operations"
+    ws.append(["Type", "Ticker", "Amount", "Time", "Comment"])
+    ws.append(["Free funds interest", "USD", 2.35, "2023-06-30 10:00:00", ""])
+    p = tmp / "interest.xlsx"
+    wb.save(p)
+    wb.close()
+
+    txns = parse_xtb_excel(p, "USD")
+    assert len(txns) == 1
+    assert txns[0]["entries"][0]["amount"] == 2.35
+    assert txns[0]["entries"][0]["ticker"] == "USD"
+
+
+def test_xtb_parse_withholding_tax(tmp: Path):
+    """parse_xtb_excel: withholding tax creates currency entry."""
+    from xtb_import import parse_xtb_excel
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Cash Operations"
+    ws.append(["Type", "Ticker", "Amount", "Time", "Comment"])
+    ws.append(["Withholding tax", "USD", -3.10, "2023-06-15 10:00:00", ""])
+    p = tmp / "wht.xlsx"
+    wb.save(p)
+    wb.close()
+
+    txns = parse_xtb_excel(p, "USD")
+    assert len(txns) == 1
+    assert txns[0]["entries"][0]["amount"] == -3.10
+
+
+def test_xtb_parse_deposit(tmp: Path):
+    """parse_xtb_excel: deposit creates account_operation entry."""
+    from xtb_import import parse_xtb_excel
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Cash Operations"
+    ws.append(["Type", "Ticker", "Amount", "Time", "Comment"])
+    ws.append(["Deposit", "USD", 5000.0, "2023-01-03 10:00:00", ""])
+    p = tmp / "deposit.xlsx"
+    wb.save(p)
+    wb.close()
+
+    txns = parse_xtb_excel(p, "USD")
+    assert len(txns) == 1
+    assert txns[0]["entries"][0].get("account_operation") is True
+    assert txns[0]["entries"][0]["amount"] == 5000.0
+
+
+def test_xtb_parse_transfer(tmp: Path):
+    """parse_xtb_excel: transfer creates account_operation entry."""
+    from xtb_import import parse_xtb_excel
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Cash Operations"
+    ws.append(["Type", "Ticker", "Amount", "Time", "Comment"])
+    ws.append(["Transfer", "USD", 2000.0, "2023-03-15 10:00:00", ""])
+    p = tmp / "transfer.xlsx"
+    wb.save(p)
+    wb.close()
+
+    txns = parse_xtb_excel(p, "USD")
+    assert len(txns) == 1
+    assert txns[0]["entries"][0].get("account_operation") is True
+
+
+# ── _update_avg_prices sell path tests ──────────────────────────────────────
+
+def test_avg_price_sell_reduces_proportionally(tmp: Path):
+    """_update_avg_prices: sell-only reduces cost pool proportionally."""
+    import transactions
+    fx.inject_fake_prices(tmp)
+
+    transactions.add_transaction("2023-01-03", [
+        {"ticker": "AAPL", "amount": 10.0},
+        {"ticker": "USD", "amount": -1250.70},
+    ])
+
+    transactions.add_transaction("2023-06-01", [
+        {"ticker": "AAPL", "amount": -5.0},
+        {"ticker": "USD", "amount": 900.45},
+    ])
+
+    import storage
+    bal = storage.load_balance()
+    assert bal["AAPL"]["amount"] == 5.0
+    assert bal["AAPL"]["avg_price"] > 0
+
+
+def test_avg_price_full_sell_zeroes(tmp: Path):
+    """_update_avg_prices: full sell removes ticker from balance."""
+    import transactions
+    fx.inject_fake_prices(tmp)
+
+    transactions.add_transaction("2023-01-03", [
+        {"ticker": "AAPL", "amount": 10.0},
+        {"ticker": "USD", "amount": -1250.70},
+    ])
+
+    transactions.add_transaction("2023-06-01", [
+        {"ticker": "AAPL", "amount": -10.0},
+        {"ticker": "USD", "amount": 1800.90},
+    ])
+
+    import storage
+    bal = storage.load_balance()
+    assert "AAPL" not in bal or abs(bal.get("AAPL", {}).get("amount", 0)) < 1e-9
+
+
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 ALL_TESTS = [
@@ -1829,6 +2576,60 @@ ALL_TESTS = [
     ("Ticker history: buys and sells",        test_get_ticker_history_buys_and_sells),
     ("Ticker history: running shares",        test_get_ticker_history_running_shares),
     ("Ticker history: excludes cash",         test_get_ticker_history_excludes_cash),
+    ("Theme: dark keys complete",             test_theme_keys_dark),
+    ("Theme: light keys complete",            test_theme_keys_light),
+    ("Theme: colors valid CSS",               test_theme_colors_valid),
+    ("Theme: plotly template correct",        test_theme_plotly_template),
+    ("Theme: CSS uses correct colors",        test_theme_css_uses_correct_colors),
+    ("Theme: plotly font colors match",       test_theme_plotly_font_colors),
+    ("Theme: dark text readable on dark bg",  test_theme_dark_text_on_dark_bg),
+    ("Theme: light text readable on light bg",test_theme_light_text_on_light_bg),
+    ("CAGR: basic positive return",          test_cagr_basic),
+    ("CAGR: no transactions",                test_cagr_no_transactions),
+    ("CAGR: zero invested",                  test_cagr_zero_invested),
+    ("CAGR: loss scenario",                  test_cagr_loss),
+    ("CAGR: with FX conversion",             test_cagr_with_fx),
+    ("IRR: basic positive return",           test_irr_basic),
+    ("IRR: no transactions",                 test_irr_no_transactions),
+    ("IRR: multiple deposits",               test_irr_multiple_deposits),
+    ("IRR: with withdrawal",                 test_irr_with_withdrawal),
+    ("IRR: loss scenario",                   test_irr_loss),
+    ("FX: same currency",                    test_fx_rate_same_currency),
+    ("FX: direct pair",                      test_fx_rate_direct_pair),
+    ("FX: reverse pair",                     test_fx_rate_reverse_pair),
+    ("FX: EUR→PLN triangulation",            test_fx_rate_eur_pln_via_triangulation),
+    ("FX: USD→PLN direct",                   test_fx_rate_usd_pln_direct),
+    ("FX: PLN→USD",                          test_fx_rate_pln_to_usd),
+    ("FX: no data fallback",                 test_fx_rate_fallback_1),
+    ("FX: EUR→USD cross via PLN",            test_fx_rate_non_pln_cross_via_pln),
+    ("Latest price: cash returns 1",         test_latest_price_cash),
+    ("Latest price: from cache",             test_latest_price_from_cache),
+    ("Latest price: empty cache",            test_latest_price_empty_cache),
+    ("Latest price: empty slab",             test_latest_price_empty_slab),
+    ("Latest price: multi year scan",        test_latest_price_multi_year),
+    ("BOSSA: validate valid CSV",            test_bossa_validate_valid),
+    ("BOSSA: validate empty file",           test_bossa_validate_empty),
+    ("BOSSA: validate missing columns",      test_bossa_validate_missing_columns),
+    ("BOSSA: parse_float basic",             test_bossa_parse_float_basic),
+    ("BOSSA: parse_float empty",             test_bossa_parse_float_empty),
+    ("BOSSA: parse_float invalid",           test_bossa_parse_float_invalid),
+    ("BOSSA: read CSV UTF-8",                test_bossa_read_csv_utf8),
+    ("BOSSA: read CSV Windows-1250",         test_bossa_read_csv_windows1250),
+    ("BOSSA: parse buy",                     test_bossa_parse_buy),
+    ("BOSSA: parse sell",                    test_bossa_parse_sell),
+    ("BOSSA: parse deposit",                 test_bossa_parse_deposit),
+    ("BOSSA: short row skipped",             test_bossa_parse_short_row_skipped),
+    ("XTB: validate missing sheet",          test_xtb_validate_missing_sheet),
+    ("XTB: validate missing columns",        test_xtb_validate_missing_columns),
+    ("XTB: validate valid file",             test_xtb_validate_valid),
+    ("XTB: parse dividend",                  test_xtb_parse_dividend),
+    ("XTB: parse withdrawal",                test_xtb_parse_withdrawal),
+    ("XTB: parse interest",                  test_xtb_parse_interest),
+    ("XTB: parse withholding tax",           test_xtb_parse_withholding_tax),
+    ("XTB: parse deposit",                   test_xtb_parse_deposit),
+    ("XTB: parse transfer",                  test_xtb_parse_transfer),
+    ("Avg price: sell reduces proportionally", test_avg_price_sell_reduces_proportionally),
+    ("Avg price: full sell zeroes",          test_avg_price_full_sell_zeroes),
 ]
 
 

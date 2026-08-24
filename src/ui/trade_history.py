@@ -5,7 +5,6 @@ from datetime import date
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-import streamlit.components.v1 as components
 
 from ticker_data import get_fx_rate, get_price
 from transactions import get_ticker_history
@@ -139,10 +138,9 @@ def render_trade_history_dialog(T: dict[str, str], ticker: str, name: str, ccy: 
             "Return": f'{t["ret"] * 100:.1f}%' if t["ret"] is not None else None,
         } for t in enriched])
 
-        components.html(
+        st.iframe(
             render_trade_table_html(T, trade_df),
             height=50 + 48 * len(trade_df),
-            scrolling=True,
         )
 
     _show()
