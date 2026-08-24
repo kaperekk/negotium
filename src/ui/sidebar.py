@@ -216,8 +216,11 @@ def render_sidebar(cfg, storage, T, today, start_date_cfg, detect_currency):
                             st.success(f"Added for {tx_date}.")
                         else:
                             st.error(result["error"])
-                        st.session_state.pop(f"snapshots_{base_ccy}_D", None)
                         st.session_state["force_refresh"] = True
+                        for k in list(st.session_state.keys()):
+                            if k.startswith("snapshots_") or k.startswith("benchmarks_"):
+                                st.session_state.pop(k)
+                        storage.invalidate_portfolio_from(start_date_cfg.isoformat())
                         st.rerun()
 
         with st.expander("📥 Import statement"):
@@ -268,9 +271,12 @@ def render_sidebar(cfg, storage, T, today, start_date_cfg, detect_currency):
                         st.success(msg)
                     else:
                         st.error(f"**{uf.name}** — {result['error']}")
-                st.session_state.pop(f"snapshots_{base_ccy}_D", None)
-                st.session_state.pop(f"{_proj}_{broker}_upload", None)
                 st.session_state["force_refresh"] = True
+                st.session_state.pop(f"{_proj}_{broker}_upload", None)
+                for k in list(st.session_state.keys()):
+                    if k.startswith("snapshots_") or k.startswith("benchmarks_"):
+                        st.session_state.pop(k)
+                storage.invalidate_portfolio_from(start_date_cfg.isoformat())
                 st.rerun()
 
             broker_files = sorted(broker_dir.glob("*.xlsx")) + sorted(broker_dir.glob("*.csv")) + sorted(broker_dir.glob("*.json"))
