@@ -87,22 +87,13 @@ def render_portfolio_chart(T: dict[str, str], base_ccy: str, dates, values, inve
                 hovertemplate="%{customdata}<extra>" + bench_label + "</extra>",
             ))
 
-    if chart_mode == "amount":
-        ys = [v for tr in fig.data if tr.y is not None for v in tr.y if v is not None]
-        if ys:
-            fig.update_yaxes(range=[min(ys) * 0.98, max(ys) * 1.02])
-    else:
-        pct_values = [v for tr in fig.data if tr.name == "Return (%)" for v in tr.y if v is not None]
-        if pct_values:
-            span = max(abs(min(pct_values)), abs(max(pct_values))) if pct_values else 1
-            fig.update_yaxes(range=[-span * 1.15, span * 1.15])
-
     fig.update_layout(
         template=T["plotly_template"],
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        margin=dict(l=0, r=0, t=30, b=10),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(l=10, r=10, t=10, b=10),
+        height=900,
+        legend=dict(orientation="h", yanchor="top", y=0.98, xanchor="left", x=0.01, font=dict(color=T["text"])),
         hovermode="x unified",
         hoverlabel=dict(
             bgcolor=T["hover_bg"],
@@ -110,7 +101,7 @@ def render_portfolio_chart(T: dict[str, str], base_ccy: str, dates, values, inve
             font=dict(size=18, color=T["text"], family="sans-serif"),
             namelength=-1,
         ),
-        font=dict(family="sans-serif", size=20),
+        font=dict(family="sans-serif", size=20, color=T["text"]),
         xaxis=dict(
             showgrid=False,
             tickfont=dict(size=16, color=T["text_muted"]),

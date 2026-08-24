@@ -168,8 +168,6 @@ def build_app_styles(theme: dict[str, str]) -> str:
         [data-testid="stPlotlyChart"] {{
             background: {t["card_bg"]};
             border-radius: 1rem;
-            padding: 0.1rem;
-            margin: 0.5rem 0 0 0;
         }}
 
         [data-testid="stDataFrame"] {{

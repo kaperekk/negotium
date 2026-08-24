@@ -419,8 +419,17 @@ def compute_irr(current_value: float, base_currency: str | None = None) -> float
 
 
 def get_all_transactions() -> list[dict]:
-    """Return all transactions, chronologically."""
-    return storage.read_jsonl(storage.TRANSACTIONS_PATH)
+    """Return all transactions, chronologically (cached per file mtime)."""
+    import os
+    path = storage.TRANSACTIONS_PATH
+    mtime = os.path.getmtime(path) if path.exists() else 0.0
+    cache_key = ("_tx_cache", mtime)
+    if cache_key not in get_all_transactions._cache:
+        get_all_transactions._cache.clear()
+        get_all_transactions._cache[cache_key] = storage.read_jsonl(path)
+    return get_all_transactions._cache[cache_key]
+
+get_all_transactions._cache: dict = {}
 
 
 def get_transactions_up_to(as_of: str) -> list[dict]:
