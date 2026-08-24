@@ -46,8 +46,10 @@ def render_sidebar(cfg, storage, T, today, start_date_cfg, detect_currency):
                             storage.create_project(name.strip())
                             cfg_module.invalidate_config_cache()
                             for k in list(st.session_state.keys()):
-                                if k.startswith("snapshots_") or k.startswith("benchmarks_") or k == "project_select":
+                                if (k.startswith("snapshots_") or k.startswith("benchmarks_")
+                                        or k == "broker_select" or "_upload" in k):
                                     st.session_state.pop(k)
+                            st.session_state["project_select"] = name.strip()
                             st.rerun()
                         except ValueError as e:
                             st.error(str(e))
@@ -58,7 +60,8 @@ def render_sidebar(cfg, storage, T, today, start_date_cfg, detect_currency):
             storage.set_current_project(selected)
             cfg_module.invalidate_config_cache()
             for k in list(st.session_state.keys()):
-                if k.startswith("snapshots_") or k.startswith("benchmarks_"):
+                if (k.startswith("snapshots_") or k.startswith("benchmarks_")
+                        or k == "broker_select" or "_upload" in k):
                     st.session_state.pop(k)
             st.rerun()
 
@@ -202,7 +205,8 @@ def render_sidebar(cfg, storage, T, today, start_date_cfg, detect_currency):
                     if not entries:
                         st.error("Enter at least one ticker and amount.")
                     else:
-                        custom_dir = storage.IMPORTS_DIR / "custom"
+                        custom_dir = storage._project_dir(storage.get_current_project()) / "imports" / "custom"
+
                         custom_dir.mkdir(parents=True, exist_ok=True)
                         tx_doc = [{"date": tx_date.isoformat(), "entries": entries}]
                         tx_path = custom_dir / f"{tx_date.isoformat()}_{datetime.now().strftime('%H%M%S')}.json"
@@ -213,13 +217,16 @@ def render_sidebar(cfg, storage, T, today, start_date_cfg, detect_currency):
                         else:
                             st.error(result["error"])
                         st.session_state.pop(f"snapshots_{base_ccy}_D", None)
+                        st.session_state["force_refresh"] = True
                         st.rerun()
 
         with st.expander("📥 Import statement"):
-            storage.IMPORTS_DIR.mkdir(parents=True, exist_ok=True)
+            _proj = storage.get_current_project()
+            _imports = storage._project_dir(_proj) / "imports"
+            _imports.mkdir(parents=True, exist_ok=True)
 
             broker = st.selectbox("Broker", BROKERS, key="broker_select")
-            broker_dir = storage.IMPORTS_DIR / broker.lower()
+            broker_dir = _imports / broker.lower()
             broker_dir.mkdir(parents=True, exist_ok=True)
 
             if broker == "XTB":
@@ -230,7 +237,7 @@ def render_sidebar(cfg, storage, T, today, start_date_cfg, detect_currency):
                 f"Upload {broker} files",
                 type=file_types,
                 accept_multiple_files=True,
-                key=f"{broker}_upload",
+                key=f"{_proj}_{broker}_upload",
                 label_visibility="collapsed",
             )
 
@@ -262,6 +269,8 @@ def render_sidebar(cfg, storage, T, today, start_date_cfg, detect_currency):
                     else:
                         st.error(f"**{uf.name}** — {result['error']}")
                 st.session_state.pop(f"snapshots_{base_ccy}_D", None)
+                st.session_state.pop(f"{_proj}_{broker}_upload", None)
+                st.session_state["force_refresh"] = True
                 st.rerun()
 
             broker_files = sorted(broker_dir.glob("*.xlsx")) + sorted(broker_dir.glob("*.csv")) + sorted(broker_dir.glob("*.json"))
@@ -272,9 +281,10 @@ def render_sidebar(cfg, storage, T, today, start_date_cfg, detect_currency):
                 st.caption("No files uploaded yet.")
 
         if st.button("📈  Refresh market data", width="stretch"):
+            _imports_dir = storage._project_dir(storage.get_current_project()) / "imports"
             all_files = []
             for b in BROKERS:
-                bdir = storage.IMPORTS_DIR / b.lower()
+                bdir = _imports_dir / b.lower()
                 if not bdir.exists():
                     continue
                 for fpath in sorted(bdir.glob("*.xlsx")):

@@ -53,6 +53,7 @@ FX_YAHOO: dict[str, str] = {
     f"{ccy}PLN": f"{ccy}PLN=X"
     for ccy in CURRENCY_SUFFIXES if ccy not in ("PLN", *TRIANGULATE_VIA_USD)
 }
+FX_YAHOO["USDPLN"] = "USDPLN=X"
 FX_YAHOO["EURUSD"] = "EURUSD=X"
 for ccy in TRIANGULATE_VIA_USD:
     FX_YAHOO[f"{ccy}USD"] = f"{ccy}USD=X"

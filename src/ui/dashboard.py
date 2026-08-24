@@ -224,18 +224,14 @@ def render_dashboard(cfg, storage, T, today, start_date_cfg, base_ccy: str | Non
                 bp_c: dict = {}
                 b_vals: list[float] = []
                 cum_units = 0.0
-                prev_inv = 0.0
+                cum_invested = 0.0
+                pending_eur = 0.0
 
                 for snap in all_snapshots:
                     day = snap["date"]
                     yr = int(day[:4])
-                    new_inv = snap["invested"] - prev_inv
-                    prev_inv = snap["invested"]
-
-                    price = get_price(b_ticker, day, bp_c, yr)
-                    if price is None or price <= 0:
-                        b_vals.append(b_vals[-1] if b_vals else 0.0)
-                        continue
+                    new_inv = snap["invested"] - cum_invested
+                    cum_invested = snap["invested"]
 
                     if base_ccy == "EUR":
                         new_eur = new_inv
@@ -243,7 +239,15 @@ def render_dashboard(cfg, storage, T, today, start_date_cfg, base_ccy: str | Non
                         fx_to_eur = get_fx_rate(base_ccy, "EUR", day, fx_c, yr)
                         new_eur = new_inv * fx_to_eur
 
-                    cum_units += new_eur / price
+                    pending_eur += new_eur
+
+                    price = get_price(b_ticker, day, bp_c, yr)
+                    if price is None or price <= 0:
+                        b_vals.append(b_vals[-1] if b_vals else 0.0)
+                        continue
+
+                    cum_units += pending_eur / price
+                    pending_eur = 0.0
 
                     if base_ccy == "EUR":
                         hyp = cum_units * price
