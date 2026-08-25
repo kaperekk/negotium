@@ -205,6 +205,30 @@ def build_app_styles(theme: dict[str, str]) -> str:
             color: #fff !important;
             border: none !important;
         }}
+
+        [data-testid="stFileUploaderDropzone"] {{
+            background: {t["card_bg"]} !important;
+            border: 2px dashed {t["border"]} !important;
+            border-radius: 12px !important;
+        }}
+        [data-testid="stFileUploaderDropzone"]:hover {{
+            border-color: {t["border_hover"]} !important;
+            background: {t["card_bg"]} !important;
+        }}
+        [data-testid="stFileUploaderDropzoneInstructions"] {{
+            color: {t["text"]} !important;
+        }}
+        [data-testid="stFileUploaderDropzoneInstructions"] * {{
+            color: {t["text"]} !important;
+        }}
+        [data-testid="stFileUploaderDropzoneInput"] + span button {{
+            background: {t["card_bg"]} !important;
+            border: 1px solid {t["border"]} !important;
+            color: {t["text"]} !important;
+        }}
+        [data-testid="stFileUploaderDropzoneInput"] + span button:hover {{
+            border-color: {t["border_hover"]} !important;
+        }}
     </style>
     """
 
