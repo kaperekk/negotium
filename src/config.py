@@ -1,8 +1,7 @@
 """
-config.py — global + per-project config
+config.py — single global config shared by all projects
 
-Global config:  data/config.json         (defaults for all projects)
-Project config: data/{project}/config.json (overrides, only non-default values)
+Global config:  data/config.json
 """
 from __future__ import annotations
 
@@ -33,15 +32,6 @@ def _load_global() -> dict:
         return json.load(f)
 
 
-def _load_project() -> dict:
-    from storage import project_config_path
-    p = project_config_path()
-    if not p.exists():
-        return {}
-    with p.open("r", encoding="utf-8") as f:
-        return json.load(f)
-
-
 def _save_file(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
@@ -52,24 +42,22 @@ _config_cache: dict | None = None
 
 
 def load() -> dict:
-    """Return merged config: global defaults → per-project overrides."""
+    """Return the single global config shared by all projects."""
     global _config_cache
     if _config_cache is not None:
         return _config_cache
 
-    global_cfg = _load_global()
-    project_cfg = _load_project()
-    merged = {**global_cfg, **project_cfg}
+    cfg = _load_global()
     # Fill missing keys from defaults
     changed = False
     for k, v in DEFAULTS.items():
-        if k not in merged:
-            merged[k] = v
+        if k not in cfg:
+            cfg[k] = v
             changed = True
-    if changed and not project_cfg:
-        _save_file(GLOBAL_CONFIG_PATH, merged)
-    _config_cache = merged
-    return merged
+    if changed:
+        _save_file(GLOBAL_CONFIG_PATH, cfg)
+    _config_cache = cfg
+    return cfg
 
 
 def invalidate_config_cache() -> None:
@@ -79,17 +67,14 @@ def invalidate_config_cache() -> None:
 
 
 def save(cfg: dict) -> None:
-    """Save config to the current project's config file."""
-    from storage import project_config_path
-    p = project_config_path()
-    _save_file(p, cfg)
+    """Save config to the single global config file."""
+    _save_file(GLOBAL_CONFIG_PATH, cfg)
     invalidate_config_cache()
 
 
 def save_global(cfg: dict) -> None:
-    """Save to the global config file."""
-    _save_file(GLOBAL_CONFIG_PATH, cfg)
-    invalidate_config_cache()
+    """Save to the global config file (alias for save)."""
+    save(cfg)
 
 
 def get_start_date(cfg: dict) -> date:
@@ -110,7 +95,6 @@ def get_theme(cfg: dict) -> str:
 
 
 def save_theme(theme: str) -> None:
-    g = _load_global()
-    g["theme"] = theme
-    _save_file(GLOBAL_CONFIG_PATH, g)
-    invalidate_config_cache()
+    cfg = load()
+    cfg["theme"] = theme
+    save(cfg)

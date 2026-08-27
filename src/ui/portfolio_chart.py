@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import plotly.graph_objects as go
 import streamlit as st
+from ui.colors import ACCENT, ACCENT_FILL, MUTED_LINE
 
 
 def render_portfolio_chart(T: dict[str, str], base_ccy: str, dates, values, investeds,
-                          bench_by_date: dict[str, dict], BENCHMARKS: dict[str, str],
-                          BENCH_COLORS: dict[str, str], chart_mode: str) -> None:
+                           bench_by_date: dict[str, dict], BENCHMARKS: dict[str, str],
+                           BENCH_COLORS: dict[str, str], chart_mode: str) -> None:
     SYM = {"PLN": " PLN", "EUR": "€", "USD": "$"}
 
     fig = go.Figure()
@@ -16,15 +17,15 @@ def render_portfolio_chart(T: dict[str, str], base_ccy: str, dates, values, inve
             x=dates, y=[round(v, 2) for v in values],
             name=f"Portfolio ({base_ccy})",
             fill="tozeroy",
-            line=dict(color="#6C63FF", width=2.5),
-            fillcolor="rgba(108,99,255,0.08)",
+            line=dict(color=ACCENT, width=2.5),
+            fillcolor=ACCENT_FILL,
             customdata=[f"{v:,.2f}".replace(",", " ") + f" {base_ccy}" for v in values],
             hovertemplate="%{customdata}<extra>Portfolio</extra>",
         ))
         fig.add_trace(go.Scatter(
             x=dates, y=[round(v, 2) for v in investeds],
             name="Invested",
-            line=dict(color="#94a3b8", width=1.5, dash="dot"),
+            line=dict(color=MUTED_LINE, width=1.5, dash="dot"),
             customdata=[f"{v:,.2f}".replace(",", " ") + f" {base_ccy}" for v in investeds],
             hovertemplate="%{customdata}<extra>Invested</extra>",
         ))
@@ -44,8 +45,8 @@ def render_portfolio_chart(T: dict[str, str], base_ccy: str, dates, values, inve
             x=dates, y=pct_values,
             name="Return (%)",
             fill="tozeroy",
-            line=dict(color="#6C63FF", width=2.5),
-            fillcolor="rgba(108,99,255,0.08)",
+            line=dict(color=ACCENT, width=2.5),
+            fillcolor=ACCENT_FILL,
             hovertemplate="%{y:+.2f}%<extra>Return</extra>",
         ))
         yaxis_cfg = dict(
@@ -99,8 +100,8 @@ def render_portfolio_chart(T: dict[str, str], base_ccy: str, dates, values, inve
 
     fig.update_layout(
         template=T["plotly_template"],
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor=T["chart_bg"],
+        plot_bgcolor=T["chart_bg"],
         margin=dict(l=10, r=10, t=10, b=10),
         height=900,
         legend=dict(orientation="h", yanchor="top", y=0.98, xanchor="left", x=0.01, font=dict(color=T["text"])),

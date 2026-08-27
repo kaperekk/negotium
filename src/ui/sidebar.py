@@ -16,6 +16,59 @@ BROKERS = ["XTB", "BOSSA", "Custom"]
 BROKER_CURRENCIES = {"XTB": ["EUR", "PLN", "USD"], "BOSSA": ["EUR", "PLN", "Many"]}
 
 
+def _run_refresh(storage, today, detect_currency, base_ccy):
+    """Re-import all broker files and invalidate cached data."""
+    _imports_dir = storage._project_dir(storage.get_current_project()) / "imports"
+    all_files = []
+    for b in BROKERS:
+        bdir = _imports_dir / b.lower()
+        if not bdir.exists():
+            continue
+        for fpath in sorted(bdir.glob("*.xlsx")):
+            all_files.append(("xtb", fpath))
+        for fpath in sorted(bdir.glob("*.csv")):
+            all_files.append(("bossa", fpath))
+        for fpath in sorted(bdir.glob("*.json")):
+            all_files.append(("custom", fpath))
+
+    total_imported = 0
+    if all_files:
+        bar = st.progress(0, text="Importing…")
+        for idx, (kind, fpath) in enumerate(all_files):
+            ccy = detect_currency(fpath.name)
+            bar.progress(idx / len(all_files), text=f"Importing {fpath.name}…")
+            if kind == "bossa":
+                result = __import__("bossa_import").import_bossa(str(fpath), ccy)
+            elif kind == "custom":
+                result = __import__("manual_import").import_manual(str(fpath))
+            else:
+                result = __import__("xtb_import").import_xtb(str(fpath), ccy)
+            if result["success"]:
+                total_imported += result["imported"]
+        bar.progress(1.0, text="Done")
+        bar.empty()
+
+    storage.invalidate_portfolio_from((today - timedelta(days=1)).isoformat())
+    st.session_state.pop(f"snapshots_{base_ccy}_D", None)
+    for k in list(st.session_state.keys()):
+        if k.startswith("benchmarks_"):
+            st.session_state.pop(k)
+    st.session_state["force_refresh"] = True
+
+    return len(all_files), total_imported
+
+
+def _should_auto_refresh(storage, project_name, today):
+    """Return True if the last refresh was more than 24 h ago (or never ran)."""
+    last = storage.get_last_refresh(project_name)
+    if not last:
+        return True
+    try:
+        return (today - date.fromisoformat(last)).days >= 1
+    except (ValueError, TypeError):
+        return True
+
+
 def render_sidebar(cfg, storage, T, today, start_date_cfg, detect_currency):
     with st.sidebar:
         project_name = html.escape(storage.get_current_project())
@@ -86,6 +139,11 @@ def render_sidebar(cfg, storage, T, today, start_date_cfg, detect_currency):
                     st.rerun()
         if base_ccy is None:
             base_ccy = ccy_options[st.session_state["base_ccy_idx"]]
+
+        if _should_auto_refresh(storage, storage.get_current_project(), today):
+            file_count, imported = _run_refresh(storage, today, detect_currency, base_ccy)
+            storage.set_last_refresh(today.isoformat())
+            st.rerun()
 
         _range_opts = ["All time", "This year", "Last 12 months", "Last 3 months", "Custom"]
         if "_range" not in st.session_state:
@@ -287,45 +345,13 @@ def render_sidebar(cfg, storage, T, today, start_date_cfg, detect_currency):
                 st.caption("No files uploaded yet.")
 
         if st.button("📈  Refresh market data", width="stretch"):
-            _imports_dir = storage._project_dir(storage.get_current_project()) / "imports"
-            all_files = []
-            for b in BROKERS:
-                bdir = _imports_dir / b.lower()
-                if not bdir.exists():
-                    continue
-                for fpath in sorted(bdir.glob("*.xlsx")):
-                    all_files.append(("xtb", fpath))
-                for fpath in sorted(bdir.glob("*.csv")):
-                    all_files.append(("bossa", fpath))
-                for fpath in sorted(bdir.glob("*.json")):
-                    all_files.append(("custom", fpath))
-
-            if all_files:
-                bar = st.progress(0, text="Importing…")
-                total_imported = 0
-                for idx, (kind, fpath) in enumerate(all_files):
-                    ccy = detect_currency(fpath.name)
-                    bar.progress(idx / len(all_files), text=f"Importing {fpath.name}…")
-                    if kind == "bossa":
-                        result = __import__("bossa_import").import_bossa(str(fpath), ccy)
-                    elif kind == "custom":
-                        result = __import__("manual_import").import_manual(str(fpath))
-                    else:
-                        result = __import__("xtb_import").import_xtb(str(fpath), ccy)
-                    if result["success"]:
-                        total_imported += result["imported"]
-                bar.progress(1.0, text="Done")
-                bar.empty()
-                st.success(f"Refreshed from {len(all_files)} files — {total_imported} transactions imported.")
+            file_count, total_imported = _run_refresh(storage, today, detect_currency, base_ccy)
+            if file_count:
+                st.success(f"Refreshed from {file_count} files — {total_imported} transactions imported.")
             else:
                 st.info("No import files found.")
 
-            storage.invalidate_portfolio_from((today - timedelta(days=1)).isoformat())
-            st.session_state.pop(f"snapshots_{base_ccy}_D", None)
-            for k in list(st.session_state.keys()):
-                if k.startswith("benchmarks_"):
-                    st.session_state.pop(k)
-            st.session_state["force_refresh"] = True
+            storage.set_last_refresh(today.isoformat())
             st.rerun()
 
     return base_ccy

@@ -6,8 +6,9 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from ticker_data import get_fx_rate, get_price
+from ticker_data import get_dividends, get_fx_rate, get_price
 from transactions import get_ticker_history
+from ui.colors import ACCENT, DIVIDEND, NEGATIVE, POSITIVE
 from ui.styles import (
     build_trade_dialog_styles,
     render_trade_empty_state,
@@ -60,6 +61,16 @@ def render_trade_history_dialog(T: dict[str, str], ticker: str, name: str, ccy: 
 
         st.markdown(render_trade_summary_cards(T, total_bought, total_sold, net), unsafe_allow_html=True)
 
+        # Dividend history (per-share, native currency) + yield at ex-date
+        dividends = get_dividends(ticker)
+        div_cache: dict = {}
+        div_rows: list[dict] = []
+        for d, amount in sorted(dividends.items()):
+            yr = int(d[:4])
+            price = get_price(ticker, d, div_cache, yr)
+            pct = (amount / price * 100.0) if price else None
+            div_rows.append({"date": d, "amount": amount, "price": price, "pct": pct})
+
         first_trade_date = date.fromisoformat(history[0]["date"])
         chart_start = first_trade_date.replace(year=first_trade_date.year - 1)
 
@@ -77,7 +88,7 @@ def render_trade_history_dialog(T: dict[str, str], ticker: str, name: str, ccy: 
             fig.add_trace(go.Scatter(
                 x=price_dates, y=price_values,
                 mode="lines", name="Price",
-                line=dict(color="#6C63FF", width=2),
+                line=dict(color=ACCENT, width=2),
                 hovertemplate="%{x|%Y-%m-%d}<br>%{y:.2f}<extra></extra>",
             ))
 
@@ -89,7 +100,7 @@ def render_trade_history_dialog(T: dict[str, str], ticker: str, name: str, ccy: 
                     x=[date.fromisoformat(t["date"]) for t in buys],
                     y=[t["price"] for t in buys],
                     mode="markers", name="Buy",
-                    marker=dict(color="#22c55e", size=12, symbol="triangle-up"),
+                    marker=dict(color=POSITIVE, size=12, symbol="triangle-up"),
                     hovertemplate="%{x|%Y-%m-%d}<br>Buy %{y:.2f}<extra></extra>",
                 ))
             if sells:
@@ -97,16 +108,30 @@ def render_trade_history_dialog(T: dict[str, str], ticker: str, name: str, ccy: 
                     x=[date.fromisoformat(t["date"]) for t in sells],
                     y=[t["price"] for t in sells],
                     mode="markers", name="Sell",
-                    marker=dict(color="#ef4444", size=12, symbol="triangle-down"),
+                    marker=dict(color=NEGATIVE, size=12, symbol="triangle-down"),
                     hovertemplate="%{x|%Y-%m-%d}<br>Sell %{y:.2f}<extra></extra>",
+                ))
+
+            div_markers = [r for r in div_rows if r["price"] is not None]
+            if div_markers:
+                fig.add_trace(go.Scatter(
+                    x=[date.fromisoformat(r["date"]) for r in div_markers],
+                    y=[r["price"] for r in div_markers],
+                    mode="markers", name="Dividend",
+                    marker=dict(color=DIVIDEND, size=11, symbol="star"),
+                    hovertemplate=(
+                        "%{x|%Y-%m-%d}<br>Dividend %{customdata:.4f} "
+                        f"{ccy} (%{{y:.2f}})<extra></extra>"
+                    ),
+                    customdata=[r["amount"] for r in div_markers],
                 ))
 
             fig.update_layout(
                 xaxis_title="Date",
                 yaxis_title="Price",
                 template=T["plotly_template"],
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor=T["chart_bg"],
+                plot_bgcolor=T["chart_bg"],
                 margin=dict(l=0, r=0, t=30, b=0),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
                 xaxis=dict(
@@ -142,5 +167,17 @@ def render_trade_history_dialog(T: dict[str, str], ticker: str, name: str, ccy: 
             render_trade_table_html(T, trade_df),
             height=50 + 48 * len(trade_df),
         )
+
+        if div_rows:
+            div_df = pd.DataFrame([{
+                "Date": r["date"],
+                "Dividend %": f'{r["pct"]:.2f}%' if r["pct"] is not None else None,
+                f"Dividend ({ccy})": f'{r["amount"]:.4f}',
+            } for r in div_rows])
+            st.markdown("### Dividends")
+            st.iframe(
+                render_trade_table_html(T, div_df),
+                height=50 + 48 * len(div_df),
+            )
 
     _show()

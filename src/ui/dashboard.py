@@ -13,7 +13,7 @@ import storage
 from bossa_import import import_bossa
 from manual_import import import_manual
 from portfolio import FX_TICKERS, build_portfolio, snapshots_to_series
-from ticker_data import ensure_batch, get_fx_rate, get_price, get_ticker_name
+from ticker_data import ensure_batch, get_fx_rate, get_price, get_ticker_name, get_ticker_meta
 from transactions import (
     add_transaction,
     compute_cagr,
@@ -29,7 +29,10 @@ from transactions import (
 from xtb_import import import_xtb
 from ui.helpers import fmt
 from ui.holdings import render_holdings_table
+from ui.allocation import render_allocation_breakdown
+from ui.drawdown import render_drawdown_analysis
 from ui.metrics import render_metric_section, render_pnl_toggle_section
+from ui.colors import BENCHMARKS, BENCH_COLORS
 from ui.portfolio_chart import render_portfolio_chart
 from ui.styles import (
     build_app_styles,
@@ -151,23 +154,6 @@ def render_dashboard(cfg, storage, T, today, start_date_cfg, base_ccy: str | Non
         st.session_state[cache_key] = all_snapshots
 
     all_snapshots: list[dict] = st.session_state[cache_key]
-
-    BENCHMARKS = {
-        "NASDAQ 100 (SXRV.DE)": "SXRV.DE",
-        "S&P 500 (I500.DE)": "I500.DE",
-        "Vanguard FTSE All-World (VWCE.DE)": "VWCE.DE",
-        "Emerging Markets (IS3N.DE)": "IS3N.DE",
-        "Bitcoin (BTCE.DE)": "BTCE.DE",
-        "Gold (4GLD.DE)": "4GLD.DE",
-    }
-    BENCH_COLORS = {
-        "NASDAQ 100 (SXRV.DE)": "#06b6d4",
-        "S&P 500 (I500.DE)": "#22c55e",
-        "Vanguard FTSE All-World (VWCE.DE)": "#f97316",
-        "Emerging Markets (IS3N.DE)": "#8b5cf6",
-        "Bitcoin (BTCE.DE)": "#ef4444",
-        "Gold (4GLD.DE)": "#eab308",
-    }
 
     # ── Download data for selected benchmarks ─────────────────────────────────────
     bench_persist = st.session_state.get("bench_persist", [])
@@ -329,6 +315,7 @@ def render_dashboard(cfg, storage, T, today, start_date_cfg, base_ccy: str | Non
             "What-if benchmarks",
             options=list(BENCHMARKS.keys()),
             key="bench_select",
+            placeholder="Choose options",
             on_change=lambda: st.session_state.update(bench_persist=list(st.session_state.bench_select)),
         )
     with _range_col:
@@ -361,6 +348,11 @@ def render_dashboard(cfg, storage, T, today, start_date_cfg, base_ccy: str | Non
             get_ticker_name,
             _show_trade_dialog,
         )
+
+        st.subheader("🧩  Allocation Breakdown")
+        render_allocation_breakdown(latest["assets"], base_ccy, today, T, get_ticker_meta)
+
+        render_drawdown_analysis(all_snapshots, T)
 
     # ── Footer ────────────────────────────────────────────────────────────────────
 

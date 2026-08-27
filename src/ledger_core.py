@@ -358,19 +358,15 @@ def compute_irr(current_value: float, base_currency: str | None = None, fx_cache
 
     cash_flows: list[tuple[str, float]] = []
     for rec in records:
-        entries_list = rec["entries"]
-        all_cash = all(
-            e["ticker"].upper() in storage.SUPPORTED_CURRENCIES
-            for e in entries_list
-        )
-        for e in entries_list:
+        for e in rec["entries"]:
             is_entry_op = e.get("account_operation", False)
+            if not is_entry_op:
+                continue
             t = e["ticker"].upper()
             amt = float(e["amount"])
-            if is_entry_op or (all_cash and t in storage.SUPPORTED_CURRENCIES):
-                fx = get_fx_rate(t, base_ccy, rec["date"], fx_cache, int(rec["date"][:4])) if t != base_ccy else 1.0
-                # Negate: positive account_op = deposit (money out of pocket)
-                cash_flows.append((rec["date"], -amt * fx))
+            fx = get_fx_rate(t, base_ccy, rec["date"], fx_cache, int(rec["date"][:4])) if t != base_ccy else 1.0
+            # Negate: positive account_op = deposit (money out of pocket)
+            cash_flows.append((rec["date"], -amt * fx))
 
     if not cash_flows:
         return None

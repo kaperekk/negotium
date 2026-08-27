@@ -43,6 +43,10 @@ from storage import (
     save_price_year,
     load_ticker_names,
     save_ticker_names,
+    load_ticker_meta,
+    save_ticker_meta,
+    load_dividends,
+    save_dividends,
     SUPPORTED_CURRENCIES,
     CURRENCY_SUFFIXES,
     TRIANGULATE_VIA_USD,
@@ -83,6 +87,58 @@ def get_ticker_name(ticker: str) -> str:
     names[ticker] = short
     save_ticker_names(names)
     return short
+
+
+def _classify_asset_class(quote_type: str, sector: str, name: str) -> str:
+    """Map Yahoo quoteType + name heuristics to a coarse asset class."""
+    qt = (quote_type or "").upper()
+    name_u = (name or "").upper()
+    if qt == "CRYPTOCURRENCY":
+        return "Crypto"
+    if "BOND" in name_u or "TREASURY" in name_u or "OBLIGAC" in name_u:
+        return "Bond"
+    if any(k in name_u for k in ("GOLD", "SILVER", "OIL", "COMMODIT", "COPPER")):
+        return "Commodity"
+    if qt in ("ETF", "MUTUALFUND", "EQUITY", "INDEX", ""):
+        return "Equity"
+    return "Equity"
+
+
+def get_ticker_meta(ticker: str) -> dict:
+    """Return {sector, country, asset_class} for a ticker, cached to disk.
+
+    Currency tickers (USD/EUR/PLN) are treated as Cash. Other tickers are
+    resolved via Yahoo Finance `info`; failures fall back to Unknown/Equity.
+    """
+    if ticker.upper() in SUPPORTED_CURRENCIES:
+        return {"sector": "Cash", "country": ticker.upper(), "asset_class": "Cash"}
+
+    meta = load_ticker_meta()
+    if ticker in meta:
+        return meta[ticker]
+
+    entry = {"sector": "Unknown", "country": "Unknown", "asset_class": "Equity"}
+    try:
+        with _suppress_output():
+            info = yf.Ticker(_yahoo_symbol(ticker)).info
+        sector = info.get("sector") or "Unknown"
+        if sector == "N/A":
+            sector = "Unknown"
+        country = info.get("country") or "Unknown"
+        if country == "N/A":
+            country = "Unknown"
+        name = info.get("shortName") or info.get("longName") or ticker
+        entry = {
+            "sector": sector,
+            "country": country,
+            "asset_class": _classify_asset_class(info.get("quoteType"), sector, name),
+        }
+    except Exception:
+        pass
+
+    meta[ticker] = entry
+    save_ticker_meta(meta)
+    return entry
 
 
 def _download_year(ticker: str, year: int) -> dict[str, float]:
@@ -325,6 +381,33 @@ def ensure_batch(
             log.warning("single-ticker fallback failed for %s: %s", ticker, exc)
 
     return sorted(failed)
+
+
+def get_dividends(ticker: str) -> dict[str, float]:
+    """Return {YYYY-MM-DD: dividend_per_share} for ticker (native currency).
+
+    Fetched from Yahoo Finance and cached to disk. Returns an empty dict on
+    failure or when no dividend history is available.
+    """
+    if ticker.upper() in SUPPORTED_CURRENCIES:
+        return {}
+    cached = load_dividends()
+    if ticker in cached:
+        return cached[ticker]
+    try:
+        with _suppress_output():
+            divs = yf.Ticker(_yahoo_symbol(ticker)).dividends
+        result: dict[str, float] = {}
+        for dt, val in divs.items():
+            try:
+                result[str(dt)[:10]] = round(float(val), 6)
+            except Exception:
+                continue
+    except Exception:
+        result = {}
+    cached[ticker] = result
+    save_dividends(cached)
+    return result
 
 
 def get_price(

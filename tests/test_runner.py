@@ -1273,20 +1273,24 @@ def test_delete_project(tmp: Path):
     assert "to_delete" not in storage.list_projects()
 
 
-def test_project_config_isolation(tmp: Path):
-    """Different projects can have independent configs."""
-    import storage, json
+def test_config_is_global(tmp: Path):
+    """All projects share one global config file (no per-project config)."""
+    import storage, config
 
     storage.create_project("proj_a")
-    cfg_a = storage.project_config_path("proj_a")
-    cfg_a.write_text(json.dumps({"name": "Portfolio A"}))
+    storage.set_current_project("proj_a")
+    cfg = config.load()
+    cfg["name"] = "Global Portfolio"
+    config.save(cfg)
 
     storage.create_project("proj_b")
-    cfg_b = storage.project_config_path("proj_b")
-    cfg_b.write_text(json.dumps({"name": "Portfolio B"}))
+    storage.set_current_project("proj_b")
+    assert config.load()["name"] == "Global Portfolio"
 
-    assert json.loads(cfg_a.read_text())["name"] == "Portfolio A"
-    assert json.loads(cfg_b.read_text())["name"] == "Portfolio B"
+    # No per-project config files should be created
+    assert not (tmp / "data" / "proj_a" / "config.json").exists()
+    assert not (tmp / "data" / "proj_b" / "config.json").exists()
+    assert (tmp / "data" / "config.json").exists()
 
 
 # ── Storage: benchmark roundtrip ───────────────────────────────────────────────
@@ -1775,21 +1779,21 @@ def _is_valid_css_color(value: str) -> bool:
 
 def test_theme_keys_dark(tmp: Path):
     """Dark theme defines all required keys."""
-    from ui.theme import THEMES
+    from ui.colors import THEMES
     for key in REQUIRED_THEME_KEYS:
         assert key in THEMES["dark"], f"Dark theme missing key: {key}"
 
 
 def test_theme_keys_light(tmp: Path):
     """Light theme defines all required keys."""
-    from ui.theme import THEMES
+    from ui.colors import THEMES
     for key in REQUIRED_THEME_KEYS:
         assert key in THEMES["light"], f"Light theme missing key: {key}"
 
 
 def test_theme_colors_valid(tmp: Path):
     """All theme color values are valid CSS colors."""
-    from ui.theme import THEMES
+    from ui.colors import THEMES
     NON_COLOR_KEYS = {"plotly_template"}
     for theme_name, theme in THEMES.items():
         for key, value in theme.items():
@@ -1800,14 +1804,14 @@ def test_theme_colors_valid(tmp: Path):
 
 def test_theme_plotly_template(tmp: Path):
     """Dark uses plotly_dark, light uses plotly_white."""
-    from ui.theme import THEMES
+    from ui.colors import THEMES
     assert THEMES["dark"]["plotly_template"] == "plotly_dark"
     assert THEMES["light"]["plotly_template"] == "plotly_white"
 
 
 def test_theme_css_uses_correct_colors(tmp: Path):
     """CSS builders produce output containing the theme's colors."""
-    from ui.theme import THEMES
+    from ui.colors import THEMES
     from ui.style_base import build_app_styles
     from ui.style_components import build_metric_card_styles
 
@@ -1826,7 +1830,7 @@ def test_theme_css_uses_correct_colors(tmp: Path):
 
 def test_theme_plotly_font_colors(tmp: Path):
     """Plotly chart layout uses theme text color for fonts."""
-    from ui.theme import THEMES
+    from ui.colors import THEMES
     import plotly.graph_objects as go
 
     for theme_name in ("dark", "light"):
@@ -1842,7 +1846,7 @@ def test_theme_plotly_font_colors(tmp: Path):
 
 def test_theme_dark_text_on_dark_bg(tmp: Path):
     """Dark theme text colors are light (for dark backgrounds)."""
-    from ui.theme import THEMES
+    from ui.colors import THEMES
     t = THEMES["dark"]
     # Text should start with # (hex) and have high RGB values
     for key in ("text", "text_cell", "text_muted"):
@@ -1858,7 +1862,7 @@ def test_theme_dark_text_on_dark_bg(tmp: Path):
 
 def test_theme_light_text_on_light_bg(tmp: Path):
     """Light theme text colors are dark (for light backgrounds)."""
-    from ui.theme import THEMES
+    from ui.colors import THEMES
     t = THEMES["light"]
     for key in ("text", "text_cell", "text_muted"):
         val = t[key]
@@ -2012,6 +2016,220 @@ def test_irr_loss(tmp: Path):
     irr = compute_irr(5000.0, "PLN")
     assert irr is not None
     assert irr < 0
+
+
+def _reference_irr(ext_flows: list, terminal: float) -> float:
+    """Independent XIRR solver (bisection) used as an oracle for compute_irr.
+
+    ``ext_flows`` is a list of (date_str, amount_in_base_ccy) where outflows
+    are negative (deposits) and inflows positive (withdrawals). ``terminal``
+    is the final positive portfolio value dated today.
+    """
+    from datetime import date as _d
+
+    today = _d.today().isoformat()
+    items = sorted(list(ext_flows) + [(today, terminal)], key=lambda x: x[0])
+    start = _d.fromisoformat(items[0][0])
+    yrs = [(_d.fromisoformat(d) - start).days / 365.25 for d, _ in items]
+    amts = [a for _, a in items]
+
+    def npv(r: float) -> float:
+        return sum(a / (1.0 + r) ** t for a, t in zip(amts, yrs))
+
+    lo, hi = -0.5, 5.0
+    for _ in range(300):
+        mid = (lo + hi) / 2.0
+        if npv(mid) > 0:
+            lo = mid
+        else:
+            hi = mid
+        if abs(hi - lo) < 1e-11:
+            break
+    return (lo + hi) / 2.0
+
+
+def _rebuild_npv(current_value: float, base_ccy: str) -> float:
+    """Rebuild compute_irr's cash flows and return NPV at the computed IRR.
+
+    Oracle-free correctness check: the IRR returned by compute_irr must zero
+    the NPV of exactly the flows it used.
+    """
+    from datetime import date as _d
+    from ledger_core import compute_irr, get_all_transactions
+    from ticker_data import get_fx_rate
+
+    base = base_ccy.upper()
+    flows: list = []
+    for rec in get_all_transactions():
+        for e in rec["entries"]:
+            if not e.get("account_operation", False):
+                continue
+            t = e["ticker"].upper()
+            amt = float(e["amount"])
+            fx = get_fx_rate(t, base, rec["date"], {}, int(rec["date"][:4])) if t != base else 1.0
+            flows.append((rec["date"], -amt * fx))
+
+    today = _d.today().isoformat()
+    flows.append((today, current_value))
+    flows.sort(key=lambda x: x[0])
+    start = _d.fromisoformat(flows[0][0])
+    yrs = [(_d.fromisoformat(d) - start).days / 365.25 for d, _ in flows]
+    amts = [a for _, a in flows]
+
+    irr = compute_irr(current_value, base)
+    return irr, sum(a / (1.0 + irr) ** t for a, t in zip(amts, yrs))
+
+
+def test_irr_known_two_flow(tmp: Path):
+    """IRR: a 1-year 1000→1100 deposit equals the closed-form ~10%."""
+    import transactions
+    from ledger_core import compute_irr
+    from datetime import date as _d
+
+    fx.inject_fake_prices(tmp)
+    dep = _d.today().replace(year=_d.today().year - 1).isoformat()
+    transactions.add_transaction(dep, [
+        {"ticker": "PLN", "amount": 1000.0, "account_operation": True},
+    ])
+    irr = compute_irr(1100.0, "PLN")
+    days = (_d.today() - _d.fromisoformat(dep)).days
+    expected = (1100.0 / 1000.0) ** (365.25 / days) - 1.0
+    assert abs(irr - expected) < 1e-6
+
+
+def test_irr_dividend_ignored(tmp: Path):
+    """IRR regression: a dividend must NOT change the IRR (it is internal)."""
+    import transactions
+    from ledger_core import compute_irr
+
+    fx.inject_fake_prices(tmp)
+    # baseline: deposit only
+    transactions.add_transaction("2023-01-03", [
+        {"ticker": "PLN", "amount": 10000.0, "account_operation": True},
+    ])
+    irr_base = compute_irr(12000.0, "PLN")
+
+    # same deposit + a dividend (currency entry, no account_operation flag)
+    transactions.add_transaction("2023-06-01", [
+        {"ticker": "PLN", "amount": 100.0},
+    ])
+    irr_div = compute_irr(12000.0, "PLN")
+    assert abs(irr_base - irr_div) < 1e-9
+
+
+def test_irr_withholding_tax_ignored(tmp: Path):
+    """IRR regression: a withholding-tax entry must NOT change the IRR."""
+    import transactions
+    from ledger_core import compute_irr
+
+    fx.inject_fake_prices(tmp)
+    transactions.add_transaction("2023-01-03", [
+        {"ticker": "PLN", "amount": 10000.0, "account_operation": True},
+    ])
+    irr_base = compute_irr(12000.0, "PLN")
+    transactions.add_transaction("2023-06-01", [
+        {"ticker": "PLN", "amount": -20.0},
+    ])
+    irr_tax = compute_irr(12000.0, "PLN")
+    assert abs(irr_base - irr_tax) < 1e-9
+
+
+def test_irr_fx_deposit(tmp: Path):
+    """IRR: a USD deposit is FX-converted and matches a PLN reference IRR."""
+    import transactions
+    from ledger_core import compute_irr
+    from ticker_data import get_fx_rate
+
+    fx.inject_fake_prices(tmp)
+    dep_date = "2023-01-03"  # USDPLN = 4.38 in fake data
+    usd_rate = get_fx_rate("USD", "PLN", dep_date, {}, 2023)
+    transactions.add_transaction(dep_date, [
+        {"ticker": "USD", "amount": 1000.0, "account_operation": True},
+    ])
+    # terminal value = deposit grown 10% in USD terms, expressed in PLN
+    terminal = 1000.0 * usd_rate * 1.10
+    irr = compute_irr(terminal, "PLN")
+    ref = _reference_irr([(dep_date, -1000.0 * usd_rate)], terminal)
+    assert abs(irr - ref) < 1e-6
+
+
+def test_irr_matches_reference_xirr(tmp: Path):
+    """IRR: solver agrees with an independent bisection XIRR oracle."""
+    import transactions
+    from ledger_core import compute_irr
+
+    fx.inject_fake_prices(tmp)
+    transactions.add_transaction("2023-01-03", [
+        {"ticker": "PLN", "amount": 5000.0, "account_operation": True},
+    ])
+    transactions.add_transaction("2023-06-01", [
+        {"ticker": "PLN", "amount": -2000.0, "account_operation": True},
+    ])
+    transactions.add_transaction("2023-09-15", [
+        {"ticker": "PLN", "amount": 3000.0, "account_operation": True},
+    ])
+    terminal = 9000.0
+    flows = [
+        ("2023-01-03", -5000.0),
+        ("2023-06-01", 2000.0),
+        ("2023-09-15", -3000.0),
+    ]
+    irr = compute_irr(terminal, "PLN")
+    ref = _reference_irr(flows, terminal)
+    assert abs(irr - ref) < 1e-6
+
+
+def test_irr_npv_is_zero(tmp: Path):
+    """IRR property: compute_irr's rate zeroes the NPV of its own flows."""
+    import transactions
+    from ledger_core import compute_irr
+
+    fx.inject_fake_prices(tmp)
+    transactions.add_transaction("2023-01-03", [
+        {"ticker": "PLN", "amount": 5000.0, "account_operation": True},
+    ])
+    transactions.add_transaction("2023-06-01", [
+        {"ticker": "PLN", "amount": -2000.0, "account_operation": True},
+    ])
+    transactions.add_transaction("2023-09-15", [
+        {"ticker": "PLN", "amount": 3000.0, "account_operation": True},
+    ])
+    _, npv = _rebuild_npv(9000.0, "PLN")
+    assert abs(npv) < 1e-6
+
+
+def test_irr_multiple_sign_changes(tmp: Path):
+    """IRR: deposit/withdraw/deposit still yields a finite, bounded rate."""
+    import transactions
+    from ledger_core import compute_irr
+
+    fx.inject_fake_prices(tmp)
+    transactions.add_transaction("2023-01-03", [
+        {"ticker": "PLN", "amount": 1000.0, "account_operation": True},
+    ])
+    transactions.add_transaction("2023-06-01", [
+        {"ticker": "PLN", "amount": -400.0, "account_operation": True},
+    ])
+    transactions.add_transaction("2023-09-15", [
+        {"ticker": "PLN", "amount": 600.0, "account_operation": True},
+    ])
+    irr = compute_irr(1500.0, "PLN")
+    assert irr is not None
+    assert -0.5 <= irr <= 5.0
+
+
+def test_irr_high_return(tmp: Path):
+    """IRR: a very large gain stays within the solver's upper bound."""
+    import transactions
+    from ledger_core import compute_irr
+
+    fx.inject_fake_prices(tmp)
+    transactions.add_transaction("2023-01-03", [
+        {"ticker": "PLN", "amount": 1000.0, "account_operation": True},
+    ])
+    irr = compute_irr(20000.0, "PLN")
+    assert irr is not None
+    assert irr > 0.5
 
 
 # ── FX rate tests ────────────────────────────────────────────────────────────
@@ -2558,7 +2776,7 @@ ALL_TESTS = [
     ("Storage: create and list projects",     test_create_and_list_projects),
     ("Storage: rename project",               test_rename_project),
     ("Storage: delete project",               test_delete_project),
-    ("Storage: project config isolation",     test_project_config_isolation),
+    ("Storage: global config shared",          test_config_is_global),
     ("Storage: benchmark save/load",          test_benchmark_save_load_roundtrip),
     ("Storage: benchmark load missing",       test_benchmark_load_returns_none_when_missing),
     ("Portfolio: withdrawal decreases invested", test_withdrawal_decreases_invested),
@@ -2594,6 +2812,14 @@ ALL_TESTS = [
     ("IRR: multiple deposits",               test_irr_multiple_deposits),
     ("IRR: with withdrawal",                 test_irr_with_withdrawal),
     ("IRR: loss scenario",                   test_irr_loss),
+    ("IRR: known two-flow closed form",      test_irr_known_two_flow),
+    ("IRR: dividend ignored (regression)",   test_irr_dividend_ignored),
+    ("IRR: withholding tax ignored",         test_irr_withholding_tax_ignored),
+    ("IRR: FX deposit converted",            test_irr_fx_deposit),
+    ("IRR: matches reference XIRR",          test_irr_matches_reference_xirr),
+    ("IRR: NPV(irr) == 0 property",          test_irr_npv_is_zero),
+    ("IRR: multiple sign changes",           test_irr_multiple_sign_changes),
+    ("IRR: high return bounded",             test_irr_high_return),
     ("FX: same currency",                    test_fx_rate_same_currency),
     ("FX: direct pair",                      test_fx_rate_direct_pair),
     ("FX: reverse pair",                     test_fx_rate_reverse_pair),

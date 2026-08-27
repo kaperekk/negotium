@@ -68,10 +68,6 @@ def get_current_project() -> str | None:
     return _current_project
 
 
-def project_config_path(name: str | None = None) -> Path:
-    return _project_dir(name) / "config.json"
-
-
 # ── Project registry ──────────────────────────────────────────────────────────
 
 def list_projects() -> list[str]:
@@ -90,6 +86,26 @@ def _load_registry() -> dict:
 def _save_registry(reg: dict) -> None:
     PROJECTS_PATH.parent.mkdir(parents=True, exist_ok=True)
     PROJECTS_PATH.write_bytes(_dumps(reg).encode())
+
+
+def get_last_refresh(name: str | None = None) -> str:
+    """Return the ISO date of the last data refresh for a project ('' if none)."""
+    name = name or _current_project
+    if name is None:
+        return ""
+    reg = _load_registry()
+    return reg.get(name, {}).get("last_refresh", "")
+
+
+def set_last_refresh(date_str: str, name: str | None = None) -> None:
+    """Persist the last refresh date for a project in the registry."""
+    name = name or _current_project
+    if name is None:
+        return
+    reg = _load_registry()
+    entry = reg.setdefault(name, {})
+    entry["last_refresh"] = date_str
+    _save_registry(reg)
 
 
 def create_project(name: str) -> None:
@@ -361,3 +377,57 @@ def save_ticker_names(names: dict[str, str]) -> None:
     _ticker_names_cache = names
     TICKER_NAMES_PATH.parent.mkdir(parents=True, exist_ok=True)
     TICKER_NAMES_PATH.write_bytes(_dumps(names).encode())
+
+
+# ── Ticker metadata cache (sector / country / asset class) ───────────────────
+
+TICKER_META_PATH = DATA_ROOT / "ticker_meta.json"
+
+_ticker_meta_cache: dict | None = None
+
+
+def load_ticker_meta() -> dict:
+    """Return {ticker: {sector, country, asset_class}} from cache, or empty dict."""
+    global _ticker_meta_cache
+    if _ticker_meta_cache is not None:
+        return _ticker_meta_cache
+    if not TICKER_META_PATH.exists():
+        _ticker_meta_cache = {}
+        return _ticker_meta_cache
+    _ticker_meta_cache = _loads(TICKER_META_PATH.read_bytes())
+    return _ticker_meta_cache
+
+
+def save_ticker_meta(meta: dict) -> None:
+    """Persist {ticker: {sector, country, asset_class}} cache."""
+    global _ticker_meta_cache
+    _ticker_meta_cache = meta
+    TICKER_META_PATH.parent.mkdir(parents=True, exist_ok=True)
+    TICKER_META_PATH.write_bytes(_dumps(meta).encode())
+
+
+# ── Dividend cache (per-ticker ex-date → dividend per share) ──────────────────
+
+DIVIDENDS_PATH = DATA_ROOT / "dividends.json"
+
+_dividends_cache: dict | None = None
+
+
+def load_dividends() -> dict:
+    """Return {ticker: {YYYY-MM-DD: dividend_per_share}} from cache, or empty dict."""
+    global _dividends_cache
+    if _dividends_cache is not None:
+        return _dividends_cache
+    if not DIVIDENDS_PATH.exists():
+        _dividends_cache = {}
+        return _dividends_cache
+    _dividends_cache = _loads(DIVIDENDS_PATH.read_bytes())
+    return _dividends_cache
+
+
+def save_dividends(dividends: dict) -> None:
+    """Persist {ticker: {YYYY-MM-DD: dividend_per_share}} cache."""
+    global _dividends_cache
+    _dividends_cache = dividends
+    DIVIDENDS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    DIVIDENDS_PATH.write_bytes(_dumps(dividends).encode())

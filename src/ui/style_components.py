@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ui.colors import NEGATIVE, POSITIVE
+
 
 def build_trade_dialog_styles(theme: dict[str, str]) -> str:
     t = theme
@@ -143,11 +145,11 @@ def render_trade_summary_cards(theme: dict[str, str], total_bought: float, total
     <div style="display:flex;gap:1rem;margin:0.5rem 0 1.5rem 0;">
       <div style="flex:1;padding:0.8rem 1.2rem;border-radius:0.75rem;background:{t["card_bg"]};border:1px solid {t["border"]};text-align:center;">
         <div style="font-size:0.75rem;color:{t["text_faint"]};text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.3rem;">Bought</div>
-        <div style="font-size:1.4rem;font-weight:700;color:#22c55e;">{total_bought:.4f}</div>
+        <div style="font-size:1.4rem;font-weight:700;color:{POSITIVE};">{total_bought:.4f}</div>
       </div>
       <div style="flex:1;padding:0.8rem 1.2rem;border-radius:0.75rem;background:{t["card_bg"]};border:1px solid {t["border"]};text-align:center;">
         <div style="font-size:0.75rem;color:{t["text_faint"]};text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.3rem;">Sold</div>
-        <div style="font-size:1.4rem;font-weight:700;color:#ef4444;">{total_sold:.4f}</div>
+        <div style="font-size:1.4rem;font-weight:700;color:{NEGATIVE};">{total_sold:.4f}</div>
       </div>
       <div style="flex:1;padding:0.8rem 1.2rem;border-radius:0.75rem;background:{t["card_bg"]};border:1px solid {t["border"]};text-align:center;">
         <div style="font-size:0.75rem;color:{t["text_faint"]};text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.3rem;">Net</div>
@@ -192,18 +194,18 @@ def render_metric_cards(theme: dict[str, str], *,
 
 
 def render_trade_table_html(theme: dict[str, str], trade_df) -> str:
+    t = theme
     headers = list(trade_df.columns)
     rows_html = ""
     for _, row in trade_df.iterrows():
-        cells = "".join(f"<td style='padding:4px 12px;border-bottom:1px solid #333'>{row[h]}</td>" for h in headers)
+        cells = "".join(f"<td style='padding:4px 12px;border-bottom:1px solid {t['table_border']}'>{row[h]}</td>" for h in headers)
         rows_html += f"<tr>{cells}</tr>"
-    header_html = "".join(f"<th style='padding:4px 12px;border-bottom:2px solid #555;text-align:left;font-weight:600'>{h}</th>" for h in headers)
-    t = theme
+    header_html = "".join(f"<th style='padding:4px 12px;border-bottom:2px solid {t['table_header_border']};text-align:left;font-weight:600'>{h}</th>" for h in headers)
     return f"""
     <style>
     body {{ margin:0; font-family:system-ui,-apple-system,sans-serif; background:transparent; color:{t["table_text"]}; }}
     table {{ width:100%; border-collapse:collapse; font-size:24px; }}
-    tr:hover {{ background:rgba(255,255,255,0.05); }}
+    tr:hover {{ background:{t["table_hover"]}; }}
     </style>
     <table>
     <thead><tr>{header_html}</tr></thead>

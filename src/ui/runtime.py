@@ -9,7 +9,7 @@ import streamlit as st
 import config as cfg_module
 import storage
 from ui.bootstrap import configure_import_logging, ensure_project_context
-from ui.theme import get_theme
+from ui.colors import get_theme
 
 
 def init_runtime() -> tuple[dict, dict, str, str, date]:

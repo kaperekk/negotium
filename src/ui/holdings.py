@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+from ui.colors import ACCENT, NEGATIVE, RETURN_UP
 from ui.styles import build_holdings_styles
 
 
@@ -47,7 +48,7 @@ def render_holdings_table(T: dict[str, str], latest_assets, base_ccy: str, today
         return f"{p:+.1f}%"
 
     def _ret_color(p: float) -> str:
-        return "#3fb950" if p >= 0 else "#f85149"
+        return RETURN_UP if p >= 0 else NEGATIVE
 
     SYM = {"PLN": " PLN", "EUR": "€", "USD": "$"}
     max_weight = max((r["weight"] for r in rows), default=1) or 1
@@ -76,7 +77,7 @@ def render_holdings_table(T: dict[str, str], latest_assets, base_ccy: str, today
                 show_trade_dialog(r["ticker"], r["name"], r["ccy"])
             st.markdown(
                 f"<div style=\"margin-top:-0.6rem;margin-bottom:0.2rem;border-radius:4px;overflow:hidden;height:4px;background:{T['holdings_bar_bg']};\">"
-                f"<div style=\"width:{bar_pct / max_weight * 100:.1f}%;height:100%;background:#6C63FF;border-radius:4px;\"></div></div>",
+                f"<div style=\"width:{bar_pct / max_weight * 100:.1f}%;height:100%;background:{ACCENT};border-radius:4px;\"></div></div>",
                 unsafe_allow_html=True,
             )
         with ccy:

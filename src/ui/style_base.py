@@ -43,6 +43,7 @@ def build_app_styles(theme: dict[str, str]) -> str:
         h1, h2, h3, h4, h5, h6 {{ color: {t["text"]}; }}
         label, [data-baseweb="label"] {{ color: {t["text"]} !important; }}
         input, textarea, select {{ color: {t["text"]} !important; }}
+        .st-gd {{ color: {t["text"]} !important; opacity: 1 !important; }}
         p, li, span {{ color: {t["text"]}; }}
 
         [data-testid="stTextInput"] input,
