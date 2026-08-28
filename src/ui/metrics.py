@@ -38,7 +38,7 @@ def render_pnl_toggle_section(T: dict[str, str], pnl: float, pnl_pct: float, fmt
             f"Total P&L  ·  {sign}{fmt(pnl)}",
             key="pnl_amount_btn",
             type="primary" if is_amount else "secondary",
-            use_container_width=True,
+            width='stretch',
         ):
             st.session_state.chart_mode = "amount"
             st.rerun()
@@ -48,7 +48,7 @@ def render_pnl_toggle_section(T: dict[str, str], pnl: float, pnl_pct: float, fmt
             f"Total Return  ·  {sign}{pnl_pct:.1f}%",
             key="pnl_pct_btn",
             type="primary" if is_percent else "secondary",
-            use_container_width=True,
+            width='stretch',
         ):
             st.session_state.chart_mode = "percent"
             st.rerun()

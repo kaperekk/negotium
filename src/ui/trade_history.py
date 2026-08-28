@@ -150,7 +150,7 @@ def render_trade_history_dialog(T: dict[str, str], ticker: str, name: str, ccy: 
                     ),
                 ),
             )
-            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+            st.plotly_chart(fig, width='stretch', config={"displayModeBar": False})
 
         trade_df = pd.DataFrame([{
             "Date": t["date"],

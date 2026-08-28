@@ -169,4 +169,4 @@ def render_drawdown_analysis(snapshots, T: dict) -> None:
         xaxis=dict(showgrid=False, linecolor=zero, tickfont=dict(color=txt, size=AXIS_TICK_FONT_SIZE)),
         hoverlabel=dict(font=dict(size=HOVER_LABEL_SIZE, color=T["hover_text"])),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')

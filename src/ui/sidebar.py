@@ -93,7 +93,7 @@ def render_sidebar(cfg, storage, T, today, start_date_cfg, detect_currency):
             @st.dialog("Create new project")
             def _create_dialog():
                 name = st.text_input("Project name", placeholder="e.g. Retirement, Savings")
-                if st.button("Create", use_container_width=True):
+                if st.button("Create", width='stretch'):
                     if name and name.strip():
                         try:
                             storage.create_project(name.strip())
@@ -135,7 +135,7 @@ def render_sidebar(cfg, storage, T, today, start_date_cfg, detect_currency):
                 if st.button(
                     ccy,
                     key=f"ccy_btn_{ccy}",
-                    use_container_width=True,
+                    width='stretch',
                     type="primary" if is_active else "secondary",
                 ):
                     st.session_state["base_ccy_idx"] = i

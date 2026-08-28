@@ -72,7 +72,7 @@ def render_holdings_table(T: dict[str, str], latest_assets, base_ccy: str, today
                 btn_label,
                 key=f"hbtn_{r['ticker']}",
                 help=f"Trade history for {r['ticker']}",
-                use_container_width=True,
+                width='stretch',
             ):
                 show_trade_dialog(r["ticker"], r["name"], r["ccy"])
             st.markdown(
