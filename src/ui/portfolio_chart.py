@@ -2,7 +2,14 @@ from __future__ import annotations
 
 import plotly.graph_objects as go
 import streamlit as st
-from ui.colors import ACCENT, ACCENT_FILL, MUTED_LINE
+from ui.colors import (
+    ACCENT,
+    ACCENT_FILL,
+    AXIS_TICK_FONT_SIZE,
+    AXIS_TITLE_FONT_SIZE,
+    HOVER_LABEL_SIZE,
+    MUTED_LINE,
+)
 
 
 def render_portfolio_chart(T: dict[str, str], base_ccy: str, dates, values, investeds,
@@ -52,10 +59,10 @@ def render_portfolio_chart(T: dict[str, str], base_ccy: str, dates, values, inve
         yaxis_cfg = dict(
             showgrid=True, gridcolor=T["chart_grid"],
             zeroline=True, zerolinecolor=T["chart_zeroline"],
-            tickfont=dict(size=20, color=T["text_muted"]),
+            tickfont=dict(size=AXIS_TICK_FONT_SIZE, color=T["text_muted"]),
             ticksuffix="%",
             tickformat="+.1f",
-            title=dict(font=dict(size=18, color=T["text_muted"]))
+            title=dict(font=dict(size=AXIS_TITLE_FONT_SIZE, color=T["text_muted"]))
         )
 
     bench_selected = {
@@ -109,14 +116,14 @@ def render_portfolio_chart(T: dict[str, str], base_ccy: str, dates, values, inve
         hoverlabel=dict(
             bgcolor=T["hover_bg"],
             bordercolor=T["border_strong"],
-            font=dict(size=18, color=T["text"], family="sans-serif"),
+            font=dict(size=HOVER_LABEL_SIZE, color=T["hover_text"], family="sans-serif"),
             namelength=-1,
         ),
         font=dict(family="sans-serif", size=20, color=T["text"]),
         xaxis=dict(
             showgrid=False,
-            tickfont=dict(size=16, color=T["text_muted"]),
-            title=dict(font=dict(size=18, color=T["text_muted"])),
+            tickfont=dict(size=AXIS_TICK_FONT_SIZE, color=T["text_muted"]),
+            title=dict(font=dict(size=AXIS_TITLE_FONT_SIZE, color=T["text_muted"])),
         ),
         yaxis=yaxis_cfg,
     )

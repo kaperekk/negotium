@@ -10,7 +10,12 @@ from datetime import date
 
 import plotly.graph_objects as go
 import streamlit as st
-from ui.colors import ACCENT
+from ui.colors import (
+    ACCENT,
+    AXIS_TICK_FONT_SIZE,
+    AXIS_TITLE_FONT_SIZE,
+    HOVER_LABEL_SIZE,
+)
 
 
 def _hex_rgba(hex_color: str, alpha: float) -> str:
@@ -155,12 +160,13 @@ def render_drawdown_analysis(snapshots, T: dict) -> None:
         plot_bgcolor=T["chart_bg"],
         font=dict(color=txt, size=24),
         yaxis=dict(
-            title=dict(text="Drawdown from peak (%)", font=dict(color=txt, size=24)),
-            tickfont=dict(color=txt, size=20),
+            title=dict(text="Drawdown from peak (%)", font=dict(color=txt, size=AXIS_TITLE_FONT_SIZE)),
+            tickfont=dict(color=txt, size=AXIS_TICK_FONT_SIZE),
             gridcolor=grid,
             zerolinecolor=zero,
             linecolor=zero,
         ),
-        xaxis=dict(showgrid=False, linecolor=zero, tickfont=dict(color=txt, size=20)),
+        xaxis=dict(showgrid=False, linecolor=zero, tickfont=dict(color=txt, size=AXIS_TICK_FONT_SIZE)),
+        hoverlabel=dict(font=dict(size=HOVER_LABEL_SIZE, color=T["hover_text"])),
     )
     st.plotly_chart(fig, use_container_width=True)

@@ -286,12 +286,15 @@ def rebuild_balance() -> None:
     _rebuild_balance(records)
 
 
-def compute_cagr(current_value: float, base_currency: str | None = None, fx_cache: dict | None = None) -> float | None:
-    """Compute Compound Annual Growth Rate from first deposit to now.
+def compute_cagr(current_value: float, base_currency: str | None = None, fx_cache: dict | None = None, end: str | None = None) -> float | None:
+    """Compute Compound Annual Growth Rate from first deposit to ``end`` (default today).
 
     current_value must be expressed in the same currency as base_currency
     (the portfolio snapshot's total_value). Falls back to config's
     default_currency when base_currency is not given.
+
+    ``end`` is an ISO date string; when the metric is shown for a historical
+    range it should be the range's end date, not today.
 
     Returns CAGR as a decimal (e.g. 0.12 for 12%), or None if not enough data.
     """
@@ -302,13 +305,15 @@ def compute_cagr(current_value: float, base_currency: str | None = None, fx_cach
     if base_currency is None:
         base_currency = cfg_module.load().get("default_currency", "PLN")
     base_ccy = base_currency.upper()
-    today = _date.today()
+    end_date = _date.fromisoformat(end) if end else _date.today()
     if fx_cache is None:
         fx_cache = {}
 
     first_date = None
     net_invested = 0.0
     for rec in records:
+        if end and rec["date"] > end:
+            continue
         entries_list = rec["entries"]
         all_cash = all(
             e["ticker"].upper() in storage.SUPPORTED_CURRENCIES
@@ -327,21 +332,20 @@ def compute_cagr(current_value: float, base_currency: str | None = None, fx_cach
     if first_date is None or net_invested <= 0:
         return None
 
-    years = (today - _date.fromisoformat(first_date)).days / 365.25
+    years = (end_date - _date.fromisoformat(first_date)).days / 365.25
     if years <= 0:
         return None
 
     return (current_value / net_invested) ** (1.0 / years) - 1.0
 
 
-def compute_irr(current_value: float, base_currency: str | None = None, fx_cache: dict | None = None) -> float | None:
-    """Compute Internal Rate of Return (money-weighted) using all cash flows.
+def compute_irr(current_value: float, base_currency: str | None = None, fx_cache: dict | None = None, end: str | None = None) -> float | None:
+    """Compute Internal Rate of Return (money-weighted) using all cash flows up to ``end``.
 
     Deposits are negative (money out of pocket), withdrawals positive.
-    The current portfolio value is the final positive cash flow.
-    current_value must be expressed in the same currency as base_currency
-    (the portfolio snapshot's total_value). Falls back to config's
-    default_currency when base_currency is not given.
+    The current portfolio value is the final positive cash flow at ``end``
+    (defaults to today). When the metric is shown for a historical range,
+    pass that range's end date so the timeline stays consistent.
 
     Returns IRR as a decimal (e.g. 0.12 for 12%), or None if not solvable.
     """
@@ -352,12 +356,14 @@ def compute_irr(current_value: float, base_currency: str | None = None, fx_cache
     if base_currency is None:
         base_currency = cfg_module.load().get("default_currency", "PLN")
     base_ccy = base_currency.upper()
-    today = _date.today()
+    end_date = _date.fromisoformat(end) if end else _date.today()
     if fx_cache is None:
         fx_cache = {}
 
     cash_flows: list[tuple[str, float]] = []
     for rec in records:
+        if end and rec["date"] > end:
+            continue
         for e in rec["entries"]:
             is_entry_op = e.get("account_operation", False)
             if not is_entry_op:
@@ -378,7 +384,7 @@ def compute_irr(current_value: float, base_currency: str | None = None, fx_cache
 
     # Add current portfolio value as final cash flow (positive — you own it)
     cf_list = sorted(merged.items())
-    cf_list.append((today.isoformat(), current_value))
+    cf_list.append((end_date.isoformat(), current_value))
 
     # Convert dates to years from first cash flow
     start = _date.fromisoformat(cf_list[0][0])

@@ -118,7 +118,11 @@ def render_sidebar(cfg, storage, T, today, start_date_cfg, detect_currency):
                     st.session_state.pop(k)
             st.rerun()
 
-        st.caption("Currency")
+        st.markdown(
+            f"<div style='color:{T['text']};font-size:0.85rem;font-weight:600;"
+            f"margin-bottom:0.25rem'>Currency</div>",
+            unsafe_allow_html=True,
+        )
         ccy_options = ["PLN", "EUR", "USD"]
         ccy_default = ccy_options.index(cfg.get("default_currency", "PLN"))
         if "base_ccy_idx" not in st.session_state:
@@ -145,20 +149,30 @@ def render_sidebar(cfg, storage, T, today, start_date_cfg, detect_currency):
             storage.set_last_refresh(today.isoformat())
             st.rerun()
 
-        _range_opts = ["All time", "This year", "Last 12 months", "Last 3 months", "Custom"]
+        _range_opts = ["All time", "This year", "Previous year", "Last 3 months",
+                       "Last 12 months", "Last 2 years", "Custom"]
         if "_range" not in st.session_state:
             st.session_state["_range"] = "All time"
 
-        def _on_range_change():
-            st.session_state["_range"] = st.session_state["range_widget"]
+        st.selectbox(
+            "Range",
+            _range_opts,
+            key="range_widget",
+            index=_range_opts.index(st.session_state["_range"]),
+        )
+        st.session_state["_range"] = st.session_state["range_widget"]
 
         range_option = st.session_state["_range"]
         if range_option == "All time":
             chart_start, chart_end = start_date_cfg, today
         elif range_option == "This year":
             chart_start, chart_end = date(today.year, 1, 1), today
+        elif range_option == "Previous year":
+            chart_start, chart_end = date(today.year - 1, 1, 1), date(today.year - 1, 12, 31)
         elif range_option == "Last 12 months":
             chart_start, chart_end = today - timedelta(days=365), today
+        elif range_option == "Last 2 years":
+            chart_start, chart_end = today - timedelta(days=730), today
         elif range_option == "Last 3 months":
             chart_start, chart_end = today - timedelta(days=90), today
         else:

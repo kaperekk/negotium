@@ -20,6 +20,7 @@ def build_app_styles(theme: dict[str, str]) -> str:
             --secondary-background-color: {t["panel_bg"]};
             --text-color: {t["text"]};
             --primary-color: {t["accent"]};
+            --sidebar-width: 400px;
         }}
 
         [data-baseweb="select"] {{
@@ -89,8 +90,6 @@ def build_app_styles(theme: dict[str, str]) -> str:
             color: {t["text"]} !important;
         }}
         [data-testid="stSidebar"] {{
-            min-width: 380px;
-            max-width: 420px;
             border-right: 1px solid {t["border_strong"]};
         }}
         [data-testid="stSidebar"] [data-testid="stVerticalBlock"] > div {{ margin-top: -0.4rem; }}

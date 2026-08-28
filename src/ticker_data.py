@@ -89,6 +89,34 @@ def get_ticker_name(ticker: str) -> str:
     return short
 
 
+_CURRENCY_CACHE: dict[str, str] = {}
+
+
+def get_ticker_currency(ticker: str) -> str:
+    """Return the trading currency for a ticker (e.g. USD, EUR, GBP).
+
+    Resolved via Yahoo Finance ``fast_info`` and cached in-memory. GBp
+    (London pence) is normalised to GBP. Falls back to a suffix guess or
+    "USD" on failure.
+    """
+    if ticker.upper() in SUPPORTED_CURRENCIES:
+        return ticker
+    cached = _CURRENCY_CACHE.get(ticker)
+    if cached:
+        return cached
+    cur = "USD"
+    try:
+        with _suppress_output():
+            cur = yf.Ticker(_yahoo_symbol(ticker)).fast_info.currency
+    except Exception:
+        pass
+    if not cur or cur == "GBp":
+        cur = "GBP" if cur == "GBp" else "USD"
+    _CURRENCY_CACHE[ticker] = cur
+    return cur
+
+
+
 def _classify_asset_class(quote_type: str, sector: str, name: str) -> str:
     """Map Yahoo quoteType + name heuristics to a coarse asset class."""
     qt = (quote_type or "").upper()
@@ -480,6 +508,129 @@ def _latest_price(
             continue
         return slab[max(slab.keys())]
     return None
+
+
+_recent_price_cache: dict = {}
+
+
+def get_recent_prices(ticker: str, days: int = 60, ttl: int = 900) -> tuple[dict, float | None, str | None]:
+    """Return (recent_series, latest_price, latest_date) for a watchlist ticker.
+
+    ``recent_series`` is {YYYY-MM-DD: close} for the last ``days`` trading days,
+    ``latest_price`` the most recent close (native currency), ``latest_date`` its
+    date string. Results are cached in-memory for ``ttl`` seconds to avoid
+    hammering Yahoo Finance on every UI rerun.
+
+    Price history is populated via ``ensure`` (and thus cached on disk like every
+    other ticker), so the first call for a ticker may hit the network.
+    """
+    import time
+
+    if ticker.upper() in SUPPORTED_CURRENCIES:
+        return {}, 1.0, None
+    cache_key = (ticker, days)
+    cached = _recent_price_cache.get(cache_key)
+    now = time.time()
+    if cached and now - cached[0] < ttl:
+        return cached[1]
+
+    from datetime import timedelta
+    today = date.today()
+    start = today - timedelta(days=days + 30)
+    ensure(ticker, start, today)
+
+    prices: dict[str, float] = {}
+    for y in range(start.year, today.year + 1):
+        prices.update(load_price_year(ticker, y))
+
+    if not prices:
+        result: tuple[dict, float | None, str | None] = ({}, None, None)
+    else:
+        sorted_dates = sorted(prices)
+        recent = {d: prices[d] for d in sorted_dates[-days:]}
+        latest = sorted_dates[-1]
+        result = (recent, prices[latest], latest)
+
+    _recent_price_cache[cache_key] = (now, result)
+    return result
+
+
+_ath_cache: dict = {}
+
+
+def get_all_time_high(ticker: str, ttl: int = 86400) -> tuple[float | None, str | None]:
+    """Return (ATH_price, ATH_date) for a ticker using its full Yahoo history.
+
+    Cached in-memory for ``ttl`` seconds (a day) since ATH changes rarely.
+    Returns (None, None) if unavailable or on failure.
+    """
+    import time
+
+    if ticker.upper() in SUPPORTED_CURRENCIES:
+        return None, None
+    cached = _ath_cache.get(ticker)
+    now = time.time()
+    if cached and now - cached[0] < ttl:
+        return cached[1]
+
+    result: tuple[float | None, str | None] = (None, None)
+    try:
+        with _suppress_output():
+            df = yf.download(_yahoo_symbol(ticker), period="max", progress=False)
+        if df is not None and not df.empty and "Close" in df.columns:
+            close = df["Close"]
+            if hasattr(close, "columns"):  # MultiIndex columns -> DataFrame
+                close = close.iloc[:, 0]
+            close = close.dropna()
+            if not close.empty:
+                ath = float(close.max())
+                ath_date = str(close.idxmax())[:10]
+                result = (ath, ath_date)
+    except Exception:
+        result = (None, None)
+
+    _ath_cache[ticker] = (now, result)
+    return result
+
+
+_earnings_cache: dict = {}
+
+
+def get_next_earnings(ticker: str, ttl: int = 86400) -> str | None:
+    """Return the next earnings/report date (YYYY-MM-DD) for a ticker, or None.
+
+    Sourced from Yahoo Finance's calendar (falling back to ``info``). Cached
+    in-memory for ``ttl`` seconds — earnings dates change at most once a quarter.
+    """
+    import time
+
+    if ticker.upper() in SUPPORTED_CURRENCIES:
+        return None
+    cached = _earnings_cache.get(ticker)
+    now = time.time()
+    if cached and now - cached[0] < ttl:
+        return cached[1]
+
+    result: str | None = None
+    try:
+        with _suppress_output():
+            tk = yf.Ticker(_yahoo_symbol(ticker))
+            cal = tk.calendar
+        if cal and "Earnings Date" in cal:
+            for d in cal["Earnings Date"]:
+                if d is not None:
+                    result = str(d)[:10]
+                    break
+        if result is None:
+            info = tk.info
+            ne = info.get("nextEarningsDate")
+            if ne:
+                result = str(ne)[:10]
+    except Exception:
+        result = None
+
+    _earnings_cache[ticker] = (now, result)
+    return result
 
 
 def get_fx_rate(

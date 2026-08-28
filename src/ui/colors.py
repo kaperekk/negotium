@@ -18,6 +18,7 @@ THEMES: dict[str, dict[str, str]] = {
         "border_strong": "#4A515C",
         "text": "#E6EDF3",
         "text_cell": "#C9D1D9",
+        "hover_text": "#FFFFFF",
         "text_muted": "#8B949E",
         "text_faint": "rgba(255,255,255,0.5)",
         "panel_bg": "#2A2F38",
@@ -50,6 +51,7 @@ THEMES: dict[str, dict[str, str]] = {
         "border_strong": "#D0D7DE",
         "text": "#1F2328",
         "text_cell": "#3B4045",
+        "hover_text": "#1F2328",
         "text_muted": "#656D76",
         "text_faint": "rgba(0,0,0,0.45)",
         "panel_bg": "#F3F5F8",
@@ -92,6 +94,13 @@ POSITIVE = "#22c55e"   # gains / buys
 NEGATIVE = "#ef4444"   # losses / sells
 RETURN_UP = "#3fb950"  # holdings return % (green)
 DIVIDEND = "#eab308"   # dividend markers / gold
+
+# Shared size for chart hover-label text (watchlist, portfolio, drawdown).
+HOVER_LABEL_SIZE = 30
+
+# Shared axis label/tick font sizes.
+AXIS_TICK_FONT_SIZE = 16
+AXIS_TITLE_FONT_SIZE = 18
 
 
 # ── Benchmark palette ─────────────────────────────────────────────────────────

@@ -108,6 +108,26 @@ def set_last_refresh(date_str: str, name: str | None = None) -> None:
     _save_registry(reg)
 
 
+def get_watchlist(name: str | None = None) -> list[str]:
+    """Return the per-project watchlist tickers (empty list if none)."""
+    name = name or _current_project
+    if name is None:
+        return []
+    reg = _load_registry()
+    return list(reg.get(name, {}).get("watchlist", []))
+
+
+def set_watchlist(tickers: list[str], name: str | None = None) -> None:
+    """Persist the per-project watchlist tickers in the registry."""
+    name = name or _current_project
+    if name is None:
+        return
+    reg = _load_registry()
+    entry = reg.setdefault(name, {})
+    entry["watchlist"] = list(tickers)
+    _save_registry(reg)
+
+
 def create_project(name: str) -> None:
     """Create a new empty project."""
     reg = _load_registry()

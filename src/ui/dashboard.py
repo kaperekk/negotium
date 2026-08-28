@@ -41,6 +41,7 @@ from ui.styles import (
     render_empty_state,
 )
 from ui.trade_history import render_trade_history_dialog
+from ui.watchlist import render_watchlist
 
 
 def render_dashboard(cfg, storage, T, today, start_date_cfg, base_ccy: str | None = None):
@@ -295,8 +296,8 @@ def render_dashboard(cfg, storage, T, today, start_date_cfg, base_ccy: str | Non
         return f"{SYM[base_ccy]}{formatted}"
 
     fx_cache: dict = {}
-    cagr = compute_cagr(cur_value, base_ccy, fx_cache=fx_cache)
-    irr = compute_irr(cur_value, base_ccy, fx_cache=fx_cache)
+    cagr = compute_cagr(cur_value, base_ccy, fx_cache=fx_cache, end=ce)
+    irr = compute_irr(cur_value, base_ccy, fx_cache=fx_cache, end=ce)
 
     best_ticker = max(latest["assets"], key=lambda a: a["value_base"])["ticker"] if latest["assets"] else "—"
 
@@ -309,28 +310,13 @@ def render_dashboard(cfg, storage, T, today, start_date_cfg, base_ccy: str | Non
     chart_mode = st.session_state.chart_mode
     render_portfolio_chart(T, base_ccy, dates, values, investeds, bench_by_date, BENCHMARKS, BENCH_COLORS, chart_mode)
 
-    _bench_col, _range_col = st.columns([1, 1], vertical_alignment="center", gap="xxsmall")
-    with _bench_col:
-        bench_selected_keys = st.multiselect(
-            "What-if benchmarks",
-            options=list(BENCHMARKS.keys()),
-            key="bench_select",
-            placeholder="Choose options",
-            on_change=lambda: st.session_state.update(bench_persist=list(st.session_state.bench_select)),
-        )
-    with _range_col:
-        _range_opts = ["All time", "This year", "Last 12 months", "Last 3 months", "Custom"]
-
-        def _on_range_change():
-            st.session_state["_range"] = st.session_state["range_widget"]
-
-        st.selectbox(
-            "Range",
-            _range_opts,
-            key="range_widget",
-            index=_range_opts.index(st.session_state["_range"]),
-            on_change=_on_range_change,
-        )
+    bench_selected_keys = st.multiselect(
+        "What-if benchmarks",
+        options=list(BENCHMARKS.keys()),
+        key="bench_select",
+        placeholder="Choose options",
+        on_change=lambda: st.session_state.update(bench_persist=list(st.session_state.bench_select)),
+    )
 
     def _show_trade_dialog(ticker: str, name: str, ccy: str):
         render_trade_history_dialog(T, ticker, name, ccy, base_ccy, today, storage)
@@ -360,6 +346,8 @@ def render_dashboard(cfg, storage, T, today, start_date_cfg, base_ccy: str | Non
         f":material/info: Yahoo Finance · {today} · {base_ccy} · "
         f"Daily · {len(latest.get('assets', [])) if latest else 0} positions"
     )
+
+    render_watchlist(T)
 
     # ── Late-stage theme override (injected last, beats Streamlit's dark CSS) ──
     st.markdown(build_late_theme_override(T), unsafe_allow_html=True)
