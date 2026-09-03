@@ -1,8 +1,5 @@
 {
-  "name": "My Portfolio",
-  "start_day": "2024-01-01",
   "default_currency": "PLN",
-  "graph_precision": "1D",
   "ticker_rules": [
     "AMZN.DE=AMZ.DE",
     "TSLA.DE=TL0.DE",
@@ -23,6 +20,5 @@
     "PLBSWTR00014=ETFBS80TR.WA",
     "PLBETF400025=ETFBM40TR.WA"
   ],
-  "theme": "dark",
-  "last_refresh": "2026-08-27"
+  "theme": "dark"
 }

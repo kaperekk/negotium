@@ -12,7 +12,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-import config as cfg_module
+import ledger_core
 from ui.dashboard import render_dashboard
 from ui.helpers import detect_currency
 from ui.runtime import init_runtime
@@ -28,6 +28,6 @@ st.set_page_config(
 
 cfg, storage, _theme_name, T, today = init_runtime()
 st.markdown(build_app_styles(T), unsafe_allow_html=True)
-start_date_cfg = cfg_module.get_start_date(cfg)
-base_ccy = render_sidebar(cfg, storage, T, today, start_date_cfg, detect_currency)
-render_dashboard(cfg, storage, T, today, start_date_cfg, base_ccy)
+data_start_date = ledger_core.first_transaction_date() or today
+base_ccy = render_sidebar(cfg, storage, T, today, data_start_date, detect_currency)
+render_dashboard(cfg, storage, T, today, data_start_date, base_ccy)

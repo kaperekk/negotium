@@ -21,15 +21,15 @@ def make_temp_root() -> Path:
 
 def patch_root(tmp: Path):
     """
-    Monkey-patch all storage paths to point at tmp.
-    Must be called before importing any src module in a test,
-    or the modules must be reloaded after the patch.
+    Monkey-patch all storage roots to point at tmp.
+
+    Paths are derived from DATA_ROOT + the selected project, so patching the
+    roots and selecting the test project is enough for every
+    transactions_path()/balance_path()/imports_dir() call to resolve inside
+    tmp. Must run after the modules under test are (re)loaded.
     """
     import storage
     import config as cfg_module
-    import transactions
-    import portfolio
-    import ticker_data
 
     storage.ROOT               = tmp
     storage.DATA_ROOT          = tmp / "data"
@@ -41,21 +41,13 @@ def patch_root(tmp: Path):
     test_project.mkdir(parents=True, exist_ok=True)
     (test_project / "imports").mkdir(exist_ok=True)
     storage.set_current_project("test_project")
-    storage._current_project = "test_project"
-    storage.TRANSACTIONS_PATH  = test_project / "transactions.jsonl"
-    storage.PORTFOLIO_PATH     = test_project / "portfolio.jsonl"
-    storage.BALANCE_PATH       = test_project / "balance.json"
-    storage.IMPORTS_DIR        = test_project / "imports"
 
     cfg_module.ROOT                = tmp
     cfg_module.GLOBAL_CONFIG_PATH  = tmp / "data" / "config.json"
 
 
 SAMPLE_CONFIG = {
-    "name": "Test Portfolio",
-    "start_day": "2023-01-01",
     "default_currency": "PLN",
-    "graph_precision": "1D",
 }
 
 # Fake price data that get_price() will return via monkeypatched cache

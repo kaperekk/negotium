@@ -8,17 +8,20 @@ import streamlit as st
 
 import config as cfg_module
 from bossa_import import import_bossa
+from currencies import SUPPORTED_CURRENCIES
+from ledger_core import delete_transaction, find_negative_positions, remap_tickers
+from ledger_core import remap_tickers
 from manual_import import import_manual
 from ui.styles import render_project_banner
 from xtb_import import import_xtb
 
 BROKERS = ["XTB", "BOSSA", "Custom"]
-BROKER_CURRENCIES = {"XTB": ["EUR", "PLN", "USD"], "BOSSA": ["EUR", "PLN", "Many"]}
+BROKER_CURRENCIES = {"XTB": sorted(SUPPORTED_CURRENCIES), "BOSSA": ["EUR", "PLN", "Many"]}
 
 
 def _run_refresh(storage, today, detect_currency, base_ccy):
     """Re-import all broker files and invalidate cached data."""
-    _imports_dir = storage._project_dir(storage.get_current_project()) / "imports"
+    _imports_dir = storage.imports_dir()
     all_files = []
     for b in BROKERS:
         bdir = _imports_dir / b.lower()
@@ -38,11 +41,11 @@ def _run_refresh(storage, today, detect_currency, base_ccy):
             ccy = detect_currency(fpath.name)
             bar.progress(idx / len(all_files), text=f"Importing {fpath.name}…")
             if kind == "bossa":
-                result = __import__("bossa_import").import_bossa(str(fpath), ccy)
+                result = import_bossa(str(fpath), ccy)
             elif kind == "custom":
-                result = __import__("manual_import").import_manual(str(fpath))
+                result = import_manual(str(fpath))
             else:
-                result = __import__("xtb_import").import_xtb(str(fpath), ccy)
+                result = import_xtb(str(fpath), ccy)
             if result["success"]:
                 total_imported += result["imported"]
         bar.progress(1.0, text="Done")
@@ -67,9 +70,27 @@ def _should_auto_refresh(storage, project_name, today):
         return (today - date.fromisoformat(last)).days >= 1
     except (ValueError, TypeError):
         return True
+def _add_transaction_to_ledger(tx_date, entries, storage, data_start_date, base_ccy):
+    """Write a custom JSON file and import it as a new transaction."""
+    custom_dir = storage.imports_dir() / "custom"
+    custom_dir.mkdir(parents=True, exist_ok=True)
+    tx_doc = [{"date": tx_date.isoformat(), "entries": entries}]
+    tx_path = custom_dir / f"{tx_date.isoformat()}_{datetime.now().strftime('%H%M%S')}.json"
+    tx_path.write_text(json.dumps(tx_doc, indent=2), encoding="utf-8")
+    result = import_manual(str(tx_path))
+    if result["success"]:
+        st.success(f"Added for {tx_date}.")
+    else:
+        st.error(result["error"])
+    st.session_state["force_refresh"] = True
+    for k in list(st.session_state.keys()):
+        if k.startswith("snapshots_") or k.startswith("benchmarks_"):
+            st.session_state.pop(k)
+    storage.invalidate_portfolio_from(data_start_date.isoformat())
+    st.rerun()
 
 
-def render_sidebar(cfg, storage, T, today, start_date_cfg, detect_currency):
+def render_sidebar(cfg, storage, T, today, data_start_date, detect_currency):
     with st.sidebar:
         project_name = html.escape(storage.get_current_project())
         st.markdown(render_project_banner(project_name, T), unsafe_allow_html=True)
@@ -164,7 +185,7 @@ def render_sidebar(cfg, storage, T, today, start_date_cfg, detect_currency):
 
         range_option = st.session_state["_range"]
         if range_option == "All time":
-            chart_start, chart_end = start_date_cfg, today
+            chart_start, chart_end = data_start_date, today
         elif range_option == "This year":
             chart_start, chart_end = date(today.year, 1, 1), today
         elif range_option == "Previous year":
@@ -180,8 +201,8 @@ def render_sidebar(cfg, storage, T, today, start_date_cfg, detect_currency):
             with ca:
                 chart_start = st.date_input(
                     "From",
-                    value=start_date_cfg,
-                    min_value=start_date_cfg,
+                    value=data_start_date,
+                    min_value=data_start_date,
                     max_value=today,
                     key="range_from",
                 )
@@ -189,7 +210,7 @@ def render_sidebar(cfg, storage, T, today, start_date_cfg, detect_currency):
                 chart_end = st.date_input(
                     "To",
                     value=today,
-                    min_value=start_date_cfg,
+                    min_value=data_start_date,
                     max_value=today,
                     key="range_to",
                 )
@@ -224,7 +245,11 @@ def render_sidebar(cfg, storage, T, today, start_date_cfg, detect_currency):
                 new_rules = [line.strip() for line in rules_text.strip().splitlines() if line.strip()]
                 cfg["ticker_rules"] = new_rules
                 cfg_module.save(cfg)
-                st.success("Rules saved!")
+                changed = remap_tickers()
+                if changed:
+                    st.success(f"Rules saved! Remapped {changed} entr{'y' if changed == 1 else 'ies'} in ledger.")
+                else:
+                    st.success("Rules saved!")
                 st.rerun()
 
             st.subheader("Project")
@@ -277,27 +302,33 @@ def render_sidebar(cfg, storage, T, today, start_date_cfg, detect_currency):
                     if not entries:
                         st.error("Enter at least one ticker and amount.")
                     else:
-                        custom_dir = storage._project_dir(storage.get_current_project()) / "imports" / "custom"
-
-                        custom_dir.mkdir(parents=True, exist_ok=True)
-                        tx_doc = [{"date": tx_date.isoformat(), "entries": entries}]
-                        tx_path = custom_dir / f"{tx_date.isoformat()}_{datetime.now().strftime('%H%M%S')}.json"
-                        tx_path.write_text(json.dumps(tx_doc, indent=2), encoding="utf-8")
-                        result = __import__("manual_import").import_manual(str(tx_path))
-                        if result["success"]:
-                            st.success(f"Added for {tx_date}.")
+                        # Check for negative positions before importing
+                        current = storage.load_balance()
+                        simulated = {k: v["amount"] for k, v in current.items()}
+                        for e in entries:
+                            ticker = e["ticker"]
+                            if ticker not in storage.SUPPORTED_CURRENCIES:
+                                simulated[ticker] = simulated.get(ticker, 0.0) + e["amount"]
+                        negatives = [
+                            (ticker, amt) for ticker, amt in simulated.items()
+                            if amt < -1e-9 and ticker not in storage.SUPPORTED_CURRENCIES
+                        ]
+                        if negatives:
+                            details = ", ".join(f"{t}: {a:+.4f}" for t, a in negatives)
+                            st.warning(
+                                f"⚠️ This transaction would make positions negative: {details}\n\n"
+                                "Check the amounts or add a buy first."
+                            )
+                            st.session_state["_neg_warning"] = True
+                            if st.button("Proceed anyway", key="proceed_neg"):
+                                st.session_state.pop("_neg_warning", None)
+                                _add_transaction_to_ledger(tx_date, entries, storage, data_start_date, base_ccy)
                         else:
-                            st.error(result["error"])
-                        st.session_state["force_refresh"] = True
-                        for k in list(st.session_state.keys()):
-                            if k.startswith("snapshots_") or k.startswith("benchmarks_"):
-                                st.session_state.pop(k)
-                        storage.invalidate_portfolio_from(start_date_cfg.isoformat())
-                        st.rerun()
+                            _add_transaction_to_ledger(tx_date, entries, storage, data_start_date, base_ccy)
 
         with st.expander("📥 Import statement"):
             _proj = storage.get_current_project()
-            _imports = storage._project_dir(_proj) / "imports"
+            _imports = storage.imports_dir()
             _imports.mkdir(parents=True, exist_ok=True)
 
             broker = st.selectbox("Broker", BROKERS, key="broker_select")
@@ -324,16 +355,16 @@ def render_sidebar(cfg, storage, T, today, start_date_cfg, detect_currency):
                     if broker == "BOSSA":
                         ccy = "Many"
                         with st.spinner(f"Importing {uf.name}…"):
-                            result = __import__("bossa_import").import_bossa(str(dest), ccy)
+                            result = import_bossa(str(dest), ccy)
                     elif broker == "Custom":
                         with st.spinner(f"Importing {uf.name}…"):
-                            result = __import__("manual_import").import_manual(str(dest))
+                            result = import_manual(str(dest))
                     else:
-                        ccy_options = BROKER_CURRENCIES.get(broker, ["EUR", "PLN", "USD"])
+                        ccy_options = BROKER_CURRENCIES.get(broker, sorted(SUPPORTED_CURRENCIES))
                         if detected not in ccy_options:
                             detected = ccy_options[0]
                         with st.spinner(f"Importing {uf.name}…"):
-                            result = __import__("xtb_import").import_xtb(str(dest), detected)
+                            result = import_xtb(str(dest), detected)
                     if result["success"]:
                         n = result["imported"]
                         s = result["skipped"]
@@ -348,7 +379,7 @@ def render_sidebar(cfg, storage, T, today, start_date_cfg, detect_currency):
                 for k in list(st.session_state.keys()):
                     if k.startswith("snapshots_") or k.startswith("benchmarks_"):
                         st.session_state.pop(k)
-                storage.invalidate_portfolio_from(start_date_cfg.isoformat())
+                storage.invalidate_portfolio_from(data_start_date.isoformat())
                 st.rerun()
 
             broker_files = sorted(broker_dir.glob("*.xlsx")) + sorted(broker_dir.glob("*.csv")) + sorted(broker_dir.glob("*.json"))
@@ -358,7 +389,7 @@ def render_sidebar(cfg, storage, T, today, start_date_cfg, detect_currency):
             else:
                 st.caption("No files uploaded yet.")
 
-        if st.button("📈  Refresh market data", width="stretch"):
+        if st.button("📈  Refresh data", width="stretch"):
             file_count, total_imported = _run_refresh(storage, today, detect_currency, base_ccy)
             if file_count:
                 st.success(f"Refreshed from {file_count} files — {total_imported} transactions imported.")

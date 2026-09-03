@@ -11,10 +11,11 @@ import streamlit as st
 import config as cfg_module
 import storage
 from bossa_import import import_bossa
+from currencies import CURRENCY_SYMBOLS
 from manual_import import import_manual
-from portfolio import FX_TICKERS, build_portfolio, snapshots_to_series
+from portfolio_core import FX_TICKERS, build_portfolio, snapshots_to_series
 from ticker_data import ensure_batch, get_fx_rate, get_price, get_ticker_name, get_ticker_meta
-from transactions import (
+from ledger_core import (
     add_transaction,
     compute_cagr,
     compute_irr,
@@ -27,7 +28,6 @@ from transactions import (
     update_transaction,
 )
 from xtb_import import import_xtb
-from ui.helpers import fmt
 from ui.holdings import render_holdings_table
 from ui.allocation import render_allocation_breakdown
 from ui.drawdown import render_drawdown_analysis
@@ -44,10 +44,33 @@ from ui.trade_history import render_trade_history_dialog
 from ui.watchlist import render_watchlist
 
 
-def render_dashboard(cfg, storage, T, today, start_date_cfg, base_ccy: str | None = None):
+@st.cache_data(ttl=3600)
+def _ensure_batch_cached(
+    tickers_tuple: tuple[str, ...],
+    start_date_iso: str,
+    force_refresh: bool,
+) -> tuple[list[str], int]:
+    """Cached price download so reruns don't re-fetch already-cached data.
+
+    Returns (failed_tickers, call_count). The call_count increments only
+    on actual downloads — cached returns keep the original count so the
+    caller can tell whether a download happened this session.
+
+    Uses st.cache_data (not cache_resource) because the return value is
+    immutable data, not a shared resource like a database connection.
+    """
+    failed = ensure_batch(
+        list(tickers_tuple),
+        date.fromisoformat(start_date_iso),
+        force_refresh_current_year=force_refresh,
+    )
+    return failed, 1
+
+
+def render_dashboard(cfg, storage, T, today, data_start_date, base_ccy: str | None = None):
     precision = "D"
     if base_ccy is None:
-        ccy_options = ["PLN", "EUR", "USD"]
+        ccy_options = list(CURRENCY_SYMBOLS)
         complete_default = ccy_options.index(cfg.get("default_currency", "PLN"))
         base_ccy = ccy_options[st.session_state.get("base_ccy_idx", complete_default)]
 
@@ -71,6 +94,13 @@ def render_dashboard(cfg, storage, T, today, start_date_cfg, base_ccy: str | Non
     tickers_needed = get_all_tickers(include_fx=True)
     force_refresh  = st.session_state.pop("force_refresh", False)
 
+    # Invalidate in-memory caches so fresh data is picked up immediately
+    if force_refresh:
+        from ticker_data import invalidate_recent_price_cache, invalidate_ath_cache
+        invalidate_recent_price_cache()
+        invalidate_ath_cache()
+        _ensure_batch_cached.clear()
+
     # Check which tickers actually need downloading
     missing = [
         t for t in tickers_needed
@@ -84,11 +114,10 @@ def render_dashboard(cfg, storage, T, today, start_date_cfg, base_ccy: str | Non
         dl_bar = st.progress(0, text=f"Downloading {len(missing)} tickers…")
 
         try:
-            download_errors = ensure_batch(
-                missing,
-                start_date=start_date_cfg,
-                force_refresh_current_year=True,
-                progress_cb=lambda msg: dl_bar.progress(0, text=msg),
+            download_errors, _ = _ensure_batch_cached(
+                tuple(missing),
+                data_start_date.isoformat(),
+                True,
             )
         except Exception as e:
             download_errors = list(missing)
@@ -100,7 +129,7 @@ def render_dashboard(cfg, storage, T, today, start_date_cfg, base_ccy: str | Non
             st.warning(
                 f"⚠️ Could not download price data for: **{', '.join(download_errors)}**\n\n"
                 "These positions will be missing from the chart. "
-                "Check your internet connection and try **Refresh market data**."
+                "Check your internet connection and try **Refresh data**."
             )
 
     # ── Rebuild balance after price refresh (fixes stale avg_price) ──────────────
@@ -112,7 +141,7 @@ def render_dashboard(cfg, storage, T, today, start_date_cfg, base_ccy: str | Non
     stock_tickers = [t for t in tickers_needed
                      if t not in storage.SUPPORTED_CURRENCIES and t not in FX_TICKERS]
     tickers_with_data = [t for t in stock_tickers if storage.has_price_year(t, today.year)
-                         or any(storage.has_price_year(t, y) for y in range(start_date_cfg.year, today.year + 1))]
+                         or any(storage.has_price_year(t, y) for y in range(data_start_date.year, today.year + 1))]
     tickers_without_data = [t for t in stock_tickers if t not in tickers_with_data]
 
     if tickers_without_data:
@@ -135,7 +164,7 @@ def render_dashboard(cfg, storage, T, today, start_date_cfg, base_ccy: str | Non
 
         t_start = time.perf_counter()
         all_snapshots = build_portfolio(
-            start_date=start_date_cfg,
+            start_date=data_start_date,
             end_date=today,
             base_currency=base_ccy,
             precision=precision,
@@ -170,9 +199,13 @@ def render_dashboard(cfg, storage, T, today, start_date_cfg, base_ccy: str | Non
         if bench_missing:
             bench_dl = st.progress(0, text="Downloading benchmark data…")
             try:
-                ensure_batch(bench_missing, bench_date_start, bench_date_end,
-                             force_refresh_current_year=force_refresh,
-                             progress_cb=lambda msg: bench_dl.progress(0, text=msg))
+                bench_failed, _ = _ensure_batch_cached(
+                    tuple(bench_missing),
+                    bench_date_start.isoformat(),
+                    force_refresh,
+                )
+                if bench_failed:
+                    st.warning(f"Could not download benchmarks: {', '.join(bench_failed)}")
             except Exception as e:
                 st.warning(f"Could not download benchmarks: {e}")
             bench_dl.progress(1.0, text="Done")
@@ -184,7 +217,7 @@ def render_dashboard(cfg, storage, T, today, start_date_cfg, base_ccy: str | Non
 
     # ── Compute & cache benchmarks ────────────────────────────────────────────────
 
-    bench_cache_key = f"benchmarks_{base_ccy}_{len(all_snapshots)}_{len(BENCHMARKS)}"
+    bench_cache_key = f"benchmarks_{base_ccy}_{all_snapshots[0]['date']}_{all_snapshots[-1]['date']}"
     if bench_cache_key not in st.session_state:
         cached = storage.load_benchmarks(base_ccy) if not force_refresh else None
         if (cached and len(cached) == len(all_snapshots)
@@ -258,7 +291,7 @@ def render_dashboard(cfg, storage, T, today, start_date_cfg, base_ccy: str | Non
     bench_by_date: dict[str, dict] = {b["date"]: b for b in all_benchmarks}
 
     # Filter to chart date range
-    chart_start = st.session_state.get("chart_start", start_date_cfg)
+    chart_start = st.session_state.get("chart_start", data_start_date)
     chart_end = st.session_state.get("chart_end", today)
     cs = chart_start.isoformat()
     ce = chart_end.isoformat()
@@ -287,9 +320,9 @@ def render_dashboard(cfg, storage, T, today, start_date_cfg, base_ccy: str | Non
     day_change = (cur_value - prev["total_value"]) if prev else 0.0
     day_pct    = (day_change / prev["total_value"] * 100) if prev and prev["total_value"] else 0.0
 
-    SYM = {"PLN": " PLN", "EUR": "€", "USD": "$"}
+    SYM = CURRENCY_SYMBOLS
 
-    def fmt(v: float) -> str:
+    def _fmt_money(v: float) -> str:
         formatted = f"{v:,.0f}".replace(",", " ")
         if base_ccy == "PLN":
             return f"{formatted} PLN"
@@ -304,8 +337,8 @@ def render_dashboard(cfg, storage, T, today, start_date_cfg, base_ccy: str | Non
     cagr_str = f"{cagr * 100:.1f}%" if cagr is not None else "—"
     irr_str = f"{irr * 100:.1f}%" if irr is not None else "—"
 
-    render_metric_section(T, base_ccy, cur_value, contrib, best_ticker, cagr_str, irr_str, fmt)
-    render_pnl_toggle_section(T, pnl, pnl_pct, fmt)
+    render_metric_section(T, base_ccy, cur_value, contrib, best_ticker, cagr_str, irr_str, _fmt_money)
+    render_pnl_toggle_section(T, pnl, pnl_pct, _fmt_money)
 
     chart_mode = st.session_state.chart_mode
     render_portfolio_chart(T, base_ccy, dates, values, investeds, bench_by_date, BENCHMARKS, BENCH_COLORS, chart_mode)

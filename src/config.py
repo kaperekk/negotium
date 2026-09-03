@@ -6,18 +6,15 @@ Global config:  data/config.json
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
-from datetime import date
 
 ROOT = Path(__file__).parent.parent
 
 GLOBAL_CONFIG_PATH = ROOT / "data" / "config.json"
 
 DEFAULTS: dict = {
-    "name": "My Portfolio",
-    "start_day": "2020-01-01",
     "default_currency": "PLN",
-    "graph_precision": "1D",   # "1D" or "1W"
     "ticker_rules": [],
     "isin_tickers": [],
     "theme": "dark",
@@ -28,14 +25,32 @@ def _load_global() -> dict:
     if not GLOBAL_CONFIG_PATH.exists():
         _save_file(GLOBAL_CONFIG_PATH, DEFAULTS.copy())
         return DEFAULTS.copy()
-    with GLOBAL_CONFIG_PATH.open("r", encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with GLOBAL_CONFIG_PATH.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError) as exc:
+        # Corrupt/unreadable config: keep the broken file for inspection
+        # and start from defaults instead of crashing every launch.
+        backup = GLOBAL_CONFIG_PATH.with_suffix(".json.corrupt")
+        logging.getLogger(__name__).warning(
+            "config.json unreadable (%s) — backed up to %s, using defaults",
+            exc, backup.name,
+        )
+        try:
+            GLOBAL_CONFIG_PATH.replace(backup)
+        except OSError:
+            pass
+        _save_file(GLOBAL_CONFIG_PATH, DEFAULTS.copy())
+        return DEFAULTS.copy()
 
 
 def _save_file(path: Path, data: dict) -> None:
+    """Atomically persist JSON config (temp file + rename)."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
+    tmp = path.with_name(path.name + ".tmp")
+    with tmp.open("w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
+    tmp.replace(path)
 
 
 _config_cache: dict | None = None
@@ -75,19 +90,6 @@ def save(cfg: dict) -> None:
 def save_global(cfg: dict) -> None:
     """Save to the global config file (alias for save)."""
     save(cfg)
-
-
-def get_start_date(cfg: dict) -> date:
-    return date.fromisoformat(cfg["start_day"])
-
-
-def get_precision(cfg: dict) -> str:
-    """Return pandas resample rule: 'D' or 'W-FRI'."""
-    p = cfg.get("graph_precision", "1D")
-    return "D" if p == "1D" else "W-FRI"
-
-
-SUPPORTED_CURRENCIES = {"USD", "EUR", "PLN"}
 
 
 def get_theme(cfg: dict) -> str:

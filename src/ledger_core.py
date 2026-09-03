@@ -1,5 +1,5 @@
 """
-transactions.py — transaction ledger management
+ledger_core.py — transaction ledger management
 
 transactions.jsonl schema (one object per line, chronological):
   {"date": "YYYY-MM-DD", "entries": [
@@ -21,12 +21,31 @@ Rules:
 """
 from __future__ import annotations
 
+import functools
+import logging
+import threading
 from datetime import date, timedelta
 
 import storage
 import config as cfg_module
 from ticker_translate import translate_ticker
 from ticker_data import get_price
+
+log = logging.getLogger(__name__)
+
+# Serialise ledger mutations. Streamlit runs each session in a thread and
+# every mutator does read-modify-write on the same JSONL file — without the
+# lock two concurrent reruns can interleave and lose transactions.
+_ledger_lock = threading.RLock()
+
+
+def _locked(fn):
+    """Run a ledger mutator under the process-wide ledger lock."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with _ledger_lock:
+            return fn(*args, **kwargs)
+    return wrapper
 
 
 def _apply_entries(balance: dict[str, dict], entries: list[dict]) -> None:
@@ -41,6 +60,7 @@ def _apply_entries(balance: dict[str, dict], entries: list[dict]) -> None:
             balance[ticker]["avg_price"] = 0.0
 
 
+@_locked
 def add_transaction(
     tx_date: date | str,
     entries: list[dict],
@@ -66,70 +86,63 @@ def add_transaction(
         for e in entries
     ]
 
-    records = storage.read_jsonl(storage.TRANSACTIONS_PATH)
+    records = storage.read_jsonl(storage.transactions_path())
 
     if not records:
-        storage.append_jsonl(storage.TRANSACTIONS_PATH, {"date": date_str, "entries": entries})
-        _rebuild_balance([{"date": date_str, "entries": entries}])
-        storage.invalidate_portfolio_from(date_str)
-        return
+        records = [{"date": date_str, "entries": entries}]
+        storage.write_jsonl(storage.transactions_path(), records)
+    else:
+        last_date = records[-1]["date"]
 
-    last_date = records[-1]["date"]
-
-    if date_str > last_date:
-        # Fast append — new date after everything
-        rec = {"date": date_str, "entries": entries}
-        storage.append_jsonl(storage.TRANSACTIONS_PATH, rec)
-        today_str = date.today().isoformat()
-        if date_str <= today_str:
-            bal = storage.load_balance()
-            base_ccy = cfg_module.load().get("default_currency", "PLN")
-            _update_avg_prices(bal, rec, base_ccy)
-            _apply_entries(bal, entries)
-            storage.save_balance(bal)
-        storage.invalidate_portfolio_from(date_str)
-        return
-
-    if date_str == last_date:
-        # Merge into the last record
-        records[-1]["entries"].extend(entries)
-        storage.write_jsonl(storage.TRANSACTIONS_PATH, records)
-        _rebuild_balance(records, from_date=date_str)
-        storage.invalidate_portfolio_from(date_str)
-        return
-
-    # Past date — find insertion point, rewrite whole file
-    new_records: list[dict] = []
-    inserted = False
-    for rec in records:
-        if not inserted:
-            if rec["date"] == date_str:
-                # Merge into existing entry for this date
-                rec = dict(rec)  # shallow copy to avoid mutating original
-                rec["entries"] = rec["entries"] + entries
+        if date_str > last_date:
+            # Fast append — new date after everything
+            records.append({"date": date_str, "entries": entries})
+            storage.write_jsonl(storage.transactions_path(), records)
+        elif date_str == last_date:
+            # Merge into the last record
+            records[-1]["entries"].extend(entries)
+            storage.write_jsonl(storage.transactions_path(), records)
+        else:
+            # Past date — find insertion point, rewrite whole file
+            new_records: list[dict] = []
+            inserted = False
+            for rec in records:
+                if not inserted:
+                    if rec["date"] == date_str:
+                        # Merge into existing entry for this date
+                        rec = dict(rec)  # shallow copy to avoid mutating original
+                        rec["entries"] = rec["entries"] + entries
+                        new_records.append(rec)
+                        inserted = True
+                        continue
+                    elif rec["date"] > date_str:
+                        # Insert before this record
+                        new_records.append({"date": date_str, "entries": entries})
+                        inserted = True
                 new_records.append(rec)
-                inserted = True
-                continue
-            elif rec["date"] > date_str:
-                # Insert before this record
+
+            if not inserted:
                 new_records.append({"date": date_str, "entries": entries})
-                inserted = True
-        new_records.append(rec)
 
-    if not inserted:
-        new_records.append({"date": date_str, "entries": entries})
+            records = new_records
+            storage.write_jsonl(storage.transactions_path(), records)
 
-    storage.write_jsonl(storage.TRANSACTIONS_PATH, new_records)
-    _rebuild_balance(new_records, from_date=date_str)
+    # Balance is ALWAYS rebuilt by replaying the full ledger. An earlier
+    # optimisation replayed only records on/after the touched date on top of
+    # the persisted balance — but that balance already included those records,
+    # so every back-dated insert and same-date merge double-counted entries
+    # and silently corrupted balance.json.
+    _rebuild_balance(records)
     storage.invalidate_portfolio_from(date_str)
 
 
+@_locked
 def set_account_operation(date_str: str, entry_idx: int, value: bool) -> None:
     """Set or clear the account_operation flag on a specific entry.
 
     entry_idx: index of the entry within the transaction's entries list.
     """
-    records = storage.read_jsonl(storage.TRANSACTIONS_PATH)
+    records = storage.read_jsonl(storage.transactions_path())
     for rec in records:
         if rec["date"] == date_str:
             entries = rec["entries"]
@@ -138,14 +151,15 @@ def set_account_operation(date_str: str, entry_idx: int, value: bool) -> None:
                     entries[entry_idx]["account_operation"] = True
                 else:
                     entries[entry_idx].pop("account_operation", None)
-                storage.write_jsonl(storage.TRANSACTIONS_PATH, records)
+                storage.write_jsonl(storage.transactions_path(), records)
                 storage.invalidate_portfolio_from(date_str)
             break
 
 
+@_locked
 def delete_transaction(date_str: str, entry_idx: int) -> None:
     """Remove a single entry from a transaction. Removes the record if empty."""
-    records = storage.read_jsonl(storage.TRANSACTIONS_PATH)
+    records = storage.read_jsonl(storage.transactions_path())
     new_records: list[dict] = []
     for rec in records:
         if rec["date"] == date_str:
@@ -157,11 +171,12 @@ def delete_transaction(date_str: str, entry_idx: int) -> None:
                 new_records.append(rec)
         else:
             new_records.append(rec)
-    storage.write_jsonl(storage.TRANSACTIONS_PATH, new_records)
+    storage.write_jsonl(storage.transactions_path(), new_records)
     _rebuild_balance(new_records)
     storage.invalidate_portfolio_from(date_str)
 
 
+@_locked
 def update_transaction(
     date_str: str,
     entry_idx: int,
@@ -171,7 +186,7 @@ def update_transaction(
 ) -> None:
     """Replace a single entry's ticker, amount, and account_operation flag."""
     rules = cfg_module.load().get("ticker_rules", [])
-    records = storage.read_jsonl(storage.TRANSACTIONS_PATH)
+    records = storage.read_jsonl(storage.transactions_path())
     for rec in records:
         if rec["date"] == date_str:
             if 0 <= entry_idx < len(rec["entries"]):
@@ -182,32 +197,48 @@ def update_transaction(
                 if account_operation:
                     new_entry["account_operation"] = True
                 rec["entries"][entry_idx] = new_entry
-                storage.write_jsonl(storage.TRANSACTIONS_PATH, records)
+                storage.write_jsonl(storage.transactions_path(), records)
                 _rebuild_balance(records)
                 storage.invalidate_portfolio_from(date_str)
             break
 
 
-def _rebuild_balance(records: list[dict], from_date: str | None = None) -> None:
-    """Replay ledger to recompute balance and avg_price from scratch.
+@_locked
+def remap_tickers() -> int:
+    """Re-apply ticker_rules to every entry in the ledger.
 
-    If from_date is provided, only records on or after from_date are replayed
-    on top of the existing balance. Otherwise replays everything from scratch.
+    Returns the number of entries whose ticker changed. Safe to call when
+    rules are unchanged — it detects no-ops and skips the write.
+    """
+    rules = cfg_module.load().get("ticker_rules", [])
+    records = storage.read_jsonl(storage.transactions_path())
+    changed = 0
+    for rec in records:
+        for i, e in enumerate(rec["entries"]):
+            new_ticker = translate_ticker(e["ticker"], rules)
+            if new_ticker != e["ticker"]:
+                rec["entries"][i] = {**e, "ticker": new_ticker}
+                changed += 1
+    if changed:
+        storage.write_jsonl(storage.transactions_path(), records)
+        _rebuild_balance(records)
+        if records:
+            storage.invalidate_portfolio_from(records[0]["date"])
+    return changed
+
+
+@_locked
+def _rebuild_balance(records: list[dict]) -> None:
+    """Replay the ledger to recompute balance and avg_price from scratch.
+
+    Always replays every record onto a fresh balance and persists the result.
+    Records dated in the future are skipped (same rule the ledger replay in
+    build_portfolio uses) so future-dated entries don't leak into holdings.
     """
     base_ccy = cfg_module.load().get("default_currency", "PLN")
     today_str = date.today().isoformat()
 
-    if from_date:
-        balance = storage.load_balance()
-        start_idx = 0
-        for i, rec in enumerate(records):
-            if rec["date"] >= from_date:
-                start_idx = i
-                break
-        records = records[start_idx:]
-    else:
-        balance = {}
-
+    balance: dict[str, dict] = {}
     price_cache: dict = {}
     for rec in records:
         if rec["date"] > today_str:
@@ -280,6 +311,7 @@ def _update_avg_prices(balance: dict[str, dict], rec: dict, base_ccy: str, price
             balance[ticker]["avg_price"] = new_avg
 
 
+@_locked
 def rebuild_balance() -> None:
     """Rebuild balance.json from scratch by replaying the entire ledger."""
     records = get_all_transactions()
@@ -429,7 +461,7 @@ def compute_irr(current_value: float, base_currency: str | None = None, fx_cache
 def get_all_transactions() -> list[dict]:
     """Return all transactions, chronologically (cached per file mtime)."""
     import os
-    path = storage.TRANSACTIONS_PATH
+    path = storage.transactions_path()
     mtime = os.path.getmtime(path) if path.exists() else 0.0
     cache_key = ("_tx_cache", mtime)
     if cache_key not in get_all_transactions._cache:
@@ -438,6 +470,18 @@ def get_all_transactions() -> list[dict]:
     return get_all_transactions._cache[cache_key]
 
 get_all_transactions._cache: dict = {}
+
+
+def first_transaction_date() -> date | None:
+    """Return the earliest transaction date, or None if there are none.
+
+    Used as the data-driven floor for chart ranges, the custom-range picker
+    and portfolio (re)computation — replaces the old config ``start_day``.
+    """
+    txs = get_all_transactions()
+    if not txs:
+        return None
+    return date.fromisoformat(min(r["date"] for r in txs))
 
 
 def get_transactions_up_to(as_of: str) -> list[dict]:
@@ -498,13 +542,21 @@ def get_all_tickers(include_fx: bool = True) -> set[str]:
     return tickers
 
 
-def existing_keys() -> set[tuple[str, str, float]]:
-    """Return set of (date, ticker, amount) tuples from the ledger for dedup."""
-    keys: set[tuple[str, str, float]] = set()
+def existing_entry_counts() -> dict[tuple[str, str, float], int]:
+    """Return {(date, ticker, amount): occurrence_count} from the ledger.
+
+    Multiset semantics for import dedup: an incoming entry is a duplicate
+    only while the ledger already holds an unconsumed identical occurrence.
+    Re-importing the same statement stays idempotent, while legitimate
+    same-day same-quantity trades are no longer silently dropped (the old
+    set-based key collapsed them).
+    """
+    counts: dict[tuple[str, str, float], int] = {}
     for rec in get_all_transactions():
         for e in rec["entries"]:
-            keys.add((rec["date"], e["ticker"].upper(), round(e["amount"], 8)))
-    return keys
+            key = (rec["date"], e["ticker"].upper(), round(float(e["amount"]), 8))
+            counts[key] = counts.get(key, 0) + 1
+    return counts
 
 
 def get_ticker_history(ticker: str) -> list[dict]:
@@ -541,9 +593,21 @@ def get_ticker_history(ticker: str) -> list[dict]:
     return results
 
 
-def fix_negative_positions(transactions: list[dict], currency: str) -> None:
-    """If any stock/ETF ends negative, insert a buy on the same date to zero it."""
-    balance: dict[str, float] = {}
+def find_negative_positions(
+    transactions: list[dict],
+    starting_balance: dict[str, float] | None = None,
+) -> list[tuple[str, float, str]]:
+    """Detect stock/ETF positions that would end negative after import.
+
+    Returns a list of (ticker, missing_shares, first_negative_date) for each
+    ticker that goes negative. This typically happens after corporate actions
+    (splits, spin-offs) where the broker statement doesn't record the
+    acquisition of the new shares — e.g. SYNEKTIK split into SYNEKTIK +
+    SYN2BIO, and SYN2BIO was sold without a corresponding buy.
+
+    Pass starting_balance to include existing ledger holdings in the check.
+    """
+    balance: dict[str, float] = dict(starting_balance) if starting_balance else {}
     for rec in transactions:
         for e in rec["entries"]:
             ticker = e["ticker"].upper()
@@ -551,10 +615,10 @@ def fix_negative_positions(transactions: list[dict], currency: str) -> None:
                 continue
             balance[ticker] = balance.get(ticker, 0.0) + float(e["amount"])
 
+    negatives: list[tuple[str, float, str]] = []
     for ticker, amt in balance.items():
         if amt < -1e-9:
-            # Find the date where the position first went negative
-            fix_date = "2000-01-01"
+            first_neg_date = "2000-01-01"
             running: dict[str, float] = {}
             for rec in transactions:
                 for e in rec["entries"]:
@@ -563,13 +627,53 @@ def fix_negative_positions(transactions: list[dict], currency: str) -> None:
                         continue
                     running[t] = running.get(t, 0.0) + float(e["amount"])
                 if running.get(ticker, 0.0) < -1e-9:
-                    fix_date = rec["date"]
+                    first_neg_date = rec["date"]
                     break
-            buy_shares = round(abs(amt), 8)
-            transactions.append({
-                "date": fix_date,
-                "entries": [
-                    {"ticker": ticker, "amount": buy_shares},
-                    {"ticker": currency, "amount": -0.01},
-                ],
-            })
+            negatives.append((ticker, round(abs(amt), 8), first_neg_date))
+    return negatives
+
+
+def auto_fix_negative_positions(
+    transactions: list[dict],
+    starting_balance: dict[str, float] | None = None,
+) -> list[tuple[str, float, str]]:
+    """Auto-insert zero-cost buys for positions that would end negative.
+
+    Handles corporate actions (splits, spin-offs) where the broker statement
+    doesn't record the acquisition of new shares. Inserts a buy at zero cost
+    on the date the position first went negative — no cash leg is fabricated.
+
+    Pass starting_balance to include existing ledger holdings in the check.
+    This prevents double-fixing when the user has already manually added
+    a corporate-action entry.
+
+    Returns the list of (ticker, shares, date) that were auto-fixed, so the
+    caller can log or display them. The user can later adjust the cost basis
+    if they want to allocate from the parent stock.
+    """
+    negatives = find_negative_positions(transactions, starting_balance=starting_balance)
+    if not negatives:
+        return []
+
+    for ticker, missing, first_neg_date in negatives:
+        log.warning(
+            "Corporate action detected: %s has %s shares with no buy — "
+            "auto-inserting zero-cost acquisition on %s. "
+            "Adjust cost basis later if needed.",
+            ticker, missing, first_neg_date,
+        )
+        transactions.append({
+            "date": first_neg_date,
+            "entries": [{"ticker": ticker, "amount": missing}],
+        })
+
+    return negatives
+
+
+def fix_negative_positions(transactions: list[dict], currency: str) -> None:
+    """Deprecated: replaced by auto_fix_negative_positions.
+
+    Retained for backward compatibility. Now auto-inserts zero-cost buys
+    instead of the old -0.01 cash hack.
+    """
+    auto_fix_negative_positions(transactions)

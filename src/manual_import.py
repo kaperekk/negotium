@@ -9,7 +9,7 @@ import json
 import logging
 from pathlib import Path
 
-from transactions import get_all_transactions
+from ledger_core import get_all_transactions
 
 log = logging.getLogger(__name__)
 
@@ -58,9 +58,9 @@ def parse_manual_json(file_path: str | Path) -> list[dict]:
     return transactions
 
 
-def _existing_keys() -> set[tuple[str, str, float]]:
-    from transactions import existing_keys
-    return existing_keys()
+def _existing_entry_counts() -> dict[tuple[str, str, float], int]:
+    from ledger_core import existing_entry_counts
+    return existing_entry_counts()
 
 
 def import_manual(file_path: str | Path) -> dict:
@@ -71,17 +71,20 @@ def import_manual(file_path: str | Path) -> dict:
         return {"success": False, "error": msg}
 
     transactions = parse_manual_json(file_path)
-    existing = _existing_keys()
+    existing = _existing_entry_counts()
 
     imported = 0
     skipped = 0
     for rec in transactions:
-        new_entries = [
-            e for e in rec["entries"]
-            if (rec["date"], e["ticker"].upper(), round(e["amount"], 8)) not in existing
-        ]
+        new_entries = []
+        for e in rec["entries"]:
+            key = (rec["date"], e["ticker"].upper(), round(float(e["amount"]), 8))
+            if existing.get(key, 0) > 0:
+                existing[key] -= 1
+            else:
+                new_entries.append(e)
         if new_entries:
-            from transactions import add_transaction
+            from ledger_core import add_transaction
             add_transaction(rec["date"], new_entries)
             imported += 1
         else:

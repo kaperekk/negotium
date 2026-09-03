@@ -4,7 +4,6 @@ storage.py — low-level file I/O helpers with multi-project support
 Layout:
   ROOT/data/prices/{TICKER}/{YEAR}.json  — shared price cache
   ROOT/data/projects.json                — project registry
-  ROOT/data/{project}/config.json        — per-project config overrides
   ROOT/data/{project}/transactions.jsonl — transaction ledger
   ROOT/data/{project}/portfolio.jsonl    — computed snapshots
   ROOT/data/{project}/balance.json       — current holdings
@@ -26,6 +25,7 @@ except ImportError:
 from pathlib import Path
 from datetime import date, datetime
 from typing import Iterator
+import threading
 
 ROOT = Path(__file__).parent.parent
 
@@ -34,38 +34,70 @@ PRICES_DIR    = DATA_ROOT / "prices"
 PROJECTS_PATH = DATA_ROOT / "projects.json"
 
 # ── Current project state ─────────────────────────────────────────────────────
+# The active project resolves per Streamlit session first (each browser
+# session has its own st.session_state), falling back to a process-wide value
+# for tests and non-UI scripts. Deliberately NO module-level path constants:
+# with them, two sessions rerunning concurrently could read and write each
+# other's project files. Paths are derived from the project on every call.
 
+_SESSION_PROJECT_KEY = "negotium_current_project"
 _current_project: str | None = None
 
-TRANSACTIONS_PATH = DATA_ROOT / "transactions.jsonl"
-PORTFOLIO_PATH    = DATA_ROOT / "portfolio.jsonl"
-BALANCE_PATH      = DATA_ROOT / "balance.json"
-IMPORTS_DIR       = Path("imports")
+
+def current_project() -> str | None:
+    """Return the active project: session-scoped first, then process fallback."""
+    try:
+        import streamlit as st
+        val = st.session_state.get(_SESSION_PROJECT_KEY)
+        if val:
+            return str(val)
+    except Exception:
+        pass  # no Streamlit runtime (tests, plain scripts) → process fallback
+    return _current_project
+
+
+def get_current_project() -> str | None:
+    """Alias of current_project()."""
+    return current_project()
+
+
+def set_current_project(name: str) -> None:
+    """Set the active project for this session (and the process fallback)."""
+    global _current_project
+    _current_project = name
+    try:
+        import streamlit as st
+        st.session_state[_SESSION_PROJECT_KEY] = name
+    except Exception:
+        pass
 
 
 def _project_dir(name: str | None = None) -> Path:
     """Return the data directory for a project."""
-    n = name or _current_project
+    n = name or current_project()
     if n is None:
         raise RuntimeError("No project selected. Call set_current_project() first.")
     return DATA_ROOT / n
 
 
-def set_current_project(name: str) -> None:
-    """Set the active project — updates all project-scoped paths."""
-    global _current_project
-    global TRANSACTIONS_PATH, PORTFOLIO_PATH, BALANCE_PATH, IMPORTS_DIR
-
-    _current_project = name
-    d = _project_dir(name)
-    TRANSACTIONS_PATH = d / "transactions.jsonl"
-    PORTFOLIO_PATH    = d / "portfolio.jsonl"
-    BALANCE_PATH      = d / "balance.json"
-    IMPORTS_DIR       = d / "imports"
+def transactions_path() -> Path:
+    """Path of the current project's transaction ledger."""
+    return _project_dir() / "transactions.jsonl"
 
 
-def get_current_project() -> str | None:
-    return _current_project
+def portfolio_path() -> Path:
+    """Path of the current project's computed snapshot cache."""
+    return _project_dir() / "portfolio.jsonl"
+
+
+def balance_path() -> Path:
+    """Path of the current project's balance.json."""
+    return _project_dir() / "balance.json"
+
+
+def imports_dir() -> Path:
+    """Path of the current project's imports directory."""
+    return _project_dir() / "imports"
 
 
 # ── Project registry ──────────────────────────────────────────────────────────
@@ -84,13 +116,12 @@ def _load_registry() -> dict:
 
 
 def _save_registry(reg: dict) -> None:
-    PROJECTS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    PROJECTS_PATH.write_bytes(_dumps(reg).encode())
+    _write_bytes_atomic(PROJECTS_PATH, _dumps(reg).encode())
 
 
 def get_last_refresh(name: str | None = None) -> str:
     """Return the ISO date of the last data refresh for a project ('' if none)."""
-    name = name or _current_project
+    name = name or current_project()
     if name is None:
         return ""
     reg = _load_registry()
@@ -99,7 +130,7 @@ def get_last_refresh(name: str | None = None) -> str:
 
 def set_last_refresh(date_str: str, name: str | None = None) -> None:
     """Persist the last refresh date for a project in the registry."""
-    name = name or _current_project
+    name = name or current_project()
     if name is None:
         return
     reg = _load_registry()
@@ -110,7 +141,7 @@ def set_last_refresh(date_str: str, name: str | None = None) -> None:
 
 def get_watchlist(name: str | None = None) -> list[str]:
     """Return the per-project watchlist tickers (empty list if none)."""
-    name = name or _current_project
+    name = name or current_project()
     if name is None:
         return []
     reg = _load_registry()
@@ -119,7 +150,7 @@ def get_watchlist(name: str | None = None) -> list[str]:
 
 def set_watchlist(tickers: list[str], name: str | None = None) -> None:
     """Persist the per-project watchlist tickers in the registry."""
-    name = name or _current_project
+    name = name or current_project()
     if name is None:
         return
     reg = _load_registry()
@@ -157,7 +188,6 @@ def rename_project(old: str, new: str) -> None:
 
 def delete_project(name: str) -> None:
     """Delete a project and all its data."""
-    global _current_project
     import shutil
     reg = _load_registry()
     if name not in reg:
@@ -167,8 +197,14 @@ def delete_project(name: str) -> None:
         shutil.rmtree(d)
     del reg[name]
     _save_registry(reg)
-    if _current_project == name:
+    if current_project() == name:
+        global _current_project
         _current_project = None
+        try:
+            import streamlit as st
+            st.session_state.pop(_SESSION_PROJECT_KEY, None)
+        except Exception:
+            pass
 
 
 def init_legacy_project() -> str | None:
@@ -201,30 +237,26 @@ def init_legacy_project() -> str | None:
 
 
 # ── Supported currencies ──────────────────────────────────────────────────────
+# Single source of truth lives in currencies.py; re-exported here so existing
+# `storage.SUPPORTED_CURRENCIES` call sites keep working.
 
-SUPPORTED_CURRENCIES: frozenset[str] = frozenset({"USD", "EUR", "PLN"})
-
-CURRENCY_SUFFIXES: dict[str, list[str]] = {
-    "EUR": [".DE", ".F", ".PA", ".MI", ".AS", ".BR", ".LS", ".MC", ".VI", ".IR"],
-    "GBP": [".L"],
-    "MXN": [".MX"],
-    "CAD": [".TO"],
-    "AUD": [".AX"],
-    "HKD": [".HK"],
-    "JPY": [".T"],
-    "KRW": [".KS"],
-    "CNY": [".SS", ".SZ"],
-    "SGD": [".SG", ".SI"],
-    "CHF": [".SW"],
-    "BRL": [".SA"],
-    "PLN": [".WA"],
-}
-SUFFIX_CURRENCY: dict[str, str] = {s: ccy for ccy, suffixes in CURRENCY_SUFFIXES.items() for s in suffixes}
-
-TRIANGULATE_VIA_USD: frozenset[str] = frozenset({"MXN"})
+from currencies import (  # noqa: E402,F401 — re-exported for compatibility
+    SUPPORTED_CURRENCIES,
+    CURRENCY_SUFFIXES,
+    SUFFIX_CURRENCY,
+    TRIANGULATE_VIA_USD,
+)
 
 
 # ── JSONL helpers ──────────────────────────────────────────────────────────────
+
+def _write_bytes_atomic(path: Path, data: bytes) -> None:
+    """Write bytes via temp file + rename so a crash never leaves a torn file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_bytes(data)
+    tmp.replace(path)
+
 
 def iter_jsonl(path: Path) -> Iterator[dict]:
     """Yield parsed dicts from a .jsonl file, skipping blank lines."""
@@ -241,12 +273,9 @@ def read_jsonl(path: Path) -> list[dict]:
 
 
 def write_jsonl(path: Path, records: list[dict]) -> None:
-    """Overwrite file with records (sorted by 'date' key if present)."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("wb") as f:
-        for rec in records:
-            f.write(_dumps(rec).encode())
-            f.write(b"\n")
+    """Atomically overwrite file with one JSON object per line."""
+    buf = b"".join(_dumps(rec).encode() + b"\n" for rec in records)
+    _write_bytes_atomic(path, buf)
 
 
 def append_jsonl(path: Path, record: dict) -> None:
@@ -261,9 +290,9 @@ def append_jsonl(path: Path, record: dict) -> None:
 
 def load_balance() -> dict[str, dict]:
     """Return {ticker: {"amount": float, "avg_price": float}} dict."""
-    if not BALANCE_PATH.exists():
+    if not balance_path().exists():
         return {}
-    data = _loads(BALANCE_PATH.read_bytes())
+    data = _loads(balance_path().read_bytes())
     result = {}
     for k, v in data.items():
         if isinstance(v, dict):
@@ -283,8 +312,8 @@ def save_balance(balance: dict[str, dict]) -> None:
                 clean[k] = {"amount": round(amt, 8), "avg_price": round(v.get("avg_price", 0.0), 6)}
             else:
                 clean[k] = {"amount": round(amt, 8), "avg_price": 0.0}
-    BALANCE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    BALANCE_PATH.write_bytes(_dumps(clean).encode())
+    balance_path().parent.mkdir(parents=True, exist_ok=True)
+    _write_bytes_atomic(balance_path(), _dumps(clean).encode())
 
 
 # ── Price cache (shared) ──────────────────────────────────────────────────────
@@ -304,8 +333,7 @@ def load_price_year(ticker: str, year: int) -> dict[str, float]:
 def save_price_year(ticker: str, year: int, prices: dict[str, float]) -> None:
     """Persist {YYYY-MM-DD: close_price} for a ticker/year."""
     p = price_cache_path(ticker, year)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_bytes(_dumps(prices).encode())
+    _write_bytes_atomic(p, _dumps(prices).encode())
 
 
 def has_price_year(ticker: str, year: int) -> bool:
@@ -326,11 +354,11 @@ def load_prices_range(ticker: str, start: date, end: date) -> dict[str, float]:
 # ── Portfolio snapshots ────────────────────────────────────────────────────────
 
 def load_portfolio() -> list[dict]:
-    return read_jsonl(PORTFOLIO_PATH)
+    return read_jsonl(portfolio_path())
 
 
 def save_portfolio(snapshots: list[dict]) -> None:
-    write_jsonl(PORTFOLIO_PATH, snapshots)
+    write_jsonl(portfolio_path(), snapshots)
 
 
 def invalidate_portfolio_from(from_date: str) -> None:
@@ -338,17 +366,21 @@ def invalidate_portfolio_from(from_date: str) -> None:
     Remove all portfolio snapshots on or after from_date.
     Called when a transaction is inserted that affects a past date.
     Streams line-by-line to avoid loading the entire file into memory.
+    Every line is parsed so the comparison never depends on the JSON
+    serializer's exact byte layout (orjson and json format differently).
     """
-    if not PORTFOLIO_PATH.exists():
+    if not portfolio_path().exists():
         return
-    tmp = PORTFOLIO_PATH.with_suffix(".jsonl.tmp")
-    with PORTFOLIO_PATH.open("rb") as src, tmp.open("wb") as dst:
-        from_date_bytes = from_date.encode()
+    tmp = portfolio_path().with_suffix(".jsonl.tmp")
+    with portfolio_path().open("rb") as src, tmp.open("wb") as dst:
         for line in src:
             stripped = line.strip()
-            if stripped and stripped[9:19] < from_date_bytes:
+            if not stripped:
+                continue
+            rec = _loads(stripped)
+            if str(rec.get("date", "")) < from_date:
                 dst.write(line)
-    tmp.rename(PORTFOLIO_PATH)
+    tmp.rename(portfolio_path())
 
 
 # ── Benchmark cache ──────────────────────────────────────────────────────────
@@ -360,8 +392,7 @@ def benchmark_cache_path(base_ccy: str) -> Path:
 def save_benchmarks(base_ccy: str, data: list[dict]) -> None:
     """Save pre-computed benchmark values. Each entry: {date, ticker: value, ...}."""
     p = benchmark_cache_path(base_ccy)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_bytes(_dumps(data).encode())
+    _write_bytes_atomic(p, _dumps(data).encode())
 
 
 def load_benchmarks(base_ccy: str) -> list[dict] | None:
@@ -387,7 +418,8 @@ def load_ticker_names() -> dict[str, str]:
     if not TICKER_NAMES_PATH.exists():
         _ticker_names_cache = {}
         return _ticker_names_cache
-    _ticker_names_cache = _loads(TICKER_NAMES_PATH.read_bytes())
+    with _cache_lock:
+        _ticker_names_cache = _loads(TICKER_NAMES_PATH.read_bytes())
     return _ticker_names_cache
 
 
@@ -395,8 +427,8 @@ def save_ticker_names(names: dict[str, str]) -> None:
     """Persist {ticker: company_name} cache."""
     global _ticker_names_cache
     _ticker_names_cache = names
-    TICKER_NAMES_PATH.parent.mkdir(parents=True, exist_ok=True)
-    TICKER_NAMES_PATH.write_bytes(_dumps(names).encode())
+    with _cache_lock:
+        _write_bytes_atomic(TICKER_NAMES_PATH, _dumps(names).encode())
 
 
 # ── Ticker metadata cache (sector / country / asset class) ───────────────────
@@ -414,7 +446,8 @@ def load_ticker_meta() -> dict:
     if not TICKER_META_PATH.exists():
         _ticker_meta_cache = {}
         return _ticker_meta_cache
-    _ticker_meta_cache = _loads(TICKER_META_PATH.read_bytes())
+    with _cache_lock:
+        _ticker_meta_cache = _loads(TICKER_META_PATH.read_bytes())
     return _ticker_meta_cache
 
 
@@ -422,8 +455,65 @@ def save_ticker_meta(meta: dict) -> None:
     """Persist {ticker: {sector, country, asset_class}} cache."""
     global _ticker_meta_cache
     _ticker_meta_cache = meta
-    TICKER_META_PATH.parent.mkdir(parents=True, exist_ok=True)
-    TICKER_META_PATH.write_bytes(_dumps(meta).encode())
+    with _cache_lock:
+        _write_bytes_atomic(TICKER_META_PATH, _dumps(meta).encode())
+
+
+# ── ATH cache (per-ticker all-time high, survives restarts) ───────────────────
+
+ATH_PATH = DATA_ROOT / "ath.json"
+
+_ath_disk_cache: dict | None = None
+_cache_lock = threading.Lock()
+
+
+def load_ath() -> dict:
+    """Return {ticker: {price, date}} from cache, or empty dict."""
+    global _ath_disk_cache
+    if _ath_disk_cache is not None:
+        return _ath_disk_cache
+    if not ATH_PATH.exists():
+        _ath_disk_cache = {}
+        return _ath_disk_cache
+    with _cache_lock:
+        _ath_disk_cache = _loads(ATH_PATH.read_bytes())
+    return _ath_disk_cache
+
+
+def save_ath(data: dict) -> None:
+    """Persist {ticker: {price, date}} — keeps watchlist ATH offline across restarts."""
+    global _ath_disk_cache
+    _ath_disk_cache = data
+    with _cache_lock:
+        _write_bytes_atomic(ATH_PATH, _dumps(data).encode())
+
+
+# ── Earnings-date cache (per-ticker, survives restarts) ───────────────────────
+
+EARNINGS_PATH = DATA_ROOT / "earnings.json"
+
+_earnings_disk_cache: dict | None = None
+
+
+def load_earnings() -> dict:
+    """Return {ticker: YYYY-MM-DD} from cache, or empty dict."""
+    global _earnings_disk_cache
+    if _earnings_disk_cache is not None:
+        return _earnings_disk_cache
+    if not EARNINGS_PATH.exists():
+        _earnings_disk_cache = {}
+        return _earnings_disk_cache
+    with _cache_lock:
+        _earnings_disk_cache = _loads(EARNINGS_PATH.read_bytes())
+    return _earnings_disk_cache
+
+
+def save_earnings(data: dict) -> None:
+    """Persist {ticker: YYYY-MM-DD} — keeps earnings dates offline across restarts."""
+    global _earnings_disk_cache
+    _earnings_disk_cache = data
+    with _cache_lock:
+        _write_bytes_atomic(EARNINGS_PATH, _dumps(data).encode())
 
 
 # ── Dividend cache (per-ticker ex-date → dividend per share) ──────────────────
@@ -441,7 +531,8 @@ def load_dividends() -> dict:
     if not DIVIDENDS_PATH.exists():
         _dividends_cache = {}
         return _dividends_cache
-    _dividends_cache = _loads(DIVIDENDS_PATH.read_bytes())
+    with _cache_lock:
+        _dividends_cache = _loads(DIVIDENDS_PATH.read_bytes())
     return _dividends_cache
 
 
@@ -449,5 +540,5 @@ def save_dividends(dividends: dict) -> None:
     """Persist {ticker: {YYYY-MM-DD: dividend_per_share}} cache."""
     global _dividends_cache
     _dividends_cache = dividends
-    DIVIDENDS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    DIVIDENDS_PATH.write_bytes(_dumps(dividends).encode())
+    with _cache_lock:
+        _write_bytes_atomic(DIVIDENDS_PATH, _dumps(dividends).encode())

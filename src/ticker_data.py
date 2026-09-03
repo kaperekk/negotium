@@ -1,7 +1,7 @@
 """
 ticker_data.py — download and cache price data from Yahoo Finance
 
-Cache layout: data/{TICKER}/{YEAR}.json  → {YYYY-MM-DD: close_price}
+Cache layout: data/prices/{TICKER}/{YEAR}.json  → {YYYY-MM-DD: close_price}
 
 FX tickers (used to convert currencies to PLN):
   USD → PLN:  USDPLN=X
@@ -14,11 +14,11 @@ be expressed in the user's chosen base currency.
 """
 from __future__ import annotations
 
+import atexit
 import logging
 import os
-import sys
+import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, redirect_stdout, redirect_stderr
 from datetime import date, timedelta
 from typing import Callable
@@ -29,13 +29,27 @@ log = logging.getLogger(__name__)
 logging.getLogger("yfinance").setLevel(logging.ERROR)
 logging.getLogger("urllib3").setLevel(logging.ERROR)
 
+# Single process-lifetime /dev/null stream. It is opened once and only closed
+# when all non-daemon threads are gone (``atexit`` runs after the interpreter
+# joins them), so a background thread still winding down during shutdown can
+# never hit an already-closed file ("ValueError: I/O operation on closed
+# file."). Closing it explicitly at exit also avoids a ResourceWarning at
+# interpreter finalization. Opening + closing a fresh stream per call churned
+# one file descriptor per download instead.
+_DEVNULL_STREAM = open(os.devnull, "w", encoding="utf-8")
+atexit.register(_DEVNULL_STREAM.close)
+
 
 @contextmanager
 def _suppress_output():
-    """Suppress stdout/stderr to silence yfinance download noise (thread-safe)."""
-    with open(os.devnull, "w") as devnull:
-        with redirect_stdout(devnull), redirect_stderr(devnull):
-            yield
+    """Suppress stdout/stderr to silence yfinance download noise.
+
+    Redirects to a shared /dev/null stream. Safe for concurrent use —
+    ``yf.download(threads=True)`` runs worker threads that each trigger this,
+    and since we discard all output, interleaved writes are harmless.
+    """
+    with redirect_stdout(_DEVNULL_STREAM), redirect_stderr(_DEVNULL_STREAM):
+        yield
 
 from storage import (
     has_price_year,
@@ -90,6 +104,15 @@ def get_ticker_name(ticker: str) -> str:
 
 
 _CURRENCY_CACHE: dict[str, str] = {}
+
+
+def invalidate_currency_cache() -> None:
+    """Clear the in-memory currency cache.
+
+    Call after corporate actions or when a ticker's trading currency may
+    have changed (e.g., moved from LSE to NYSE).
+    """
+    _CURRENCY_CACHE.clear()
 
 
 def get_ticker_currency(ticker: str) -> str:
@@ -450,7 +473,8 @@ def get_price(
     `cache` is a dict[ticker][year] → {date_str: price} — mutated in place
     for performance so callers can reuse it across many calls.
 
-    If the exact date is missing (weekend/holiday), walks back up to 5 days.
+    If the exact date is missing (weekend/holiday), walks back up to 7
+    calendar days.
     Returns None if no price found.
     """
     if ticker.upper() in SUPPORTED_CURRENCIES:
@@ -500,8 +524,7 @@ def _latest_price(
     if ticker.upper() in SUPPORTED_CURRENCIES:
         return 1.0
     if ticker not in cache or not isinstance(cache[ticker], dict):
-        if ticker not in cache:
-            return None
+        return None
     for y in sorted(cache[ticker].keys(), reverse=True):
         slab = cache[ticker].get(y) or {}
         if not slab:
@@ -513,6 +536,15 @@ def _latest_price(
 _recent_price_cache: dict = {}
 
 
+def invalidate_recent_price_cache() -> None:
+    """Clear the in-memory recent-price cache.
+
+    Call after force-refreshing market data so the watchlist picks up the
+    latest closes on the next rerun.
+    """
+    _recent_price_cache.clear()
+
+
 def get_recent_prices(ticker: str, days: int = 60, ttl: int = 900) -> tuple[dict, float | None, str | None]:
     """Return (recent_series, latest_price, latest_date) for a watchlist ticker.
 
@@ -522,7 +554,9 @@ def get_recent_prices(ticker: str, days: int = 60, ttl: int = 900) -> tuple[dict
     hammering Yahoo Finance on every UI rerun.
 
     Price history is populated via ``ensure`` (and thus cached on disk like every
-    other ticker), so the first call for a ticker may hit the network.
+    other ticker), so the first call for a ticker may hit the network. The current
+    year is NOT force-refreshed here: the dashboard already keeps it fresh, and
+    the watchlist just needs the cached closes.
     """
     import time
 
@@ -537,7 +571,7 @@ def get_recent_prices(ticker: str, days: int = 60, ttl: int = 900) -> tuple[dict
     from datetime import timedelta
     today = date.today()
     start = today - timedelta(days=days + 30)
-    ensure(ticker, start, today)
+    ensure(ticker, start, today, force_refresh_current_year=False)
 
     prices: dict[str, float] = {}
     for y in range(start.year, today.year + 1):
@@ -551,18 +585,48 @@ def get_recent_prices(ticker: str, days: int = 60, ttl: int = 900) -> tuple[dict
         latest = sorted_dates[-1]
         result = (recent, prices[latest], latest)
 
-    _recent_price_cache[cache_key] = (now, result)
+    _recent_price_cache[cache_key] = (time.time(), result)
     return result
 
 
 _ath_cache: dict = {}
 
 
-def get_all_time_high(ticker: str, ttl: int = 86400) -> tuple[float | None, str | None]:
-    """Return (ATH_price, ATH_date) for a ticker using its full Yahoo history.
+def invalidate_ath_cache() -> None:
+    """Clear the in-memory ATH (all-time-high) cache.
 
-    Cached in-memory for ``ttl`` seconds (a day) since ATH changes rarely.
-    Returns (None, None) if unavailable or on failure.
+    Call after downloading new price history so a new high is reflected
+    immediately instead of waiting for the TTL to expire.
+    """
+    _ath_cache.clear()
+
+
+def _ath_from_cache(ticker: str) -> tuple[float, str] | None:
+    """Compute ATH from on-disk price cache only — zero network cost.
+
+    Scans all cached price years for the ticker (they're populated by the
+    portfolio download flow for held positions and by ``ensure`` for watchlist
+    symbols) and returns (max_price, date). Returns None if no data is cached.
+    """
+    from storage import load_prices_range
+    cached = load_prices_range(ticker, date(1980, 1, 1), date.today())
+    if not cached:
+        return None
+    peak_date = max(cached, key=cached.get)
+    return float(cached[peak_date]), peak_date
+
+
+def get_all_time_high(ticker: str, ttl: int = 86400) -> tuple[float | None, str | None]:
+    """Return (ATH_price, ATH_date) for a ticker.
+
+    Resolution order (cheapest first):
+      1. in-memory TTL cache
+      2. ``ath.json`` disk cache (persisted from a previous full-history lookup)
+      3. on-disk price cache (approximate — no network, good enough for held tickers)
+      4. full Yahoo ``period="max"`` download (first-ever visit only), then persisted
+
+    Persisting the network result means a server restart never re-downloads the
+    full history for the same watchlist symbol.
     """
     import time
 
@@ -573,7 +637,33 @@ def get_all_time_high(ticker: str, ttl: int = 86400) -> tuple[float | None, str 
     if cached and now - cached[0] < ttl:
         return cached[1]
 
+    from storage import load_ath as storage_load_ath
+    from storage import save_ath as storage_save_ath
+
     result: tuple[float | None, str | None] = (None, None)
+
+    def _finalize(*, persist: bool = False) -> tuple[float | None, str | None]:
+        _ath_cache[ticker] = (time.time(), result)
+        if persist and result[0] is not None:
+            disk = storage_load_ath()
+            disk[ticker] = {"price": result[0], "date": result[1]}
+            storage_save_ath(disk)
+        return result
+
+    # 1) Persisted network result (exact, no re-download).
+    persisted = storage_load_ath().get(ticker)
+    if persisted:
+        result = (float(persisted["price"]), persisted.get("date"))
+        return _finalize()
+
+    # 2) Approximate from the on-disk price cache (portfolio tickers have years
+    #    of cached closes; good enough to avoid a blocking full-history download).
+    local = _ath_from_cache(ticker)
+    if local is not None:
+        result = (local[0], local[1])
+        return _finalize()
+
+    # 3) First-ever visit: fetch full history once, then persist it.
     try:
         with _suppress_output():
             df = yf.download(_yahoo_symbol(ticker), period="max", progress=False)
@@ -589,8 +679,7 @@ def get_all_time_high(ticker: str, ttl: int = 86400) -> tuple[float | None, str 
     except Exception:
         result = (None, None)
 
-    _ath_cache[ticker] = (now, result)
-    return result
+    return _finalize(persist=True)
 
 
 _earnings_cache: dict = {}
@@ -599,8 +688,13 @@ _earnings_cache: dict = {}
 def get_next_earnings(ticker: str, ttl: int = 86400) -> str | None:
     """Return the next earnings/report date (YYYY-MM-DD) for a ticker, or None.
 
-    Sourced from Yahoo Finance's calendar (falling back to ``info``). Cached
-    in-memory for ``ttl`` seconds — earnings dates change at most once a quarter.
+    Resolution order:
+      1. in-memory TTL cache
+      2. ``earnings.json`` disk cache (persisted from a previous lookup)
+      3. Yahoo Finance calendar (falling back to ``info``); then persisted
+
+    Earnings dates change at most once a quarter, so persisting them to disk
+    means a server restart never re-queries Yahoo for every watchlist symbol.
     """
     import time
 
@@ -611,7 +705,19 @@ def get_next_earnings(ticker: str, ttl: int = 86400) -> str | None:
     if cached and now - cached[0] < ttl:
         return cached[1]
 
+    from storage import load_earnings as storage_load_earnings
+    from storage import save_earnings as storage_save_earnings
+
     result: str | None = None
+
+    # 1) Persisted result (no network).
+    persisted = storage_load_earnings().get(ticker)
+    if persisted:
+        result = persisted
+        _earnings_cache[ticker] = (now, result)
+        return result
+
+    # 2) First-ever query: hit Yahoo once, then persist.
     try:
         with _suppress_output():
             tk = yf.Ticker(_yahoo_symbol(ticker))
@@ -627,7 +733,12 @@ def get_next_earnings(ticker: str, ttl: int = 86400) -> str | None:
             if ne:
                 result = str(ne)[:10]
     except Exception:
-        result = None
+        pass
+
+    if result is not None:
+        disk = storage_load_earnings()
+        disk[ticker] = result
+        storage_save_earnings(disk)
 
     _earnings_cache[ticker] = (now, result)
     return result

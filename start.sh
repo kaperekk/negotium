@@ -31,6 +31,11 @@ done
 BOLD='\033[1m'; GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[0;33m'; RESET_C='\033[0m'
 
 # ── Find Python ───────────────────────────────────────────────
+# NOTE: Python 3.14 is preferred but is a very new release; some versions of
+# the Streamlit/yfinance stack print a noisy-but-harmless shutdown message on
+# Ctrl+C ("I/O operation on closed file." / "lost sys.stderr"). Drop
+# `python3.14` from the list below to fall back to the more conservative
+# python3.13 runtime instead.
 PYTHON=""
 for cmd in python3.14 python3.13 python3.12 python3.11 python3 python; do
   if command -v "$cmd" &>/dev/null; then
@@ -51,45 +56,57 @@ echo ""
 echo -e "${BOLD}═══════════════════════════════════════════════${RESET_C}"
 echo -e "${BOLD}  📈  Negotium - Investment Tracker${RESET_C}"
 echo -e "${BOLD}═══════════════════════════════════════════════${RESET_C}"
-echo ""
-echo -e "  Python:  $($PYTHON --version)"
-echo -e "  Dir:     $SCRIPT_DIR"
 
 # ── Optional reset ────────────────────────────────────────────
 if [[ "$RESET" == "true" ]]; then
   echo ""
   echo -e "${YELLOW}  --reset: removing all data files…${RESET_C}"
-  rm -f transactions.jsonl portfolio.jsonl balance.json
   rm -rf data/
   echo -e "${GREEN}  ✓ Data cleared. Starting fresh.${RESET_C}"
 fi
 
 # ── Ensure required directories exist ────────────────────────
-mkdir -p data imports
+mkdir -p data
 
-# ── Check / install dependencies ─────────────────────────────
+# ── Virtualenv ────────────────────────────────────────────────
+# Prefer the project venv; create it on first run. This avoids pip-installing
+# into the system interpreter (no more --break-system-packages).
+VENV_DIR="$SCRIPT_DIR/.venv"
+if [[ -x "$VENV_DIR/bin/python" ]]; then
+  PYTHON="$VENV_DIR/bin/python"
+else
+  echo ""
+  echo -e "  ${YELLOW}Creating virtualenv at .venv (first run)…${RESET_C}"
+  "$PYTHON" -m venv "$VENV_DIR"
+  PYTHON="$VENV_DIR/bin/python"
+  echo -e "  ${YELLOW}Installing dependencies from requirements.txt…${RESET_C}"
+  "$PYTHON" -m pip install --quiet --upgrade pip
+  "$PYTHON" -m pip install --quiet -r "$SCRIPT_DIR/requirements.txt"
+  echo -e "  ${GREEN}✓ Virtualenv ready${RESET_C}"
+fi
+
 echo ""
-echo -e "  Checking dependencies…"
+echo -e "  Python:  $($PYTHON --version)"
+echo -e "  Dir:     $SCRIPT_DIR"
+
+# ── Check dependencies (existing venvs may predate a new requirements.txt) ───
 MISSING=()
-for pkg in yfinance streamlit plotly pandas orjson openpyxl python_calamine; do
+for pkg in streamlit yfinance plotly pandas orjson openpyxl python_calamine; do
   if ! "$PYTHON" -c "import $pkg" &>/dev/null 2>&1; then
     MISSING+=("$pkg")
   fi
 done
-
 if [[ ${#MISSING[@]} -gt 0 ]]; then
-  echo -e "  ${YELLOW}Installing: ${MISSING[*]}${RESET_C}"
-  "$PYTHON" -m pip install "${MISSING[@]}" --break-system-packages -q 2>/dev/null \
-    || "$PYTHON" -m pip install "${MISSING[@]}" -q
+  echo -e "  ${YELLOW}Installing missing dependencies: ${MISSING[*]}${RESET_C}"
+  "$PYTHON" -m pip install --quiet -r "$SCRIPT_DIR/requirements.txt"
 fi
-echo -e "  ${GREEN}✓ Dependencies ready${RESET_C}"
 echo ""
 
 # ── Run tests ─────────────────────────────────────────────────
 if [[ "$SKIP_TESTS" == "false" ]]; then
   echo -e "${BOLD}Running tests…${RESET_C}"
   echo ""
-  if "$PYTHON" tests/test_runner.py; then
+  if "$PYTHON" -m pytest tests/; then
     echo ""
   else
     echo ""

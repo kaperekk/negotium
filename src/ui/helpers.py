@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from currencies import SUPPORTED_CURRENCIES
+
 
 def fmt(v: float) -> str:
     """Format values in a compact, human-friendly manner."""
@@ -23,7 +25,7 @@ def fmt(v: float) -> str:
 def detect_currency(filename: str) -> str:
     """Infer a currency from a filename prefix."""
     prefix = filename.strip()[:3].upper()
-    return prefix if prefix in ("EUR", "PLN", "USD") else "USD"
+    return prefix if prefix in SUPPORTED_CURRENCIES else "USD"
 
 
 def safe_get(mapping: dict[str, Any], key: str, default: Any = None) -> Any:

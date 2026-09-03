@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from ticker_data import get_dividends, get_fx_rate, get_price
-from transactions import get_ticker_history
+from ledger_core import get_ticker_history
 from ui.colors import ACCENT, DIVIDEND, NEGATIVE, POSITIVE
 from ui.styles import (
     build_trade_dialog_styles,
@@ -16,6 +16,34 @@ from ui.styles import (
     render_trade_table_html,
 )
 
+@st.dialog("Confirm delete")
+def _confirm_delete(ticker: str, history: list[dict], idx: int, storage) -> None:
+    """Show confirmation dialog before deleting a transaction."""
+    if idx < 0 or idx >= len(history):
+        st.error("Invalid row number.")
+        return
+    trade = history[idx]
+    st.warning(
+        f"Delete this transaction?\n\n"
+        f"**Date:** {trade['date']}\n"
+        f"**Side:** {trade['side']}\n"
+        f"**Shares:** {trade['amount']:.4f}\n\n"
+        f"This action cannot be undone."
+    )
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Cancel", key="del_cancel", width="stretch"):
+            st.rerun()
+    with col2:
+        if st.button("Delete", key="del_confirm", width="stretch", type="primary"):
+            delete_transaction(trade["date"], 0)
+            st.success("Transaction deleted.")
+            st.session_state["force_refresh"] = True
+            for k in list(st.session_state.keys()):
+                if k.startswith("snapshots_") or k.startswith("benchmarks_"):
+                    st.session_state.pop(k)
+            storage.invalidate_portfolio_from(trade["date"])
+            st.rerun()
 
 def render_trade_history_dialog(T: dict[str, str], ticker: str, name: str, ccy: str,
                                base_ccy: str, today, storage) -> None:
@@ -167,6 +195,23 @@ def render_trade_history_dialog(T: dict[str, str], ticker: str, name: str, ccy: 
             render_trade_table_html(T, trade_df),
             height=50 + 48 * len(trade_df),
         )
+
+        # Delete transaction section
+        st.markdown("### Delete transaction")
+        del_col1, del_col2 = st.columns([2, 1])
+        with del_col1:
+            del_idx = st.number_input(
+                "Row # to delete",
+                min_value=1,
+                max_value=len(trade_df),
+                value=1,
+                step=1,
+                key="del_row_idx",
+                help="Enter the row number from the table above",
+            )
+        with del_col2:
+            if st.button("🗑️ Delete", key="del_tx_btn", width="stretch"):
+                _confirm_delete(ticker, history, int(del_idx) - 1, storage)
 
         if div_rows:
             div_df = pd.DataFrame([{

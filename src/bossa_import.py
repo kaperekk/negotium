@@ -26,7 +26,7 @@ from pathlib import Path
 
 import storage
 import config as cfg_module
-from transactions import get_all_transactions
+from ledger_core import get_all_transactions
 from isin_resolve import resolve_isins_with_names
 
 log = logging.getLogger(__name__)
@@ -153,6 +153,10 @@ def parse_bossa_csv(file_path: str | Path, currency: str, progress_cb=None) -> l
             entries.append({"ticker": waluta or currency, "amount": round(kwota, 8),
                             "account_operation": True})
 
+        elif "dywidenda" in op_title.lower():
+            # Dividend payment — credit cash, no stock leg
+            entries.append({"ticker": waluta or currency, "amount": round(abs(kwota), 8)})
+
         if entries:
             transactions.append({"date": date_str, "entries": entries})
 
@@ -168,19 +172,21 @@ def parse_bossa_csv(file_path: str | Path, currency: str, progress_cb=None) -> l
     log.info("Parsed %d raw transactions, merged to %d daily records", len(transactions), len(merged))
     log.info("Unresolved ISINs: %d", len(still_unresolved))
 
-    _fix_negative_positions(merged, currency)
-
     return merged, still_unresolved
 
 
-def _fix_negative_positions(transactions: list[dict], currency: str) -> None:
-    from transactions import fix_negative_positions
-    fix_negative_positions(transactions, currency)
+def _find_negative_positions(
+    transactions: list[dict],
+    starting_balance: dict[str, float] | None = None,
+) -> list[tuple[str, float, str]]:
+    """Detect positions that would end negative after import (deprecated)."""
+    from ledger_core import find_negative_positions
+    return find_negative_positions(transactions, starting_balance=starting_balance)
 
 
-def _existing_keys() -> set[tuple[str, str, float]]:
-    from transactions import existing_keys
-    return existing_keys()
+def _existing_entry_counts() -> dict[tuple[str, str, float], int]:
+    from ledger_core import existing_entry_counts
+    return existing_entry_counts()
 
 
 def import_bossa(file_path: str | Path, currency: str, progress_cb=None) -> dict:
@@ -191,17 +197,43 @@ def import_bossa(file_path: str | Path, currency: str, progress_cb=None) -> dict
         return {"success": False, "error": msg}
 
     transactions, unresolved = parse_bossa_csv(file_path, currency, progress_cb=progress_cb)
-    existing = _existing_keys()
+
+    # Include existing ledger balance so manually-added corporate-action
+    # entries (split/spin-off) cover sells from the broker statement
+    starting: dict[str, float] = {}
+    for rec in get_all_transactions():
+        for e in rec["entries"]:
+            t = e["ticker"].upper()
+            if t in storage.SUPPORTED_CURRENCIES:
+                continue
+            starting[t] = starting.get(t, 0.0) + float(e["amount"])
+
+    # Auto-fix negative positions (e.g. corporate actions where the broker
+    # statement doesn't record the acquisition of new shares).
+    # Inserts a zero-cost buy on the date the position first went negative.
+    from ledger_core import auto_fix_negative_positions
+    fixed = auto_fix_negative_positions(transactions, starting_balance=starting)
+    if fixed:
+        log.info(
+            "Auto-fixed %d negative position(s) from corporate action: %s",
+            len(fixed),
+            ", ".join(f"{t} ({n} shares)" for t, n, _ in fixed),
+        )
+
+    existing = _existing_entry_counts()
 
     imported = 0
     skipped = 0
     for rec in transactions:
-        new_entries = [
-            e for e in rec["entries"]
-            if (rec["date"], e["ticker"].upper(), round(e["amount"], 8)) not in existing
-        ]
+        new_entries = []
+        for e in rec["entries"]:
+            key = (rec["date"], e["ticker"].upper(), round(float(e["amount"]), 8))
+            if existing.get(key, 0) > 0:
+                existing[key] -= 1
+            else:
+                new_entries.append(e)
         if new_entries:
-            from transactions import add_transaction
+            from ledger_core import add_transaction
             add_transaction(rec["date"], new_entries)
             imported += 1
         else:

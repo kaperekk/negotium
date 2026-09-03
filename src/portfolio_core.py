@@ -46,7 +46,7 @@ from storage import (
     SUFFIX_CURRENCY,
 )
 from ticker_data import get_price, get_fx_rate, FX_YAHOO
-from transactions import get_all_transactions
+from ledger_core import get_all_transactions
 
 FX_TICKERS = set(FX_YAHOO.keys())
 

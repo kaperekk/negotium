@@ -13,15 +13,18 @@ from __future__ import annotations
 
 import logging
 import re
+import warnings
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import openpyxl
+
+import storage
 import pandas as pd
 
 import storage
 import config as cfg_module
-from transactions import get_all_transactions
+from ledger_core import get_all_transactions
 from ticker_translate import translate_ticker
 
 log = logging.getLogger(__name__)
@@ -52,19 +55,32 @@ def _parse_transfer_target(comment: str | None) -> str | None:
     return m.group(1).upper() if m else None
 
 
+# XTB statements occasionally ship with a minimal stylesheet that lacks the
+# default ("Normal") cell style. openpyxl warns about it and falls back to its
+# own defaults — harmless, so we filter just that message to keep the terminal
+# (and the app log) clean. The warning is identical under all supported
+# openpyxl versions; anchored to the exact wording openpyxl 3.1.x emits.
+_OPENPYXL_NO_DEFAULT_STYLE = "Workbook contains no default style, apply openpyxl's default"
+
+
 def _open_workbook(file_path: str | Path):
-    """Try openpyxl first, fall back to pandas/xlrd if stylesheet is corrupt."""
-    try:
-        return openpyxl.load_workbook(file_path, data_only=True), "openpyxl"
-    except Exception:
-        pass
-    try:
-        xls = pd.ExcelFile(file_path, engine="openpyxl")
-        return xls, "pandas"
-    except Exception:
-        pass
-    xls = pd.ExcelFile(file_path, engine="calamine")
-    return xls, "calamine"
+    """Try openpyxl first, fall back to pandas/calamine if the sheet is unreadable.
+
+    The returned object (an openpyxl ``Workbook`` or a pandas ``ExcelFile``)
+    is owned by the caller, which must always close it — see the ``finally``
+    blocks in ``validate_xtb_file`` / ``parse_xtb_excel``.
+    """
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=_OPENPYXL_NO_DEFAULT_STYLE)
+        try:
+            return openpyxl.load_workbook(file_path, data_only=True), "openpyxl"
+        except Exception:
+            pass
+        try:
+            return pd.ExcelFile(file_path, engine="openpyxl"), "pandas"
+        except Exception:
+            pass
+        return pd.ExcelFile(file_path, engine="calamine"), "calamine"
 
 
 def validate_xtb_file(file_path: str | Path) -> tuple[bool, str]:
@@ -76,7 +92,6 @@ def validate_xtb_file(file_path: str | Path) -> tuple[bool, str]:
     try:
         if engine == "openpyxl":
             if "Cash Operations" not in wb.sheetnames:
-                wb.close()
                 return False, "Missing 'Cash Operations' sheet."
             ws = wb["Cash Operations"]
             header_row = None
@@ -84,13 +99,10 @@ def validate_xtb_file(file_path: str | Path) -> tuple[bool, str]:
                 if row[0] == "Type":
                     header_row = row
                     break
-            wb.close()
         else:
             if "Cash Operations" not in wb.sheet_names:
-                wb.close()
                 return False, "Missing 'Cash Operations' sheet."
             df = wb.parse("Cash Operations", header=None, nrows=10)
-            wb.close()
             header_row = None
             for _, row in df.iterrows():
                 if row.iloc[0] == "Type":
@@ -109,6 +121,11 @@ def validate_xtb_file(file_path: str | Path) -> tuple[bool, str]:
         return True, "Valid XTB statement."
     except Exception as e:
         return False, f"Error reading file: {e}"
+    finally:
+        try:
+            wb.close()
+        except Exception:
+            pass
 
 
 def parse_xtb_excel(file_path: str | Path, currency: str) -> list[dict]:
@@ -121,29 +138,33 @@ def parse_xtb_excel(file_path: str | Path, currency: str) -> list[dict]:
     raw: list[dict] = []
     header: list[str] = []
 
-    if engine == "openpyxl":
-        ws = wb["Cash Operations"]
-        rows_iter = ws.iter_rows(values_only=True)
-        for i, row in enumerate(rows_iter):
-            if not header and any(str(c).strip().lower() == "type" for c in row if c):
-                header = [str(c) if c else "" for c in row]
-                continue
-            if header:
-                raw.append(row)
-        wb.close()
-    else:
-        df = wb.parse("Cash Operations", header=None)
-        wb.close()
-        # Find header row to skip metadata rows
-        header_idx = 0
-        for idx, row in df.iterrows():
-            if row.iloc[0] == "Type":
-                header_idx = idx + 1
-                header = [str(c) if c else "" for c in row]
-                break
-        df.columns = df.iloc[header_idx - 1].values
-        df = df.iloc[header_idx:].reset_index(drop=True)
-        raw = [tuple(row) for _, row in df.iterrows()]
+    try:
+        if engine == "openpyxl":
+            ws = wb["Cash Operations"]
+            rows_iter = ws.iter_rows(values_only=True)
+            for i, row in enumerate(rows_iter):
+                if not header and any(str(c).strip().lower() == "type" for c in row if c):
+                    header = [str(c) if c else "" for c in row]
+                    continue
+                if header:
+                    raw.append(row)
+        else:
+            df = wb.parse("Cash Operations", header=None)
+            # Find header row to skip metadata rows
+            header_idx = 0
+            for idx, row in df.iterrows():
+                if row.iloc[0] == "Type":
+                    header_idx = idx + 1
+                    header = [str(c) if c else "" for c in row]
+                    break
+            df.columns = df.iloc[header_idx - 1].values
+            df = df.iloc[header_idx:].reset_index(drop=True)
+            raw = [tuple(row) for _, row in df.iterrows()]
+    finally:
+        try:
+            wb.close()
+        except Exception:
+            pass
 
     # Build column index map from header (handles different XTB export layouts)
     col = {name.strip().lower(): i for i, name in enumerate(header) if name.strip()}
@@ -238,22 +259,15 @@ def parse_xtb_excel(file_path: str | Path, currency: str) -> list[dict]:
 
     log.info("Parsed %d raw transactions, merged to %d daily records", len(transactions), len(merged))
 
-    _fix_negative_positions(merged, currency)
-
     log.info("Final: %d records with %d total entries", len(merged), sum(len(r["entries"]) for r in merged))
 
     return merged
 
 
-def _fix_negative_positions(transactions: list[dict], currency: str) -> None:
-    """If any stock/ETF ends negative, insert a buy of X shares for 0.01 cash."""
-    from transactions import fix_negative_positions
-    fix_negative_positions(transactions, currency)
 
-
-def _existing_keys() -> set[tuple[str, str, float]]:
-    from transactions import existing_keys
-    return existing_keys()
+def _existing_entry_counts() -> dict[tuple[str, str, float], int]:
+    from ledger_core import existing_entry_counts
+    return existing_entry_counts()
 
 
 def import_xtb(file_path: str | Path, currency: str) -> dict:
@@ -264,17 +278,44 @@ def import_xtb(file_path: str | Path, currency: str) -> dict:
         return {"success": False, "error": msg}
 
     transactions = parse_xtb_excel(file_path, currency)
-    existing = _existing_keys()
+
+    # Include existing ledger balance so manually-added corporate-action
+    # entries (split/spin-off) cover sells from the broker statement
+    from ledger_core import get_all_transactions
+    starting: dict[str, float] = {}
+    for rec in get_all_transactions():
+        for e in rec["entries"]:
+            t = e["ticker"].upper()
+            if t in storage.SUPPORTED_CURRENCIES:
+                continue
+            starting[t] = starting.get(t, 0.0) + float(e["amount"])
+
+    # Auto-fix negative positions (e.g. corporate actions where the broker
+    # statement doesn't record the acquisition of new shares).
+    # Inserts a zero-cost buy on the date the position first went negative.
+    from ledger_core import auto_fix_negative_positions
+    fixed = auto_fix_negative_positions(transactions, starting_balance=starting)
+    if fixed:
+        log.info(
+            "Auto-fixed %d negative position(s) from corporate action: %s",
+            len(fixed),
+            ", ".join(f"{t} ({n} shares)" for t, n, _ in fixed),
+        )
+
+    existing = _existing_entry_counts()
 
     imported = 0
     skipped = 0
     for rec in transactions:
-        new_entries = [
-            e for e in rec["entries"]
-            if (rec["date"], e["ticker"].upper(), round(e["amount"], 8)) not in existing
-        ]
+        new_entries = []
+        for e in rec["entries"]:
+            key = (rec["date"], e["ticker"].upper(), round(float(e["amount"]), 8))
+            if existing.get(key, 0) > 0:
+                existing[key] -= 1
+            else:
+                new_entries.append(e)
         if new_entries:
-            from transactions import add_transaction
+            from ledger_core import add_transaction
             add_transaction(rec["date"], new_entries)
             imported += 1
         else:
