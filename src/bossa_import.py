@@ -175,20 +175,6 @@ def parse_bossa_csv(file_path: str | Path, currency: str, progress_cb=None) -> l
     return merged, still_unresolved
 
 
-def _find_negative_positions(
-    transactions: list[dict],
-    starting_balance: dict[str, float] | None = None,
-) -> list[tuple[str, float, str]]:
-    """Detect positions that would end negative after import (deprecated)."""
-    from ledger_core import find_negative_positions
-    return find_negative_positions(transactions, starting_balance=starting_balance)
-
-
-def _existing_entry_counts() -> dict[tuple[str, str, float], int]:
-    from ledger_core import existing_entry_counts
-    return existing_entry_counts()
-
-
 def import_bossa(file_path: str | Path, currency: str, progress_cb=None) -> dict:
     log.info("=== BOSSA import: %s (currency=%s) ===", file_path, currency)
     valid, msg = validate_bossa_file(file_path)

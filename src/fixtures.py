@@ -59,6 +59,10 @@ FAKE_AAPL_PRICES = {
     "2023-01-09": 130.15,
     "2023-06-01": 180.09,
     "2023-12-29": 192.53,
+    "2024-01-12": 198.11,
+    "2024-02-09": 186.21,
+    "2024-03-15": 192.51,
+    "2024-04-15": 172.18,
 }
 
 FAKE_USDPLN_PRICES = {
@@ -69,6 +73,10 @@ FAKE_USDPLN_PRICES = {
     "2023-01-09": 4.34,
     "2023-06-01": 4.10,
     "2023-12-29": 3.98,
+    "2024-01-15": 3.95,
+    "2024-02-15": 3.92,
+    "2024-03-15": 3.90,
+    "2024-04-15": 3.88,
 }
 
 FAKE_EURPLN_PRICES = {
@@ -85,6 +93,18 @@ FAKE_EURUSD_PRICES = {
     "2023-12-29": 1.073,
 }
 
+FAKE_MSFT_PRICES = {
+    "2024-01-12": 405.68,
+    "2024-02-15": 415.53,
+    "2024-03-15": 425.12,
+    "2024-04-15": 382.71,
+}
+
+FAKE_SAP_PRICES = {
+    "2024-02-15": 295.42,
+    "2024-03-15": 301.18,
+}
+
 
 def inject_fake_prices(tmp: Path):
     """Write fake price JSON files into the temp data directory."""
@@ -96,6 +116,10 @@ def inject_fake_prices(tmp: Path):
         p.write_text(json.dumps(prices))
 
     write("AAPL",   2023, FAKE_AAPL_PRICES)
+    write("AAPL",   2024, {k: v for k, v in FAKE_AAPL_PRICES.items() if k.startswith("2024")})
     write("USDPLN", 2023, FAKE_USDPLN_PRICES)
+    write("USDPLN", 2024, {k: v for k, v in FAKE_USDPLN_PRICES.items() if k.startswith("2024")})
     write("EURPLN", 2023, FAKE_EURPLN_PRICES)
     write("EURUSD", 2023, FAKE_EURUSD_PRICES)
+    write("MSFT",   2024, FAKE_MSFT_PRICES)
+    write("SAP",    2024, FAKE_SAP_PRICES)

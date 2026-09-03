@@ -346,20 +346,16 @@ def compute_cagr(current_value: float, base_currency: str | None = None, fx_cach
     for rec in records:
         if end and rec["date"] > end:
             continue
-        entries_list = rec["entries"]
-        all_cash = all(
-            e["ticker"].upper() in storage.SUPPORTED_CURRENCIES
-            for e in entries_list
-        )
-        for e in entries_list:
+        for e in rec["entries"]:
             is_entry_op = e.get("account_operation", False)
+            if not is_entry_op:
+                continue  # only explicit deposits/withdrawals count as invested
             t = e["ticker"].upper()
             amt = float(e["amount"])
-            if is_entry_op or (all_cash and t in storage.SUPPORTED_CURRENCIES):
-                fx = get_fx_rate(t, base_ccy, rec["date"], fx_cache, int(rec["date"][:4])) if t != base_ccy else 1.0
-                net_invested += amt * fx
-                if first_date is None:
-                    first_date = rec["date"]
+            fx = get_fx_rate(t, base_ccy, rec["date"], fx_cache, int(rec["date"][:4])) if t != base_ccy else 1.0
+            net_invested += amt * fx
+            if first_date is None:
+                first_date = rec["date"]
 
     if first_date is None or net_invested <= 0:
         return None
