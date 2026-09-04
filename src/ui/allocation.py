@@ -61,10 +61,10 @@ def render_allocation_breakdown(latest_assets, base_ccy: str, today, T: dict, ge
     tabs = st.tabs(["Sector", "Geography", "Asset class", "Currency"])
     for tab, key in zip(tabs, ["Sector", "Geography", "Asset class", "Currency"]):
         with tab:
-            _render_donut(cats[key], total, T)
+            _render_donut(cats[key], total, T, chart_key=f"alloc_{key}")
 
 
-def _render_donut(data: dict, total: float, T: dict) -> None:
+def _render_donut(data: dict, total: float, T: dict, chart_key: str = "alloc") -> None:
     if not data:
         st.caption("No data.")
         return
@@ -112,4 +112,4 @@ def _render_donut(data: dict, total: float, T: dict) -> None:
             bgcolor="rgba(0,0,0,0)",
         ),
     )
-    st.plotly_chart(fig, width='stretch')
+    st.plotly_chart(fig, width='stretch', key=chart_key)

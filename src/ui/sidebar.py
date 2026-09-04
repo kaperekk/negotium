@@ -264,12 +264,23 @@ def render_sidebar(cfg, storage, T, today, data_start_date, detect_currency):
                         st.error(str(e))
 
         with st.expander("➕ Add transaction"):
+            # Dynamic row count managed via session state
+            if "tx_rows" not in st.session_state:
+                st.session_state["tx_rows"] = 2
+
+            def _add_row():
+                st.session_state["tx_rows"] += 1
+
+            def _remove_row():
+                if st.session_state["tx_rows"] > 1:
+                    st.session_state["tx_rows"] -= 1
+
             with st.form("add_tx", clear_on_submit=True):
                 tx_date = st.date_input("Date", value=today, max_value=today)
                 st.caption("Negative amount = sell / cash out.")
 
                 rows = []
-                for idx in range(1, 3):
+                for idx in range(1, st.session_state["tx_rows"] + 1):
                     c1, c2 = st.columns([2, 1])
                     with c1:
                         t = st.text_input(
@@ -287,22 +298,32 @@ def render_sidebar(cfg, storage, T, today, data_start_date, detect_currency):
                         )
                     rows.append((t, a))
 
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.form_submit_button("➕ Add row", on_click=_add_row)
+                with col2:
+                    if st.session_state["tx_rows"] > 1:
+                        st.form_submit_button("➖ Remove row", on_click=_remove_row)
+
                 is_account_op = st.checkbox(
                     "Account operation (deposit/withdrawal)",
                     key="ao_new",
                     help="Marks this transaction as invested capital",
                 )
 
-                if st.form_submit_button("Add transaction", width="stretch"):
+                submitted = st.form_submit_button("Add transaction", width="stretch")
+
+                if submitted:
                     entries = [{
                         "ticker": t,
                         "amount": a,
                         **({"account_operation": True} if is_account_op else {})
                     } for t, a in rows if t and abs(a) > 1e-9]
+
                     if not entries:
                         st.error("Enter at least one ticker and amount.")
                     else:
-                        # Check for negative positions before importing
+                        # Real-time balance check: simulate post-transaction positions
                         current = storage.load_balance()
                         simulated = {k: v["amount"] for k, v in current.items()}
                         for e in entries:
@@ -319,9 +340,7 @@ def render_sidebar(cfg, storage, T, today, data_start_date, detect_currency):
                                 f"⚠️ This transaction would make positions negative: {details}\n\n"
                                 "Check the amounts or add a buy first."
                             )
-                            st.session_state["_neg_warning"] = True
-                            if st.button("Proceed anyway", key="proceed_neg"):
-                                st.session_state.pop("_neg_warning", None)
+                            if st.checkbox("I understand — proceed anyway", key="proceed_anyway"):
                                 _add_transaction_to_ledger(tx_date, entries, storage, data_start_date, base_ccy)
                         else:
                             _add_transaction_to_ledger(tx_date, entries, storage, data_start_date, base_ccy)

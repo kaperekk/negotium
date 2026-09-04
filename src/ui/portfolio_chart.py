@@ -127,4 +127,4 @@ def render_portfolio_chart(T: dict[str, str], base_ccy: str, dates, values, inve
         ),
         yaxis=yaxis_cfg,
     )
-    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+    st.plotly_chart(fig, width="stretch", key="portfolio_main", config={"displayModeBar": False})

@@ -411,7 +411,10 @@ explicitly:
 *.DE .F .PA   → EUR   (Xetra, Frankfurt, Euronext Paris)
 *.MI .AS .BR  → EUR   (Milan, Amsterdam, Brussels)
 *.LS .MC .VI .IR → EUR (Lisbon, Madrid, Vienna, Irish)
+*.HE .AT      → EUR   (Helsinki, Athens)
 *.L           → GBP   (London)
+*.ST → SEK   *.OL → NOK   *.CO → DKK
+*.PR → CZK   *.BD → HUF   *.IS → TRY
 *.MX          → MXN   *.TO → CAD   *.AX → AUD   *.HK → HKD
 *.T           → JPY   *.KS → KRW   *.SS/.SZ → CNY
 *.SG .SI      → SGD   *.SW → CHF   *.SA → BRL
@@ -430,6 +433,7 @@ FX_YAHOO = {f"{ccy}PLN": f"{ccy}PLN=X"}   for every ccy except PLN and MXN
 FX_YAHOO["USDPLN"] = "USDPLN=X"
 FX_YAHOO["EURUSD"] = "EURUSD=X"
 FX_YAHOO["MXNUSD"] = "MXNUSD=X"           (MXN triangulates via USD)
+FX_YAHOO["HUFUSD"] = "HUFUSD=X"           (HUF triangulates via USD)
 ```
 
 FX rates are fetched and cached exactly like stock prices — per-year JSON

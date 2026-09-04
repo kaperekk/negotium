@@ -44,6 +44,60 @@ suite, and opens the app at http://localhost:8501.
 - Internet access to **Yahoo Finance** for prices, FX rates, dividends and company metadata — the only outbound traffic; the UI itself is served on localhost
 - Dependencies installed automatically on first run: `yfinance`, `streamlit`, `plotly`, `pandas`, `orjson`, `openpyxl`, `python-calamine`
 
+## Broker ticker suffixes (XTB → Yahoo Finance)
+
+Brokers name tickers differently from Yahoo Finance. **XTB uses country-code
+suffixes** (`.PL`, `.UK`, `.NL`, …) while **Yahoo uses city / exchange codes**
+(`.WA` Warsaw, `.L` London, `.AS` Amsterdam, …). The `ticker_rules` list in
+`data/config.json` (editable in the UI under *Sidebar → ⚙️ Settings*) rewrites
+symbols when transactions are entered or imported, so every position prices
+correctly. Three rule forms:
+
+| Form | Example | Meaning |
+|------|---------|---------|
+| Exact | `AMZN.DE=AMZ.DE` | rewrite one symbol |
+| Suffix swap | `*.PL=*.WA` | keep base, swap suffix (`CDR.PL` → `CDR.WA`) |
+| Strip | `*.US=` | drop the suffix (`AAPL.US` → `AAPL`) |
+
+Rules run top-to-bottom, first match wins; unmatched symbols pass through
+unchanged. When both sides use the same code no rule is needed (e.g. `.DE`
+Xetra, `.HK` Hong Kong).
+
+Current XTB → Yahoo mapping:
+
+| XTB (country) | Yahoo (exchange) | Market | Example |
+|---|---|---|---|
+| `.US` | *(none)* | United States | `AAPL.US` → `AAPL` |
+| `.UK` | `.L` | United Kingdom (London) | `SHEL.UK` → `SHEL.L` |
+| `.PL` | `.WA` | Poland (Warsaw) | `CDR.PL` → `CDR.WA` |
+| `.NL` | `.AS` | Netherlands (Amsterdam) | `ASML.NL` → `ASML.AS` |
+| `.FR` | `.PA` | France (Paris) | `OR.FR` → `OR.PA` |
+| `.ES` | `.MC` | Spain (Madrid) | `SAN.ES` → `SAN.MC` |
+| `.IT` | `.MI` | Italy (Milan) | `ISP.IT` → `ISP.MI` |
+| `.PT` | `.LS` | Portugal (Lisbon) | `EDP.PT` → `EDP.LS` |
+| `.BE` | `.BR` | Belgium (Brussels) | `ABI.BE` → `ABI.BR` |
+| `.AT` | `.VI` | Austria (Vienna) | `OMV.AT` → `OMV.VI` |
+| `.CH` | `.SW` | Switzerland (Zurich) | `NESN.CH` → `NESN.SW` |
+| `.IE` | `.IR` | Ireland (Dublin) | `BIR.IE` → `BIR.IR` |
+| `.SE` | `.ST` | Sweden (Stockholm) | `VOLV-B.SE` → `VOLV-B.ST` |
+| `.NO` | `.OL` | Norway (Oslo) | `EQNR.NO` → `EQNR.OL` |
+| `.DK` | `.CO` | Denmark (Copenhagen) | `NOVO-B.DK` → `NOVO-B.CO` |
+| `.FI` | `.HE` | Finland (Helsinki) | `NOKIA.FI` → `NOKIA.HE` |
+| `.CZ` | `.PR` | Czechia (Prague) | `CEZ.CZ` → `CEZ.PR` |
+| `.HU` | `.BD` | Hungary (Budapest) | `OTP.HU` → `OTP.BD` |
+| `.GR` | `.AT` | Greece (Athens) | `HTO.GR` → `HTO.AT` |
+| `.TR` | `.IS` | Türkiye (Istanbul) | `THYAO.TR` → `THYAO.IS` |
+| `.JP` | `.T` | Japan (Tokyo) | `7203.JP` → `7203.T` |
+| `.SG` | `.SI` | Singapore | `D05.SG` → `D05.SI` |
+| `.DE` | `.DE` | Germany (Xetra) — same code, no rule | `SAP.DE` stays `SAP.DE` |
+| `.HK` | `.HK` | Hong Kong — same code, no rule | `0700.HK` stays `0700.HK` |
+
+Rules apply **at entry time** — transactions already in the ledger keep their
+stored symbols (the Settings screen can re-apply rules, and unused rules are
+harmless). The app infers each holding's price currency from the *Yahoo*
+suffix, so after a swap the conversion is automatic (e.g. `.ST` → SEK,
+`.L` → GBP). Full reference: [CONFIG.md](CONFIG.md#ticker-rules).
+
 ## Documentation
 
 | Doc | Read it for |
@@ -77,7 +131,7 @@ negotium/
 │   └── ui/                   ← Streamlit view layer, one module per section
 └── tests/
     ├── conftest.py           ← shared fixtures (isolated temp dirs)
-    └── test_*.py             ← 145 tests, pytest
+    └── test_*.py             ← 197 tests, pytest
 ```
 
 ## The 60-second data model

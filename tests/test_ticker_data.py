@@ -100,6 +100,15 @@ def test_ticker_currency_detection(tmp: Path):
     assert _ticker_currency("SNT.WA") == "PLN"
     assert _ticker_currency("4GLD.L") == "GBP"
     assert _ticker_currency("AAPL") == "USD"  # no suffix → USD default
+    # XTB-translated suffixes (Yahoo exchange codes)
+    assert _ticker_currency("NOKIA.HE") == "EUR"   # Helsinki
+    assert _ticker_currency("HTO.AT") == "EUR"     # Athens
+    assert _ticker_currency("VOLV-B.ST") == "SEK"
+    assert _ticker_currency("EQNR.OL") == "NOK"
+    assert _ticker_currency("NOVO-B.CO") == "DKK"
+    assert _ticker_currency("CEZ.PR") == "CZK"
+    assert _ticker_currency("OTP.BD") == "HUF"
+    assert _ticker_currency("THYAO.IS") == "TRY"
 
     # Unknown suffix defaults to USD (triggers warning on stdout)
     import io, sys

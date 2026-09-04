@@ -12,7 +12,7 @@ SUPPORTED_CURRENCIES: frozenset[str] = frozenset({"USD", "EUR", "PLN"})
 
 # Yahoo exchange suffix → trading currency.
 CURRENCY_SUFFIXES: dict[str, list[str]] = {
-    "EUR": [".DE", ".F", ".PA", ".MI", ".AS", ".BR", ".LS", ".MC", ".VI", ".IR"],
+    "EUR": [".DE", ".F", ".PA", ".MI", ".AS", ".BR", ".LS", ".MC", ".VI", ".IR", ".HE", ".AT"],
     "GBP": [".L"],
     "MXN": [".MX"],
     "CAD": [".TO"],
@@ -25,6 +25,12 @@ CURRENCY_SUFFIXES: dict[str, list[str]] = {
     "CHF": [".SW"],
     "BRL": [".SA"],
     "PLN": [".WA"],
+    "SEK": [".ST"],
+    "NOK": [".OL"],
+    "DKK": [".CO"],
+    "CZK": [".PR"],
+    "HUF": [".BD"],
+    "TRY": [".IS"],
 }
 
 # Exchange suffix → currency lookup (derived — do not edit by hand).
@@ -33,7 +39,7 @@ SUFFIX_CURRENCY: dict[str, str] = {
 }
 
 # Currencies with no direct {CCY}PLN Yahoo pair — their FX is triangulated via USD.
-TRIANGULATE_VIA_USD: frozenset[str] = frozenset({"MXN"})
+TRIANGULATE_VIA_USD: frozenset[str] = frozenset({"MXN", "HUF"})
 
 # Display symbols per base currency (UI).
 CURRENCY_SYMBOLS: dict[str, str] = {"PLN": " PLN", "EUR": "€", "USD": "$"}

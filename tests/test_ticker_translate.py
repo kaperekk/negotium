@@ -31,6 +31,25 @@ def test_translate_suffix_swap(tmp: Path):
     assert translate_ticker("AAPL.US", rules) == "AAPL.US"
 
 
+def test_translate_xtb_country_rules(tmp: Path):
+    """XTB country-code suffixes rewrite to Yahoo exchange suffixes."""
+    from ticker_translate import translate_ticker
+    rules = [
+        "*.US=",
+        "*.UK=*.L", "*.NL=*.AS", "*.FR=*.PA", "*.ES=*.MC",
+        "*.AT=*.VI", "*.SE=*.ST", "*.GR=*.AT", "*.PL=*.WA",
+    ]
+    assert translate_ticker("SHEL.UK", rules) == "SHEL.L"
+    assert translate_ticker("ASML.NL", rules) == "ASML.AS"
+    assert translate_ticker("OR.FR", rules) == "OR.PA"
+    assert translate_ticker("SAN.ES", rules) == "SAN.MC"
+    assert translate_ticker("OMV.AT", rules) == "OMV.VI"
+    assert translate_ticker("VOLV-B.SE", rules) == "VOLV-B.ST"
+    assert translate_ticker("HTO.GR", rules) == "HTO.AT"   # result not re-matched
+    assert translate_ticker("AAPL.US", rules) == "AAPL"
+    assert translate_ticker("SAP.DE", rules) == "SAP.DE"   # same code, no rule
+
+
 def test_translate_suffix_strip(tmp: Path):
     """Suffix strip rule .US= removes the suffix."""
     from ticker_translate import translate_ticker

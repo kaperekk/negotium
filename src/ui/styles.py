@@ -539,9 +539,24 @@ def build_toggle_button_styles(theme: dict[str, str]) -> str:
         border-color: {t["border_active"]} !important;
         background: {t["card_btn_active"]} !important;
     }}
-    div[data-testid="stHorizontalBlock"] button p {{
+    /* Big tap-friendly text ONLY for regular toggle buttons (e.g. the
+       PLN/EUR/USD currency switch). Form-submit buttons (st.form_submit_button
+       render as kind="secondaryFormSubmit"/"primaryFormSubmit") must NOT match,
+       otherwise the add/remove-row buttons in the transaction form get
+       currency-toggle-sized text. */
+    div[data-testid="stHorizontalBlock"] button[kind="secondary"] p,
+    div[data-testid="stHorizontalBlock"] button[kind="primary"] p {{
         font-size: 1.4rem !important;
         font-weight: 600 !important;
+    }}
+    /* Form submit buttons inside columns (Add row / Remove row) stay compact */
+    div[data-testid="stHorizontalBlock"] button[kind="secondaryFormSubmit"],
+    div[data-testid="stHorizontalBlock"] button[kind="primaryFormSubmit"] {{
+        font-size: 0.95rem !important;
+        font-weight: 500 !important;
+        padding: 0.3rem 0.9rem !important;
+        min-height: 0 !important;
+        border-radius: 0.5rem !important;
     }}
     </style>
     """

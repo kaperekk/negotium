@@ -589,6 +589,30 @@ def get_ticker_history(ticker: str) -> list[dict]:
     return results
 
 
+def get_ticker_legs(ticker: str) -> list[dict]:
+    """Return the full set of ledger entries ("legs") for each trade involving ticker.
+
+    Each returned dict groups one date's entries:
+      {date, legs: [{ticker, amount, account_operation}, ...]}
+    where "legs" includes ALL entries on that date (cash + any co-traded
+    tickers), so the user can see e.g. "+10 AAPL @ $150 / -1500 USD" as one
+    trade instead of only the AAPL row.
+    """
+    ticker = ticker.upper()
+    results: list[dict] = []
+    for rec in get_all_transactions():
+        has_ticker = any(e["ticker"].upper() == ticker for e in rec["entries"])
+        if not has_ticker:
+            continue
+        legs = [{
+            "ticker": e["ticker"].upper(),
+            "amount": round(float(e["amount"]), 8),
+            "account_operation": bool(e.get("account_operation", False)),
+        } for e in rec["entries"] if abs(float(e["amount"])) > 1e-12]
+        results.append({"date": rec["date"], "legs": legs})
+    return results
+
+
 def find_negative_positions(
     transactions: list[dict],
     starting_balance: dict[str, float] | None = None,

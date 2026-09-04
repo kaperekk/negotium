@@ -405,4 +405,4 @@ def _render_card(T: dict[str, str], sym: str, days: int = 60) -> None:
                 tickfont=dict(size=AXIS_TICK_FONT_SIZE, color=T["text_muted"]),
             ),
     )
-    st.plotly_chart(fig, width='stretch', config={"displayModeBar": False})
+    st.plotly_chart(fig, width='stretch', key=f"watchlist_{sym}", config={"displayModeBar": False})

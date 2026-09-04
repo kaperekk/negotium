@@ -583,3 +583,45 @@ def test_return_eur_stock_not_inflated(tmp: Path):
     ret_pct_native = ((asset["value_base"] / (shares * avg_raw * 4.34)) - 1) * 100
     assert -5 < ret_pct_native < 20, \
         f"Return ~{ret_pct_native:.1f}% looks inflated (FX conversion may be missing)"
+
+
+# ── Performance/regression: price slab loaded once per build ────────────
+
+def test_price_slab_loaded_once_per_build(tmp: Path, monkeypatch):
+    """The _PriceCache must load each (ticker, year) slab exactly once per build_portfolio call.
+
+    If a future change accidentally reloads slabs per-day, this test catches it.
+    """
+    import ledger_core, portfolio_core
+    from storage import load_price_year
+
+    fx.inject_fake_prices(tmp)
+
+    # Buy AAPL in 2023 so the 2023 slab is needed
+    ledger_core.add_transaction("2023-01-03", [
+        {"ticker": "AAPL", "amount": 10.0},
+        {"ticker": "USD", "amount": -1250.70},
+    ])
+
+    calls: list[tuple[str, int]] = []
+    real_load = load_price_year
+
+    def counting_load(ticker, year):
+        calls.append((ticker, year))
+        return real_load(ticker, year)
+
+    # ticker_data.get_price calls storage.load_price_year via its module-level import
+    monkeypatch.setattr("ticker_data.load_price_year", counting_load)
+
+    snapshots = portfolio_core.build_portfolio(
+        start_date=date(2023, 1, 3),
+        end_date=date(2023, 2, 28),   # ~8 weeks of daily snapshots
+        base_currency="PLN",
+        precision="D",
+        use_cache=False,
+    )
+
+    assert len(snapshots) > 20
+    aapl_loads = [p for p in calls if p[0] == "AAPL"]
+    # AAPL 2023 slab should be loaded exactly once across all ~57 days
+    assert aapl_loads == [("AAPL", 2023)], f"expected single AAPL load, got {aapl_loads}"

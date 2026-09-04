@@ -371,7 +371,10 @@ def render_dashboard(cfg, storage, T, today, data_start_date, base_ccy: str | No
         st.subheader("🧩  Allocation Breakdown")
         render_allocation_breakdown(latest["assets"], base_ccy, today, T, get_ticker_meta)
 
-        render_drawdown_analysis(all_snapshots, T)
+        # Drawdown must honour the selected date range — passing all_snapshots
+        # here made this chart span the full history even when the range
+        # selector (and the main chart above) showed a shorter window.
+        render_drawdown_analysis(snapshots, T)
 
     # ── Footer ────────────────────────────────────────────────────────────────────
 

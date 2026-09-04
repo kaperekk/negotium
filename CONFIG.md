@@ -12,7 +12,7 @@ Part of the Negotium docs: [README](README.md) · [USAGE](USAGE.md) · [IMPORTS]
 {
   "default_currency": "PLN",
   "theme": "dark",
-  "ticker_rules": ["AMZN.DE=AMZ.DE", "*.PL=*.WA", ".US="],
+  "ticker_rules": ["AMZN.DE=AMZ.DE", "*.UK=*.L", "*.PL=*.WA", "*.US="],
   "isin_tickers": ["IE00B4L5Y983=IWDA.AS"]
 }
 ```
@@ -58,6 +58,50 @@ Rules are evaluated **top-to-bottom, first match wins**. Each rule is
 > Tip: use suffix rules to normalise a whole exchange at once (`*.PL=*.WA`)
 > and exact rules for one-off fixes (`AMZN.DE=AMZ.DE`).
 
+### XTB suffix mapping (country codes → Yahoo exchange codes)
+
+XTB exports **country-code suffixes**, Yahoo Finance expects **city / exchange
+codes**. Rules matching XTB's codes live in `data/config.json`; ships with the
+full set below. Two behaviours worth knowing:
+
+- Rules **don't chain** — the rewritten result is not re-matched, so a Greek
+  `*.GR=*.AT` ticker is safe even though `*.AT=*.VI` also exists (Athens vs
+  Austria use `.AT` on opposite sides).
+- Unused wildcard rules are **harmless** — a rule only fires when a ticker
+  actually carries that suffix.
+- No rule is needed when both sides use the same code: `.DE` (Xetra), `.HK`
+  (Hong Kong).
+
+| XTB (country) | Yahoo (exchange) | Market | Example |
+|---|---|---|---|
+| `.US` | *(none)* | United States | `AAPL.US` → `AAPL` |
+| `.UK` | `.L` | United Kingdom (London) | `SHEL.UK` → `SHEL.L` |
+| `.PL` | `.WA` | Poland (Warsaw) | `CDR.PL` → `CDR.WA` |
+| `.NL` | `.AS` | Netherlands (Amsterdam) | `ASML.NL` → `ASML.AS` |
+| `.FR` | `.PA` | France (Paris) | `OR.FR` → `OR.PA` |
+| `.ES` | `.MC` | Spain (Madrid) | `SAN.ES` → `SAN.MC` |
+| `.IT` | `.MI` | Italy (Milan) | `ISP.IT` → `ISP.MI` |
+| `.PT` | `.LS` | Portugal (Lisbon) | `EDP.PT` → `EDP.LS` |
+| `.BE` | `.BR` | Belgium (Brussels) | `ABI.BE` → `ABI.BR` |
+| `.AT` | `.VI` | Austria (Vienna) | `OMV.AT` → `OMV.VI` |
+| `.CH` | `.SW` | Switzerland (Zurich) | `NESN.CH` → `NESN.SW` |
+| `.IE` | `.IR` | Ireland (Dublin) | `BIR.IE` → `BIR.IR` |
+| `.SE` | `.ST` | Sweden (Stockholm) | `VOLV-B.SE` → `VOLV-B.ST` |
+| `.NO` | `.OL` | Norway (Oslo) | `EQNR.NO` → `EQNR.OL` |
+| `.DK` | `.CO` | Denmark (Copenhagen) | `NOVO-B.DK` → `NOVO-B.CO` |
+| `.FI` | `.HE` | Finland (Helsinki) | `NOKIA.FI` → `NOKIA.HE` |
+| `.CZ` | `.PR` | Czechia (Prague) | `CEZ.CZ` → `CEZ.PR` |
+| `.HU` | `.BD` | Hungary (Budapest) | `OTP.HU` → `OTP.BD` |
+| `.GR` | `.AT` | Greece (Athens) | `HTO.GR` → `HTO.AT` |
+| `.TR` | `.IS` | Türkiye (Istanbul) | `THYAO.TR` → `THYAO.IS` |
+| `.JP` | `.T` | Japan (Tokyo) | `7203.JP` → `7203.T` |
+| `.SG` | `.SI` | Singapore | `D05.SG` → `D05.SI` |
+| `.DE` | `.DE` | Germany (Xetra) — same code | — |
+| `.HK` | `.HK` | Hong Kong — same code | — |
+
+Each translated ticker is priced in the currency of its **Yahoo** suffix — see
+the [currency table](#supported-currencies--exchange-suffixes) below.
+
 ## ISIN mappings
 
 BOSSA statements identify instruments by **ISIN** (e.g. `IE00B4L5Y983`), not by
@@ -82,10 +126,16 @@ from its ticker suffix; unknown suffixes fall back to USD (with a warning):
 | Currency | Ticker suffixes |
 |---|---|
 | USD | *(no suffix, or unknown suffix)* |
-| EUR | `.DE` `.F` `.PA` `.MI` `.AS` `.BR` `.LS` `.MC` `.VI` `.IR` |
+| EUR | `.DE` `.F` `.PA` `.MI` `.AS` `.BR` `.LS` `.MC` `.VI` `.IR` `.HE` `.AT` |
 | PLN | `.WA` |
 | GBP | `.L` |
 | CHF | `.SW` |
+| SEK | `.ST` |
+| NOK | `.OL` |
+| DKK | `.CO` |
+| CZK | `.PR` |
+| HUF | `.BD` |
+| TRY | `.IS` |
 | JPY | `.T` |
 | CNY | `.SS` `.SZ` |
 | HKD | `.HK` |
@@ -96,8 +146,9 @@ from its ticker suffix; unknown suffixes fall back to USD (with a warning):
 | BRL | `.SA` |
 | MXN | `.MX` |
 
-FX rates come from Yahoo Finance (`{CCY}PLN=X` pairs plus `EURUSD=X`); MXN is
-triangulated through USD. Details: [ARCHITECTURE.md](ARCHITECTURE.md#7-multi-currency-logic).
+FX rates come from Yahoo Finance (`{CCY}PLN=X` pairs plus `EURUSD=X`); MXN and
+HUF are triangulated through USD (Yahoo has no direct `HUFPLN=X` pair).
+Details: [ARCHITECTURE.md](ARCHITECTURE.md#7-multi-currency-logic).
 
 ## Project registry — `data/projects.json`
 

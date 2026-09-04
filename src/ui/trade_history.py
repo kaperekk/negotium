@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from ticker_data import get_dividends, get_fx_rate, get_price
-from ledger_core import get_ticker_history
+from ledger_core import get_ticker_history, get_ticker_legs
 from ui.colors import ACCENT, DIVIDEND, NEGATIVE, POSITIVE
 from ui.styles import (
     build_trade_dialog_styles,
@@ -88,6 +88,24 @@ def render_trade_history_dialog(T: dict[str, str], ticker: str, name: str, ccy: 
         net = total_bought - total_sold
 
         st.markdown(render_trade_summary_cards(T, total_bought, total_sold, net), unsafe_allow_html=True)
+
+        # ── Legs view: full transaction entries for each trade date ──────────
+        st.markdown("##### Trade legs (full transaction entries)")
+        legs_rows: list[dict] = []
+        for leg_grp in get_ticker_legs(ticker):
+            # Build a readable line like  "+10 AAPL  /  -1500 USD"
+            legs_txt = "  /  ".join(
+                f"{'+' if l['amount'] > 0 else ''}{l['amount']:+.4f} {l['ticker']}"
+                + ("  🏷️" if l.get("account_operation") else "")
+                for l in leg_grp["legs"]
+            )
+            legs_rows.append({"Date": leg_grp["date"], "Entries": legs_txt})
+        if legs_rows:
+            legs_df = pd.DataFrame(legs_rows)
+            st.iframe(
+                render_trade_table_html(T, legs_df),
+                height=50 + 48 * len(legs_df),
+            )
 
         # Dividend history (per-share, native currency) + yield at ex-date
         dividends = get_dividends(ticker)
@@ -178,7 +196,7 @@ def render_trade_history_dialog(T: dict[str, str], ticker: str, name: str, ccy: 
                     ),
                 ),
             )
-            st.plotly_chart(fig, width='stretch', config={"displayModeBar": False})
+            st.plotly_chart(fig, width='stretch', key=f"trade_history_{ticker}", config={"displayModeBar": False})
 
         trade_df = pd.DataFrame([{
             "Date": t["date"],
