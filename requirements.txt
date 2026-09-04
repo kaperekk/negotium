@@ -1,0 +1,12 @@
+# Negotium — runtime dependencies.
+# Install into a virtualenv:  python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+streamlit
+yfinance
+plotly
+pandas
+orjson
+openpyxl
+python-calamine
+
+# Test suite
+pytest
