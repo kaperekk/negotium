@@ -13,7 +13,12 @@ import storage
 from bossa_import import import_bossa
 from currencies import CURRENCY_SYMBOLS
 from manual_import import import_manual
-from portfolio_core import FX_TICKERS, build_portfolio, snapshots_to_series
+from portfolio_core import (
+    FX_TICKERS,
+    _ticker_currency,
+    build_portfolio,
+    snapshots_to_series,
+)
 from ticker_data import ensure_batch, get_fx_rate, get_price, get_ticker_name, get_ticker_meta
 from ledger_core import (
     add_transaction,
@@ -240,6 +245,10 @@ def render_dashboard(cfg, storage, T, today, data_start_date, base_ccy: str | No
                            for y in range(bench_date_start.year, bench_date_end.year + 1)):
                     continue
 
+                # Benchmarks may be quoted in a non-EUR currency (e.g. the
+                # US-listed SMH in USD vs Xetra ETFs in EUR).
+                bench_ccy = _ticker_currency(b_ticker)
+
                 fx_c: dict = {}
                 bp_c: dict = {}
                 b_vals: list[float] = []
@@ -265,6 +274,11 @@ def render_dashboard(cfg, storage, T, today, data_start_date, base_ccy: str | No
                     if price is None or price <= 0:
                         b_vals.append(b_vals[-1] if b_vals else 0.0)
                         continue
+
+                    # Convert non-EUR benchmark closes to EUR so the
+                    # hypothetical purchase is always made in EUR.
+                    if bench_ccy != "EUR":
+                        price *= get_fx_rate(bench_ccy, "EUR", day, fx_c, yr)
 
                     cum_units += pending_eur / price
                     pending_eur = 0.0
@@ -338,7 +352,7 @@ def render_dashboard(cfg, storage, T, today, data_start_date, base_ccy: str | No
     irr_str = f"{irr * 100:.1f}%" if irr is not None else "—"
 
     render_metric_section(T, base_ccy, cur_value, contrib, best_ticker, cagr_str, irr_str, _fmt_money)
-    render_pnl_toggle_section(T, pnl, pnl_pct, _fmt_money)
+    render_pnl_toggle_section(T, cur_value, pnl, pnl_pct, _fmt_money)
 
     chart_mode = st.session_state.chart_mode
     render_portfolio_chart(T, base_ccy, dates, values, investeds, bench_by_date, BENCHMARKS, BENCH_COLORS, chart_mode)

@@ -139,6 +139,50 @@ def test_fx_rate_reverse_pair(tmp: Path):
     assert abs(rate - 0.25) < 0.001
 
 
+def test_ensure_pins_empty_year_once(tmp: Path):
+    """A no-data year (pre-IPO ticker, e.g. SPCX before its 2026 IPO) is pinned
+    to disk on the first attempt and never re-requested; a failed download
+    (None) stays unpinned so it is retried on a later refresh."""
+    import storage
+    import ticker_data
+
+    # Pre-seed names so ensure() never touches the network for metadata.
+    names = storage.load_ticker_names()
+    names["PREIPO"] = "Pre IPO Test"
+    names["NETFAIL"] = "Net Fail Test"
+    storage.save_ticker_names(names)
+
+    calls: list[tuple[str, int]] = []
+    orig = ticker_data._download_year
+
+    def _fake_download(ticker: str, year: int):
+        calls.append((ticker, year))
+        return {}  # Yahoo has no data for this year
+
+    ticker_data._download_year = _fake_download
+    try:
+        start, end = date(2023, 1, 1), date(2023, 6, 30)
+        ticker_data.ensure("PREIPO", start, end, force_refresh_current_year=False)
+        assert calls == [("PREIPO", 2023)], calls
+        assert storage.has_price_year("PREIPO", 2023), "empty year must be pinned"
+        assert storage.load_price_year("PREIPO", 2023) == {}
+
+        # Second pass: year already pinned -> no new download attempt.
+        ticker_data.ensure("PREIPO", start, end, force_refresh_current_year=False)
+        assert calls == [("PREIPO", 2023)], calls
+    finally:
+        ticker_data._download_year = orig
+
+    # Failed download (None) must NOT be pinned -> retried every time.
+    ticker_data._download_year = lambda t, y: None
+    try:
+        for _ in range(2):
+            ticker_data.ensure("NETFAIL", start, end, force_refresh_current_year=False)
+            assert not storage.has_price_year("NETFAIL", 2023)
+    finally:
+        ticker_data._download_year = orig
+
+
 def test_fx_rate_eur_pln_via_triangulation(tmp: Path):
     """get_fx_rate: EUR→PLN triangulated via EURUSD * USDPLN."""
     from ticker_data import get_fx_rate

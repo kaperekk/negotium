@@ -192,10 +192,14 @@ def get_ticker_meta(ticker: str) -> dict:
     return entry
 
 
-def _download_year(ticker: str, year: int) -> dict[str, float]:
+def _download_year(ticker: str, year: int) -> dict[str, float] | None:
     """
     Download full-year close prices for ticker from Yahoo Finance.
-    Returns {YYYY-MM-DD: close} — may be empty for future years or bad tickers.
+
+    Returns {YYYY-MM-DD: close} on success — an empty dict when Yahoo has no
+    data for the year (pre-IPO / delisted listing; safe to cache as "checked"),
+    or None when the download itself failed after retries (not cached, so the
+    year is retried on a later refresh).
     """
     today = date.today()
     start = date(year, 1, 1)
@@ -203,7 +207,7 @@ def _download_year(ticker: str, year: int) -> dict[str, float]:
     end   = min(date(year, 12, 31), today)
 
     if start > today:
-        return {}
+        return None
 
     symbol = _yahoo_symbol(ticker)
 
@@ -241,9 +245,9 @@ def _download_year(ticker: str, year: int) -> dict[str, float]:
                 time.sleep(_RETRY_DELAY)
             else:
                 log.warning("could not download %s %s: %s", symbol, year, exc)
-                return {}
+                return None
 
-    return {}
+    return None
 
 
 def ensure(
@@ -287,7 +291,12 @@ def ensure(
             progress_cb(f"Downloading {ticker} {year}…")
 
         prices = _download_year(ticker, year)
-        if prices:
+        if prices is not None:
+            # Empty dict = Yahoo has no data for this year (e.g. pre-IPO or
+            # delisted listing): pin an empty slab so ``has_price_year`` turns
+            # True and the year is never re-requested (no repeated failed
+            # downloads). None = download failed — leave unpinned so the year
+            # is retried on a later refresh.
             save_price_year(ticker, year, prices)
 
 

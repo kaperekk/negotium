@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import json
+import time
 from datetime import date, datetime, timedelta
 
 import streamlit as st
@@ -230,6 +231,9 @@ def render_sidebar(cfg, storage, T, today, data_start_date, detect_currency):
             if new_theme != current_theme:
                 st.session_state["theme"] = new_theme
                 cfg_module.save_theme(new_theme)
+                # Tell app.py to cover the next rerun with the theme veil so
+                # the switch repaints in one visible step.
+                st.session_state["theme_fade"] = time.time()
                 st.rerun()
 
             st.subheader("Ticker rules")

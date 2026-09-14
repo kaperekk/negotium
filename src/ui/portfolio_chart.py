@@ -43,6 +43,26 @@ def render_portfolio_chart(T: dict[str, str], base_ccy: str, dates, values, inve
             tickprefix="" if base_ccy == "PLN" else SYM[base_ccy],
             title=dict(font=dict(size=18, color=T["text_muted"]))
         )
+    elif chart_mode == "profit":
+        pnl_series = [round(v - inv, 2) for v, inv in zip(values, investeds)]
+        fig.add_trace(go.Scatter(
+            x=dates, y=pnl_series,
+            name=f"Profit ({base_ccy})",
+            fill="tozeroy",
+            line=dict(color=ACCENT, width=2.5),
+            fillcolor=ACCENT_FILL,
+            customdata=[f"{v:+,.2f}".replace(",", " ") + f" {base_ccy}" for v in pnl_series],
+            hovertemplate="%{customdata}<extra>Profit</extra>",
+        ))
+        yaxis_cfg = dict(
+            showgrid=True, gridcolor=T["chart_grid"],
+            zeroline=True, zerolinecolor=T["chart_zeroline"],
+            tickfont=dict(size=20, color=T["text_muted"]), tickformat=",.2f",
+            ticksuffix=f" {base_ccy}" if base_ccy == "PLN" else "",
+            tickprefix="" if base_ccy == "PLN" else SYM[base_ccy],
+            title=dict(font=dict(size=18, color=T["text_muted"]))
+        )
+
     else:
         pct_values = [
             round(((v / inv) - 1.0) * 100.0, 2) if inv else 0.0
@@ -75,23 +95,53 @@ def render_portfolio_chart(T: dict[str, str], base_ccy: str, dates, values, inve
             continue
 
         bench_vals = [bench_by_date.get(d, {}).get(bench_ticker, 0.0) for d in dates]
+        # Benchmarks launched after the portfolio's first transaction carry
+        # leading 0.0 placeholders (no price yet). Render them as gaps so the
+        # line starts at its first real value instead of hugging zero (amount
+        # mode) or diving to -100% (percent mode) and skewing the axis range.
+        first = next((i for i, v in enumerate(bench_vals) if v), None)
+        if first:
+            bench_vals = [None] * first + bench_vals[first:]
+
         if chart_mode == "percent":
             bench_pcts = [
-                round(((bv / inv) - 1.0) * 100.0, 2) if inv else 0.0
+                round(((bv / inv) - 1.0) * 100.0, 2)
+                if (bv is not None and inv) else None
                 for bv, inv in zip(bench_vals, investeds)
             ]
             fig.add_trace(go.Scatter(
                 x=dates, y=bench_pcts,
                 name=bench_label,
                 line=dict(color=BENCH_COLORS[bench_label], width=1.5, dash="dot"),
+                connectgaps=False,
                 hovertemplate="%{y:+.2f}%<extra>" + bench_label + "</extra>",
+            ))
+        elif chart_mode == "profit":
+            bench_pnl = [
+                round(bv - inv, 2) if bv is not None else None
+                for bv, inv in zip(bench_vals, investeds)
+            ]
+            fig.add_trace(go.Scatter(
+                x=dates, y=bench_pnl,
+                name=bench_label,
+                line=dict(color=BENCH_COLORS[bench_label], width=1.5, dash="dot"),
+                connectgaps=False,
+                customdata=[
+                    f"{v:+,.2f}".replace(",", " ") + f" {base_ccy}" if v is not None else ""
+                    for v in bench_pnl
+                ],
+                hovertemplate="%{customdata}<extra>" + bench_label + "</extra>",
             ))
         else:
             fig.add_trace(go.Scatter(
                 x=dates, y=bench_vals,
                 name=bench_label,
                 line=dict(color=BENCH_COLORS[bench_label], width=1.5, dash="dot"),
-                customdata=[f"{v:,.2f}".replace(",", " ") + f" {base_ccy}" for v in bench_vals],
+                connectgaps=False,
+                customdata=[
+                    f"{v:,.2f}".replace(",", " ") + f" {base_ccy}" if v is not None else ""
+                    for v in bench_vals
+                ],
                 hovertemplate="%{customdata}<extra>" + bench_label + "</extra>",
             ))
 
@@ -99,11 +149,23 @@ def render_portfolio_chart(T: dict[str, str], base_ccy: str, dates, values, inve
         ys = [v for tr in fig.data if tr.y is not None for v in tr.y if v is not None]
         if ys:
             fig.update_yaxes(range=[min(ys) * 0.98, max(ys) * 1.02])
+    elif chart_mode == "profit":
+        ys = [v for tr in fig.data if tr.y is not None for v in tr.y if v is not None]
+        if ys:
+            # Keep the breakeven line (0) in view; 5% headroom on each side.
+            lo, hi = min(min(ys), 0.0), max(max(ys), 0.0)
+            pad = max((hi - lo) * 0.05, 1.0)
+            fig.update_yaxes(range=[lo - pad, hi + pad])
     else:
-        pct_values = [v for tr in fig.data if tr.name == "Return (%)" for v in tr.y if v is not None]
+        # Include every percent-mode trace (portfolio return + benchmark
+        # overlays) — otherwise a benchmark outperforming the portfolio is
+        # clipped instead of zooming the axis out. Fit the data directly with
+        # 5% headroom on each side (not zero-centred symmetric).
+        pct_values = [v for tr in fig.data if tr.y is not None for v in tr.y if v is not None]
         if pct_values:
-            span = max(abs(min(pct_values)), abs(max(pct_values))) if pct_values else 1
-            fig.update_yaxes(range=[-span * 1.15, span * 1.15])
+            lo, hi = min(pct_values), max(pct_values)
+            pad = max((hi - lo) * 0.05, 1.0)  # ≥1pp floor keeps flat series readable
+            fig.update_yaxes(range=[lo - pad, hi + pad])
 
     fig.update_layout(
         template=T["plotly_template"],

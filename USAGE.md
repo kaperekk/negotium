@@ -56,8 +56,9 @@ Top to bottom:
 - **Metric cards** — current value, contributions, best performer, CAGR, IRR,
   plus a P&L toggle (amount ⇄ percent).
 - **Portfolio chart** — portfolio value over time with the invested-capital
-  reference line and optional benchmark overlays (S&P 500, NASDAQ 100, FTSE
-  All-World, Emerging Markets, Bitcoin, Gold). Toggle amount / percent mode.
+  reference line and optional benchmark overlays (S&P 500, NASDAQ 100,
+  Semiconductors, FTSE All-World, Emerging Markets, Bitcoin, Gold). Toggle
+  value / profit / return mode.
 - **Holdings table** — one row per ticker with amount, price, value and P&L;
   **click a row** to open the trade-history dialog for that ticker (every
   transaction, dividends, price history chart).

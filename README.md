@@ -15,7 +15,7 @@ Created by **Kacper Kaperek**. If you like this, buy me a coffee:
 - **Multi-currency** — exchange suffix → currency mapping for 13 markets; cash tracked as positions; display in PLN / EUR / USD
 - **Broker imports** — XTB Excel, BOSSA CSV, custom JSON; idempotent re-imports (duplicates skipped)
 - **Ticker translation** — rewrite broker symbols to Yahoo Finance format with rules; resolve ISINs for BOSSA
-- **Portfolio chart** — daily time-series with invested-capital line and benchmark overlays (S&P 500, NASDAQ 100, FTSE All-World, EM, Bitcoin, Gold)
+- **Portfolio chart** — daily time-series with invested-capital line and benchmark overlays (S&P 500, NASDAQ 100, Semiconductors, FTSE All-World, EM, Bitcoin, Gold)
 - **Metrics** — value, P&L, contributions, CAGR, IRR, best performer
 - **Analysis** — allocation donuts (sector / geography / asset class / currency), drawdown "underwater" chart, per-ticker trade history with dividends
 - **Watchlist** — track any Yahoo Finance ticker with price, change and sparkline (per project)

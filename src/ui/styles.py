@@ -6,7 +6,7 @@ returning HTML <style> blocks are injected via st.markdown(unsafe_allow_html=Tru
 
 from __future__ import annotations
 
-from ui.colors import NEGATIVE, POSITIVE
+from ui.colors import NEGATIVE, POSITIVE, STAT_CARD_ACCENTS, STAT_CARD_TINT_ALPHA
 
 
 # Base app styles
@@ -242,6 +242,30 @@ def build_app_styles(theme: dict[str, str]) -> str:
     """
 
 
+
+
+def build_theme_veil(theme: dict[str, str]) -> str:
+    """Full-screen cover used while switching themes.
+
+    Injected as the FIRST element of the rerun that follows a theme change
+    (the sidebar toggle sets the ``theme_fade`` session flag): it paints the
+    new page background over everything while the app re-renders underneath,
+    then fades out — so the whole UI appears to switch in one atomic step
+    instead of section by section.
+    """
+    t = theme
+    return f"""
+    <style>
+    #theme-veil {{
+        position: fixed; inset: 0; z-index: 9999999;
+        background: {t["page_bg"]};
+        pointer-events: none;
+        animation: themeVeil 0.45s ease-out forwards;
+    }}
+    @keyframes themeVeil {{ 0%, 25% {{ opacity: 1; }} 100% {{ opacity: 0; }} }}
+    </style>
+    <div id="theme-veil"></div>
+    """
 
 
 def build_late_theme_override(theme: dict[str, str]) -> str:
@@ -493,6 +517,11 @@ def build_holdings_styles(theme: dict[str, str]) -> str:
 
 def build_metric_card_styles(theme: dict[str, str]) -> str:
     t = theme
+    alpha = f"{STAT_CARD_TINT_ALPHA:02X}"
+    tint_rules = "\n".join(
+        f"    .stat-card.{cls} {{ background: linear-gradient(180deg, {color}{alpha} 0%, {t['card_bg']} 60%); }}"
+        for cls, color in STAT_CARD_ACCENTS.items()
+    )
     return f"""
     <style>
     .stat-row {{ display:flex; gap:1rem; margin:0.5rem 0 1rem 0; }}
@@ -501,6 +530,7 @@ def build_metric_card_styles(theme: dict[str, str]) -> str:
       background:{t["card_bg"]};
       border:1px solid {t["border"]};
     }}
+{tint_rules}
     .stat-card .label {{ font-size:0.75rem; color:{t["text_faint"]}; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.2rem; text-align:center; }}
     .stat-card .value {{ font-size:1.4rem; font-weight:700; color:{t["text"]}; text-align:center; }}
     .green .value,
@@ -535,9 +565,16 @@ def build_toggle_button_styles(theme: dict[str, str]) -> str:
     div[data-testid="stHorizontalBlock"] > div:has(button[kind="primary"]) button[kind="primary"]:hover {{
         border-color: {t["border_hover"]} !important;
     }}
+    /* Selected toggle: accent ring + tint + soft glow, so the active choice
+       is clearly visible in both themes (same card style, stronger signal). */
     div[data-testid="stHorizontalBlock"] > div:has(button[kind="primary"]) button[kind="primary"] {{
-        border-color: {t["border_active"]} !important;
-        background: {t["card_btn_active"]} !important;
+        border: 1.5px solid {t["accent"]} !important;
+        background: {t["accent_tag_bg"]} !important;
+        box-shadow: 0 0 14px {t["accent_tag_hover"]} !important;
+    }}
+    div[data-testid="stHorizontalBlock"] > div:has(button[kind="primary"]) button[kind="primary"]:hover {{
+        border-color: {t["accent"]} !important;
+        background: {t["accent_tag_hover"]} !important;
     }}
     /* Big tap-friendly text ONLY for regular toggle buttons (e.g. the
        PLN/EUR/USD currency switch). Form-submit buttons (st.form_submit_button

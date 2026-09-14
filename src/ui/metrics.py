@@ -22,32 +22,41 @@ def render_metric_section(T: dict[str, str], base_ccy: str, cur_value: float, co
     )
 
 
-def render_pnl_toggle_section(T: dict[str, str], pnl: float, pnl_pct: float, fmt) -> None:
+def render_pnl_toggle_section(T: dict[str, str], cur_value: float, pnl: float, pnl_pct: float, fmt) -> None:
     if "chart_mode" not in st.session_state:
         st.session_state.chart_mode = "amount"
 
     sign = "+" if pnl >= 0 else ""
-    is_amount = st.session_state.chart_mode == "amount"
-    is_percent = not is_amount
+    mode = st.session_state.chart_mode
 
     st.markdown(build_toggle_button_styles(T), unsafe_allow_html=True)
-    left, right = st.columns(2)
+    left, mid, right = st.columns(3)
 
     with left:
         if st.button(
-            f"Total P&L  ·  {sign}{fmt(pnl)}",
+            f"Value · {fmt(cur_value)}",
             key="pnl_amount_btn",
-            type="primary" if is_amount else "secondary",
+            type="primary" if mode == "amount" else "secondary",
             width='stretch',
         ):
             st.session_state.chart_mode = "amount"
             st.rerun()
 
+    with mid:
+        if st.button(
+            f"P&L · {sign}{fmt(pnl)}",
+            key="pnl_profit_btn",
+            type="primary" if mode == "profit" else "secondary",
+            width='stretch',
+        ):
+            st.session_state.chart_mode = "profit"
+            st.rerun()
+
     with right:
         if st.button(
-            f"Total Return  ·  {sign}{pnl_pct:.1f}%",
+            f"Return · {sign}{pnl_pct:.1f}%",
             key="pnl_pct_btn",
-            type="primary" if is_percent else "secondary",
+            type="primary" if mode == "percent" else "secondary",
             width='stretch',
         ):
             st.session_state.chart_mode = "percent"

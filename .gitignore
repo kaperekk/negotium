@@ -1,18 +1,5 @@
-# Data directory — ignore everything except tracked config
-data/prices/
-data/*/transactions.jsonl
-data/*/portfolio.jsonl
-data/*/balance.json
-data/*/benchmarks_*.json
-data/*/imports/
-data/*/*.log
-data/ticker_names.json
-data/ticker_meta.json
-data/ath.json
-data/earnings.json
-data/dividends.json
-
-# Tracked config — keep this file
+# Ignore all data files except config
+data/*
 !data/config.json
 
 # Python

@@ -95,6 +95,17 @@ NEGATIVE = "#ef4444"   # losses / sells
 RETURN_UP = "#3fb950"  # holdings return % (green)
 DIVIDEND = "#eab308"   # dividend markers / gold
 
+# Per-card accent tint for the dashboard stat cards (soft background wash;
+# keeps the cards visually distinct from the chart toggle buttons).
+STAT_CARD_ACCENTS: dict[str, str] = {
+    "cyan": "#06b6d4",    # Total Value
+    "blue": "#3b82f6",    # Invested
+    "purple": "#8b5cf6",  # Largest Position
+    "green": POSITIVE,    # CAGR
+    "amber": DIVIDEND,    # IRR
+}
+STAT_CARD_TINT_ALPHA = 0x1A  # ~10% accent opacity at the card's top edge
+
 # Shared size for chart hover-label text (watchlist, portfolio, drawdown).
 HOVER_LABEL_SIZE = 30
 
@@ -107,6 +118,7 @@ AXIS_TITLE_FONT_SIZE = 18
 
 BENCHMARKS: dict[str, str] = {
     "NASDAQ 100 (SXRV.DE)": "SXRV.DE",
+    "Semiconductors (SMH)": "SMH",
     "S&P 500 (I500.DE)": "I500.DE",
     "Vanguard FTSE All-World (VWCE.DE)": "VWCE.DE",
     "Emerging Markets (IS3N.DE)": "IS3N.DE",
@@ -116,6 +128,7 @@ BENCHMARKS: dict[str, str] = {
 
 BENCH_COLORS: dict[str, str] = {
     "NASDAQ 100 (SXRV.DE)": "#06b6d4",
+    "Semiconductors (SMH)": "#ec4899",
     "S&P 500 (I500.DE)": "#22c55e",
     "Vanguard FTSE All-World (VWCE.DE)": "#f97316",
     "Emerging Markets (IS3N.DE)": "#8b5cf6",
