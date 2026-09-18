@@ -264,3 +264,161 @@ def test_latest_price_multi_year(tmp: Path):
         }
     }
     assert _latest_price("AAPL", cache, 2023) == 125.0
+
+
+# -- get_ticker_currency: Yahoo-backed detection with suffix fallback ----------
+
+def test_ticker_currency_uses_yahoo_when_it_answers(tmp: Path, monkeypatch):
+    """get_ticker_currency prefers Yahoo's reported currency over the suffix map.
+
+    USD-quoted LSE lines (CNDX.L, DTLA.L) must resolve to USD — the .L suffix
+    would wrongly guess GBP and misvalue them by the GBP/USD ratio.
+    """
+    import ticker_data
+
+    class _FakeFastInfo:
+        currency = "USD"
+
+    class _FakeTicker:
+        def __init__(self, symbol):
+            self.fast_info = _FakeFastInfo()
+
+    monkeypatch.setattr(ticker_data.yf, "Ticker", _FakeTicker)
+    ticker_data.invalidate_currency_cache()
+    try:
+        assert ticker_data.get_ticker_currency("CNDX.L") == "USD"
+        assert ticker_data.get_ticker_currency("DTLA.L") == "USD"
+    finally:
+        ticker_data.invalidate_currency_cache()
+
+
+def test_ticker_currency_falls_back_to_suffix_map(tmp: Path, monkeypatch):
+    """get_ticker_currency falls back to the suffix map when Yahoo fails.
+
+    Dead/invalid Yahoo symbols must not silently become USD when the exchange
+    suffix determines the currency (.ST→SEK, .L→GBP, .WA→PLN).
+    """
+    import ticker_data
+
+    class _BrokenTicker:
+        def __init__(self, symbol):
+            raise RuntimeError("symbol not found")
+
+    monkeypatch.setattr(ticker_data.yf, "Ticker", _BrokenTicker)
+    ticker_data.invalidate_currency_cache()
+    try:
+        assert ticker_data.get_ticker_currency("ERICB.ST") == "SEK"
+        assert ticker_data.get_ticker_currency("4GLD.L") == "GBP"
+        assert ticker_data.get_ticker_currency("SNT.WA") == "PLN"
+    finally:
+        ticker_data.invalidate_currency_cache()
+
+
+def test_ticker_currency_unknown_suffix_defaults_to_usd(tmp: Path, monkeypatch):
+    """get_ticker_currency: unknown suffix and no Yahoo answer → USD."""
+    import ticker_data
+
+    class _BrokenTicker:
+        def __init__(self, symbol):
+            raise RuntimeError("symbol not found")
+
+    monkeypatch.setattr(ticker_data.yf, "Ticker", _BrokenTicker)
+    ticker_data.invalidate_currency_cache()
+    try:
+        assert ticker_data.get_ticker_currency("AAPL") == "USD"
+    finally:
+        ticker_data.invalidate_currency_cache()
+
+
+def test_ticker_currency_gbp_pence_normalised(tmp: Path, monkeypatch):
+    """get_ticker_currency: Yahoo's GBp (London pence) is normalised to GBP."""
+    import ticker_data
+
+    class _FakeFastInfo:
+        currency = "GBp"
+
+    class _FakeTicker:
+        def __init__(self, symbol):
+            self.fast_info = _FakeFastInfo()
+
+    monkeypatch.setattr(ticker_data.yf, "Ticker", _FakeTicker)
+    ticker_data.invalidate_currency_cache()
+    try:
+        assert ticker_data.get_ticker_currency("HSBA.L") == "GBP"
+    finally:
+        ticker_data.invalidate_currency_cache()
+
+
+def test_ticker_currency_cached_after_first_lookup(tmp: Path, monkeypatch):
+    """get_ticker_currency caches the answer — Yahoo is consulted once."""
+    import ticker_data
+
+    calls: list[str] = []
+
+    class _FakeFastInfo:
+        currency = "EUR"
+
+    class _FakeTicker:
+        def __init__(self, symbol):
+            calls.append(symbol)
+            self.fast_info = _FakeFastInfo()
+
+    monkeypatch.setattr(ticker_data.yf, "Ticker", _FakeTicker)
+    ticker_data.invalidate_currency_cache()
+    try:
+        assert ticker_data.get_ticker_currency("IUSQ.DE") == "EUR"
+        assert ticker_data.get_ticker_currency("IUSQ.DE") == "EUR"
+        assert calls == ["IUSQ.DE"]
+    finally:
+        ticker_data.invalidate_currency_cache()
+
+
+# -- FX triangulation for currencies whose {CCY}PLN=X pair has no history ------
+
+def test_fx_yahoo_maps_no_history_currencies_via_usd():
+    """Currencies without historical {CCY}PLN=X data map to {CCY}USD=X pairs.
+
+    Yahoo's chart API returns zero points for e.g. SEKPLN=X but full history
+    for SEKUSD=X — the FX_YAHOO map must use the USD pairs for those currencies
+    so get_fx_rate can triangulate.
+    """
+    from ticker_data import FX_YAHOO
+
+    for ccy in ("SEK", "NOK", "CAD", "KRW", "CNY", "BRL", "CZK", "TRY", "MXN", "HUF"):
+        assert f"{ccy}USD" in FX_YAHOO, f"{ccy}USD missing from FX_YAHOO"
+        assert f"{ccy}PLN" not in FX_YAHOO, f"{ccy}PLN should not be a direct pair"
+    # Direct pairs that DO have history stay direct.
+    for ccy in ("EUR", "GBP", "AUD", "HKD", "JPY", "SGD", "CHF", "DKK"):
+        assert f"{ccy}PLN" in FX_YAHOO, f"{ccy}PLN missing from FX_YAHOO"
+
+
+def test_fx_rate_sek_pln_via_usd_triangulation():
+    """get_fx_rate: SEK→PLN triangulated via SEKUSD × USDPLN.
+
+    Yahoo serves no historical SEKPLN=X data, so the conversion must go
+    through USD (0.0965 USD per SEK × 4.0 PLN per USD = 0.386).
+    """
+    from ticker_data import get_fx_rate
+    cache = {
+        "SEKUSD": {2024: {"2024-12-27": 0.0965}},
+        "USDPLN": {2024: {"2024-12-27": 4.0}},
+    }
+    rate = get_fx_rate("SEK", "PLN", "2024-12-27", cache, 2024)
+    assert abs(rate - 0.386) < 0.001, f"SEK→PLN got {rate}"
+
+    # Reverse direction: PLN→SEK = 1 / (SEKUSD × USDPLN)
+    reverse = get_fx_rate("PLN", "SEK", "2024-12-27", cache, 2024)
+    assert abs(reverse - 1 / 0.386) < 0.01, f"PLN→SEK got {reverse}"
+
+
+def test_fx_rate_nok_pln_via_usd_triangulation():
+    """get_fx_rate: NOK→PLN triangulated via NOKUSD × USDPLN."""
+    from ticker_data import get_fx_rate
+    cache = {
+        "NOKUSD": {2025: {"2025-06-02": 0.10}},
+        "USDPLN": {2025: {"2025-06-02": 3.7}},
+    }
+    rate = get_fx_rate("NOK", "PLN", "2025-06-02", cache, 2025)
+    assert abs(rate - 0.37) < 0.001, f"NOK→PLN got {rate}"
+
+

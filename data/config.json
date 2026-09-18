@@ -1,6 +1,7 @@
 {
   "default_currency": "PLN",
   "ticker_rules": [
+    "ERICB.ST=ERIC-B.ST",
     "AMZN.DE=AMZ.DE",
     "TSLA.DE=TL0.DE",
     "W9C.DE=W9C.F",

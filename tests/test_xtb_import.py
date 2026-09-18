@@ -454,3 +454,120 @@ def test_xtb_parse_transfer(tmp: Path):
     txns = parse_xtb_excel(p, "USD")
     assert len(txns) == 1
     assert txns[0]["entries"][0].get("account_operation") is True
+
+
+def _single_row_book(tmp: Path, name: str, row: list) -> Path:
+    """Helper: build a one-row Cash Operations workbook (header + row)."""
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Cash Operations"
+    ws.append(["Type", "Ticker", "Amount", "Time", "Comment"])
+    ws.append(row)
+    p = tmp / name
+    wb.save(p)
+    wb.close()
+    return p
+
+
+def test_xtb_parse_ike_deposit(tmp: Path):
+    """parse_xtb_excel: IKE deposit creates account_operation entry.
+
+    IKE accounts export deposits with the row type 'IKE deposit' instead of
+    'Deposit' — these must count toward invested capital like any deposit.
+    """
+    from xtb_import import parse_xtb_excel
+
+    p = _single_row_book(tmp, "ike_deposit.xlsx",
+                         ["IKE deposit", "", 2000.0, "2026-08-25 06:56:32",
+                          "Transfer in operation on account with id 51174134"])
+    txns = parse_xtb_excel(p, "PLN")
+    assert len(txns) == 1
+    entry = txns[0]["entries"][0]
+    assert entry["ticker"] == "PLN"
+    assert entry["amount"] == 2000.0
+    assert entry.get("account_operation") is True
+
+
+def test_xtb_parse_ike_withdrawal(tmp: Path):
+    """parse_xtb_excel: IKE withdrawal creates account_operation entry."""
+    from xtb_import import parse_xtb_excel
+
+    p = _single_row_book(tmp, "ike_withdrawal.xlsx",
+                         ["IKE withdrawal", "", -500.0, "2026-01-15 10:00:00", ""])
+    txns = parse_xtb_excel(p, "PLN")
+    assert len(txns) == 1
+    entry = txns[0]["entries"][0]
+    assert entry["amount"] == -500.0
+    assert entry.get("account_operation") is True
+
+
+def test_xtb_parse_foreign_dividend_on_pl_market(tmp: Path):
+    """parse_xtb_excel: 'Dividend from foreign company on PL market' is cash.
+
+    Foreign-company dividends settled on the Warsaw market (e.g. ASB.PL paid
+    in USD) carry their own row type — they must import like a dividend.
+    """
+    from xtb_import import parse_xtb_excel
+
+    p = _single_row_book(tmp, "foreign_div.xlsx",
+                         ["Dividend from foreign company on PL market", "ASB.PL",
+                          22.85, "2026-05-28 09:59:02", "ASB.PL USD 0.3500/ SHR"])
+    txns = parse_xtb_excel(p, "PLN")
+    assert len(txns) == 1
+    entry = txns[0]["entries"][0]
+    assert entry["ticker"] == "PLN"
+    assert entry["amount"] == 22.85
+    assert entry.get("account_operation") is None
+
+
+def test_xtb_parse_fractional_shares_cash(tmp: Path):
+    """parse_xtb_excel: 'Fractional shares' (split cash leg) is a cash entry."""
+    from xtb_import import parse_xtb_excel
+
+    p = _single_row_book(tmp, "fractional.xlsx",
+                         ["Fractional shares", "DNP.PL", 135.93,
+                          "2025-07-31 06:59:33", "DNP.PL split 10 for 1"])
+    txns = parse_xtb_excel(p, "PLN")
+    assert len(txns) == 1
+    entry = txns[0]["entries"][0]
+    assert entry["ticker"] == "PLN"
+    assert entry["amount"] == 135.93
+    assert entry.get("account_operation") is None
+
+
+def test_xtb_zero_amount_rows_produce_no_entries(tmp: Path):
+    """parse_xtb_excel: zero-amount fee/correction rows are dropped, not stored."""
+    from xtb_import import parse_xtb_excel
+
+    wb_rows = [
+        ["Commission", "DNP.PL", 0.0, "2025-07-31 06:57:05", "Correction: BUY 0.2712 @ 393.20"],
+        ["Correction", "DNP.PL", 0.0, "2025-07-31 06:57:05", "Correction: Profit of position #1589229752"],
+        ["Close trade", "DNP.PL", 0.0, "2025-07-31 06:57:05", "Profit of position #1589229752"],
+    ]
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Cash Operations"
+    ws.append(["Type", "Ticker", "Amount", "Time", "Comment"])
+    for r in wb_rows:
+        ws.append(r)
+    p = tmp / "zero_rows.xlsx"
+    wb.save(p)
+    wb.close()
+
+    txns = parse_xtb_excel(p, "PLN")
+    assert txns == []
+
+
+def test_xtb_unknown_type_with_amount_is_skipped(tmp: Path):
+    """parse_xtb_excel: unrecognised types carrying money produce no entries."""
+    from xtb_import import parse_xtb_excel
+
+    p = _single_row_book(tmp, "unknown.xlsx",
+                         ["Exotic operation", "", 100.0, "2026-01-01 10:00:00", "?"])
+    txns = parse_xtb_excel(p, "PLN")
+    assert txns == []
+

@@ -38,8 +38,13 @@ SUFFIX_CURRENCY: dict[str, str] = {
     s: ccy for ccy, suffixes in CURRENCY_SUFFIXES.items() for s in suffixes
 }
 
-# Currencies with no direct {CCY}PLN Yahoo pair — their FX is triangulated via USD.
-TRIANGULATE_VIA_USD: frozenset[str] = frozenset({"MXN", "HUF"})
+# Currencies whose Yahoo {CCY}PLN=X pair has no historical daily data (the
+# chart API returns zero points for them — verified per pair). Their FX is
+# triangulated via USD: {CCY}USD=X × USDPLN=X, both of which Yahoo serves.
+TRIANGULATE_VIA_USD: frozenset[str] = frozenset({
+    "MXN", "HUF",   # original set
+    "CAD", "KRW", "CNY", "BRL", "SEK", "NOK", "CZK", "TRY",  # no {CCY}PLN history
+})
 
 # Display symbols per base currency (UI).
 CURRENCY_SYMBOLS: dict[str, str] = {"PLN": " PLN", "EUR": "€", "USD": "$"}

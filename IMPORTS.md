@@ -43,13 +43,16 @@ the sidebar **🔄 Refresh**, which replays every stored file) is safe.
 |---|---|
 | `Stock purchase` | Buy — share count parsed from the `OPEN BUY <n> @ <price>` comment; ticker + cash leg recorded |
 | `Stock sell` | Sell — share count parsed from the `CLOSE BUY …` comment |
-| `Deposit` / `Withdrawal` | Cash movement marked `account_operation` (counts toward invested capital) |
+| `Deposit` / `Withdrawal` / `IKE deposit` / `IKE withdrawal` | Cash movement marked `account_operation` (counts toward invested capital) |
 | `Transfer` | Cash movement marked `account_operation` |
-| `Dividend` | Cash entry (no invested-capital impact) |
+| `Dividend` / `Dividend from foreign company on PL market` | Cash entry (no invested-capital impact) |
 | `Free funds interest`, `Free funds interest tax`, `Withholding tax` | Cash entries |
+| `Commission`, `Fractional shares` | Cash entries (only when the amount is non-zero) |
 
 Rows are merged per calendar date; rows without a recognised type or amount
-are skipped and counted in the log.
+are skipped and counted in the log. An unrecognised row type that still
+carries a non-zero amount is logged as a warning instead of being dropped
+silently.
 
 ### Uploading
 

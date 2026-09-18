@@ -45,7 +45,7 @@ from storage import (
     SUPPORTED_CURRENCIES,
     SUFFIX_CURRENCY,
 )
-from ticker_data import get_price, get_fx_rate, FX_YAHOO
+from ticker_data import get_price, get_fx_rate, get_ticker_currency, FX_YAHOO
 from ledger_core import get_all_transactions
 
 FX_TICKERS = set(FX_YAHOO.keys())
@@ -209,7 +209,11 @@ def build_portfolio(
                 price = cache.get(t, day_str, year)
                 if price is None:
                     continue
-                ticker_ccy   = _ticker_currency(t)
+                # Currency must match how Yahoo quotes the price series for
+                # this exact symbol — suffix-based guessing misclassifies
+                # USD-quoted LSE lines (.L is not always GBP) and dead
+                # symbols. get_ticker_currency falls back to the suffix map.
+                ticker_ccy   = get_ticker_currency(t)
                 value_native = round(amount * price, 2)
                 rate         = cache.get_fx(ticker_ccy, base_currency, day_str, year)
                 value_base   = round(value_native * rate, 2)

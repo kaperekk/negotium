@@ -226,7 +226,7 @@ def parse_xtb_excel(file_path: str | Path, currency: str) -> list[dict]:
                 entries.append({"ticker": translate_ticker(str(ticker), rules), "amount": round(-shares, 8)})
                 entries.append({"ticker": currency, "amount": round(float(amount), 8)})
 
-        elif op_type in ("Deposit", "Withdrawal"):
+        elif op_type in ("Deposit", "Withdrawal", "IKE deposit", "IKE withdrawal"):
             entries.append({"ticker": currency, "amount": round(float(amount), 8),
                             "account_operation": True})
 
@@ -234,12 +234,19 @@ def parse_xtb_excel(file_path: str | Path, currency: str) -> list[dict]:
             entries.append({"ticker": currency, "amount": round(float(amount), 8),
                             "account_operation": True})
 
-        elif op_type == "Dividend":
+        elif op_type in ("Dividend", "Dividend from foreign company on PL market"):
             entries.append({"ticker": currency, "amount": round(float(amount), 8)})
 
         elif op_type in ("Free funds interest", "Free funds interest tax",
-                          "Withholding tax"):
-            entries.append({"ticker": currency, "amount": round(float(amount), 8)})
+                          "Withholding tax", "Commission", "Fractional shares"):
+            if float(amount) != 0:
+                entries.append({"ticker": currency, "amount": round(float(amount), 8)})
+
+        elif float(amount) != 0:
+            log.warning(
+                "XTB row type not recognised — skipped: %r (%.2f %s on %s, comment: %s)",
+                op_type, float(amount), currency, date_str, str(comment)[:80],
+            )
 
         if entries:
             transactions.append({"date": date_str, "entries": entries})

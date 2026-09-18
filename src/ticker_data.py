@@ -65,6 +65,7 @@ from storage import (
     CURRENCY_SUFFIXES,
     TRIANGULATE_VIA_USD,
 )
+from currencies import SUFFIX_CURRENCY
 
 # Yahoo symbols for FX cross rates (all → PLN)
 FX_YAHOO: dict[str, str] = {
@@ -118,23 +119,31 @@ def invalidate_currency_cache() -> None:
 def get_ticker_currency(ticker: str) -> str:
     """Return the trading currency for a ticker (e.g. USD, EUR, GBP).
 
-    Resolved via Yahoo Finance ``fast_info`` and cached in-memory. GBp
-    (London pence) is normalised to GBP. Falls back to a suffix guess or
-    "USD" on failure.
+    Resolved via Yahoo Finance ``fast_info`` and cached in-memory — the quoted
+    currency of the price series Yahoo serves for that exact symbol. Some
+    exchange lines deviate from their country's default (USD-quoted LSE lines
+    like CNDX.L / DTLA.L), so the reported currency must win over any
+    suffix-based guess. GBp (London pence) is normalised to GBP. When Yahoo
+    cannot answer, fall back to the exchange-suffix mapping (.L→GBP, .ST→SEK,
+    …), then to "USD" as a last resort.
     """
     if ticker.upper() in SUPPORTED_CURRENCIES:
         return ticker
     cached = _CURRENCY_CACHE.get(ticker)
     if cached:
         return cached
-    cur = "USD"
+    cur: str | None = None
     try:
         with _suppress_output():
             cur = yf.Ticker(_yahoo_symbol(ticker)).fast_info.currency
     except Exception:
-        pass
-    if not cur or cur == "GBp":
-        cur = "GBP" if cur == "GBp" else "USD"
+        cur = None
+    if cur == "GBp":
+        cur = "GBP"
+    if not cur:
+        t = ticker.upper()
+        ext = t[t.rfind("."):] if "." in t else ""
+        cur = SUFFIX_CURRENCY.get(ext, "USD")
     _CURRENCY_CACHE[ticker] = cur
     return cur
 
