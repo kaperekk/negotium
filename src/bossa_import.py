@@ -25,7 +25,7 @@ import re
 from pathlib import Path
 
 import storage
-from ledger_core import get_all_transactions
+from ledger_core import existing_entry_counts, get_all_transactions
 from isin_resolve import resolve_isins_with_names
 
 log = logging.getLogger(__name__)
@@ -209,7 +209,7 @@ def import_bossa(file_path: str | Path, currency: str, progress_cb=None) -> dict
     from ledger_core import auto_fix_splits_if_needed
     auto_fix_splits_if_needed(transactions, starting_balance=starting)
 
-    existing = _existing_entry_counts()
+    existing = existing_entry_counts()
 
     imported = 0
     skipped = 0
