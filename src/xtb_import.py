@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import re
 import warnings
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 import openpyxl
@@ -22,7 +22,6 @@ import openpyxl
 import storage
 import pandas as pd
 
-import storage
 import config as cfg_module
 from ledger_core import get_all_transactions
 from ticker_translate import translate_ticker
@@ -30,8 +29,6 @@ from ticker_translate import translate_ticker
 log = logging.getLogger(__name__)
 
 SHARE_RE = re.compile(r"(?:OPEN|CLOSE)\s+BUY\s+([\d.]+)")
-TRANSFER_RATE_RE = re.compile(r"Exchange rate:\s*([\d.]+)")
-TRANSFER_CURRENCY_RE = re.compile(r"Currency conversion,\s*\w+\s+to\s+(\w+)")
 
 
 def _parse_shares(comment: str | None) -> float | None:
@@ -39,20 +36,6 @@ def _parse_shares(comment: str | None) -> float | None:
         return None
     m = SHARE_RE.search(comment)
     return float(m.group(1)) if m else None
-
-
-def _parse_transfer_rate(comment: str | None) -> float | None:
-    if not comment:
-        return None
-    m = TRANSFER_RATE_RE.search(comment)
-    return float(m.group(1)) if m else None
-
-
-def _parse_transfer_target(comment: str | None) -> str | None:
-    if not comment:
-        return None
-    m = TRANSFER_CURRENCY_RE.search(comment)
-    return m.group(1).upper() if m else None
 
 
 # XTB statements occasionally ship with a minimal stylesheet that lacks the
@@ -308,6 +291,10 @@ def import_xtb(file_path: str | Path, currency: str) -> dict:
             len(fixed),
             ", ".join(f"{t} ({n} shares)" for t, n, _ in fixed),
         )
+
+    # Auto-fix unapplied stock splits detected via Yahoo Finance.
+    from ledger_core import auto_fix_splits_if_needed
+    auto_fix_splits_if_needed(transactions, starting_balance=starting)
 
     existing = _existing_entry_counts()
 

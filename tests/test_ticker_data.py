@@ -422,3 +422,180 @@ def test_fx_rate_nok_pln_via_usd_triangulation():
     assert abs(rate - 0.37) < 0.001, f"NOK→PLN got {rate}"
 
 
+# -- Regression: auto_adjust must be False for raw prices ----------------------
+
+def test_download_year_uses_raw_prices_not_adjusted(tmp: Path, monkeypatch):
+    """_download_year must call yf.download with auto_adjust=False.
+
+    Regression guard: a previous bug used auto_adjust=True which returns
+    dividend-adjusted closes. Those scale down historical prices and break
+    cost-basis, TWR, and IRR calculations that must match broker cash flows.
+    """
+    import ticker_data
+    import pandas as pd
+
+    download_calls: list[dict] = []
+
+    def _fake_download(symbol, start, end, progress, auto_adjust, **kwargs):
+        download_calls.append({"symbol": symbol, "auto_adjust": auto_adjust})
+        idx = pd.date_range(start, end, freq="B")
+        df = pd.DataFrame({"Close": [100.0] * len(idx)}, index=idx)
+        return df
+
+    monkeypatch.setattr(ticker_data.yf, "download", _fake_download)
+    monkeypatch.setattr(ticker_data.yf.Ticker, "fast_info", type("FI", (), {"currency": "USD"})())
+
+    ticker_data._download_year("AAPL", 2023)
+
+    assert len(download_calls) == 1, f"Expected 1 download call, got {len(download_calls)}"
+    assert download_calls[0]["auto_adjust"] is False, (
+        f"_download_year must use auto_adjust=False (raw prices), "
+        f"got auto_adjust={download_calls[0]['auto_adjust']}"
+    )
+
+
+def test_ensure_batch_uses_raw_prices_not_adjusted(tmp: Path, monkeypatch):
+    """ensure_batch must call yf.download with auto_adjust=False.
+
+    Regression guard: batch downloads must return raw closes to match
+    broker cash flows for portfolio valuation and performance metrics.
+    """
+    import ticker_data
+    import storage
+    import pandas as pd
+
+    download_calls: list[dict] = []
+
+    def _fake_download(symbols, start, end, progress, auto_adjust, **kwargs):
+        download_calls.append({"symbols": symbols, "auto_adjust": auto_adjust})
+        idx = pd.date_range(start, end, freq="B")
+        if isinstance(symbols, list) and len(symbols) > 1:
+            cols = pd.MultiIndex.from_product([["Close"], symbols])
+            data = {col: [100.0] * len(idx) for col in cols}
+            df = pd.DataFrame(data, index=idx)
+            df.columns = cols
+        else:
+            sym = symbols[0] if isinstance(symbols, list) else symbols
+            df = pd.DataFrame({"Close": [100.0] * len(idx)}, index=idx)
+        return df
+
+    monkeypatch.setattr(ticker_data.yf, "download", _fake_download)
+    monkeypatch.setattr(ticker_data.yf.Ticker, "fast_info", type("FI", (), {"currency": "USD"})())
+
+    names = storage.load_ticker_names()
+    names["TEST1"] = "Test 1"
+    names["TEST2"] = "Test 2"
+    storage.save_ticker_names(names)
+
+    ticker_data.ensure_batch(
+        ["TEST1", "TEST2"],
+        start_date=date(2023, 1, 1),
+        end_date=date(2023, 1, 31),
+        force_refresh_current_year=False,
+    )
+
+    assert len(download_calls) >= 1, "Expected at least 1 batch download call"
+    assert download_calls[0]["auto_adjust"] is False, (
+        f"ensure_batch must use auto_adjust=False (raw prices), "
+        f"got auto_adjust={download_calls[0]['auto_adjust']}"
+    )
+
+
+def test_ensure_adjusted_batch_uses_adjusted_prices(tmp: Path, monkeypatch):
+    """ensure_batch(adjusted=True) must call yf.download with auto_adjust=True.
+
+    The adjusted cache is ONLY for benchmark what-if overlays so the
+    comparison includes dividends. This is the one place adjusted is correct.
+    """
+    import ticker_data
+    import storage
+    import pandas as pd
+
+    download_calls: list[dict] = []
+
+    def _fake_download(symbols, start, end, progress, auto_adjust, **kwargs):
+        download_calls.append({"symbols": symbols, "auto_adjust": auto_adjust})
+        idx = pd.date_range(start, end, freq="B")
+        if isinstance(symbols, list) and len(symbols) > 1:
+            cols = pd.MultiIndex.from_product([["Close"], symbols])
+            data = {col: [100.0] * len(idx) for col in cols}
+            df = pd.DataFrame(data, index=idx)
+            df.columns = cols
+        else:
+            df = pd.DataFrame({"Close": [100.0] * len(idx)}, index=idx)
+        return df
+
+    monkeypatch.setattr(ticker_data.yf, "download", _fake_download)
+    monkeypatch.setattr(ticker_data.yf.Ticker, "fast_info", type("FI", (), {"currency": "USD"})())
+
+    names = storage.load_ticker_names()
+    names["BM1"] = "Benchmark 1"
+    storage.save_ticker_names(names)
+
+    ticker_data.ensure_batch(
+        ["BM1"],
+        start_date=date(2023, 1, 1),
+        end_date=date(2023, 1, 31),
+        force_refresh_current_year=False,
+        adjusted=True,
+    )
+
+    assert len(download_calls) >= 1, "Expected at least 1 adjusted download call"
+    assert download_calls[0]["auto_adjust"] is True, (
+        f"ensure_batch(adjusted=True) must use auto_adjust=True (for benchmarks), "
+        f"got auto_adjust={download_calls[0]['auto_adjust']}"
+    )
+
+
+# -- get_splits: Yahoo Finance split history --------------------------------
+
+def test_get_splits_cash_returns_empty(tmp: Path):
+    """get_splits returns empty dict for cash tickers."""
+    import ticker_data
+    for ccy in ["USD", "EUR", "PLN"]:
+        assert ticker_data.get_splits(ccy) == {}
+
+
+def test_get_splits_caches_to_disk(tmp: Path, monkeypatch):
+    """get_splits caches the result so Yahoo is consulted once."""
+    import ticker_data
+    import pandas as pd
+
+    call_count = [0]
+    _orig = ticker_data.yf.Ticker
+
+    class _FakeTicker:
+        def __init__(self, symbol):
+            call_count[0] += 1
+            self.splits = pd.Series(
+                {"2020-08-31": 4.0, "2014-06-09": 7.0}
+            )
+
+    monkeypatch.setattr(ticker_data.yf, "Ticker", _FakeTicker)
+    try:
+        result = ticker_data.get_splits("AAPL")
+        assert "2020-08-31" in result
+        assert result["2020-08-31"] == 4.0
+        assert "2014-06-09" in result
+        assert result["2014-06-09"] == 7.0
+        assert call_count[0] == 1
+
+        result2 = ticker_data.get_splits("AAPL")
+        assert result2 == result
+        assert call_count[0] == 1
+    finally:
+        monkeypatch.setattr(ticker_data.yf, "Ticker", _orig)
+
+
+def test_get_splits_returns_empty_on_failure(tmp: Path, monkeypatch):
+    """get_splits returns empty dict when Yahoo fails."""
+    import ticker_data
+
+    class _BrokenTicker:
+        def __init__(self, symbol):
+            raise RuntimeError("network error")
+
+    monkeypatch.setattr(ticker_data.yf, "Ticker", _BrokenTicker)
+    assert ticker_data.get_splits("DEAD.TICKER") == {}
+
+

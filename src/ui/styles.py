@@ -671,7 +671,7 @@ def render_metric_cards(theme: dict[str, str], *,
                         total_value: str,
                         invested: str,
                         largest_position: str,
-                        cagr: str,
+                        twr: str,
                         irr: str,
                         base_ccy: str) -> str:
     t = theme
@@ -689,9 +689,9 @@ def render_metric_cards(theme: dict[str, str], *,
         <div class="label">Largest Position</div>
         <div class="value">{largest_position}</div>
       </div>
-      <div class="stat-card green" title="Compound Annual Growth Rate — smoothed yearly return since first deposit">
-        <div class="label">CAGR</div>
-        <div class="value">{cagr}</div>
+      <div class="stat-card green" title="Time-Weighted Return — annualized performance of the portfolio itself, independent of deposit and withdrawal timing">
+        <div class="label">TWR</div>
+        <div class="value">{twr}</div>
       </div>
       <div class="stat-card amber" title="Internal Rate of Return — accounts for exact timing of every deposit">
         <div class="label">IRR</div>

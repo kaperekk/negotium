@@ -17,7 +17,7 @@ from ledger_core import (
     delete_transaction,
     get_all_transactions,
     update_transaction,
-    compute_cagr,
+    compute_twr,
     compute_irr,
 )
 
@@ -238,22 +238,26 @@ def test_update_transaction_ticker(tmp):
     assert balance["MSFT"]["amount"] == 10.0
 
 
-# - Scenario 9: CAGR with single deposit -
+# - Scenario 9: TWR with single deposit -
 
 
-def test_cagr_single_deposit(tmp):
-    """CAGR with a single deposit and no withdrawals."""
+def test_twr_single_deposit(tmp):
+    """TWR with a single deposit and no withdrawals."""
     _reset()
     add_transaction("2024-01-01", [
         {"ticker": "USD", "amount": 1000.0},
     ], account_operation=True)
-    cagr = compute_cagr(1200.0, base_currency="USD", end="2024-07-01")
-    assert cagr is not None
-    assert cagr > 0
+    snapshots = [
+        {"date": "2024-01-01", "total_value": 1000.0},
+        {"date": "2024-07-01", "total_value": 1200.0},
+    ]
+    twr = compute_twr(snapshots, base_currency="USD", end="2024-07-01")
+    assert twr is not None
+    assert abs(twr - 0.20) < 1e-9
 
 
-def test_cagr_multiple_deposits_different_dates(tmp):
-    """CAGR with multiple deposits at different dates."""
+def test_twr_multiple_deposits_different_dates(tmp):
+    """TWR with multiple deposits at different dates — flows are excluded."""
     _reset()
     add_transaction("2024-01-01", [
         {"ticker": "USD", "amount": 1000.0},
@@ -261,9 +265,16 @@ def test_cagr_multiple_deposits_different_dates(tmp):
     add_transaction("2024-04-01", [
         {"ticker": "USD", "amount": 500.0},
     ], account_operation=True)
-    cagr = compute_cagr(1800.0, base_currency="USD", end="2024-07-01")
-    assert cagr is not None
-    assert cagr > 0
+    snapshots = [
+        {"date": "2024-01-01", "total_value": 1000.0},
+        {"date": "2024-03-31", "total_value": 1100.0},
+        {"date": "2024-04-01", "total_value": 1600.0},
+        {"date": "2024-07-01", "total_value": 1800.0},
+    ]
+    # Factors: 1.1, (1600-500)/1100 = 1.0, 1800/1600 = 1.125 → 0.2375.
+    twr = compute_twr(snapshots, base_currency="USD", end="2024-07-01")
+    assert twr is not None
+    assert abs(twr - 0.2375) < 1e-9
 
 
 # - Scenario 10: IRR edge cases -
@@ -378,14 +389,20 @@ def test_sell_exact_shares_owned(tmp):
     assert "AAPL" not in balance or abs(balance["AAPL"]["amount"]) < 1e-9
 
 
-# - Scenario 15: CAGR/IRR with no transactions -
+# - Scenario 15: TWR/IRR with no transactions -
 
 
-def test_cagr_no_transactions(tmp):
-    """CAGR returns None when there are no transactions."""
+def test_twr_no_transactions(tmp):
+    """TWR without transactions: None on empty snapshots, else pure growth."""
     _reset()
-    cagr = compute_cagr(1000.0, base_currency="USD")
-    assert cagr is None
+    assert compute_twr([], base_currency="USD") is None
+    # No flows at all — TWR equals the pure snapshot growth.
+    twr = compute_twr([
+        {"date": "2024-01-01", "total_value": 1000.0},
+        {"date": "2024-07-01", "total_value": 1200.0},
+    ], base_currency="USD")
+    assert twr is not None
+    assert abs(twr - 0.20) < 1e-9
 
 
 def test_irr_no_transactions(tmp):
@@ -395,11 +412,11 @@ def test_irr_no_transactions(tmp):
     assert irr is None
 
 
-# - Scenario 16: CAGR with zero invested -
+# - Scenario 16: TWR after full withdrawal -
 
 
-def test_cagr_zero_invested(tmp):
-    """CAGR returns None when net invested is zero."""
+def test_twr_full_withdrawal(tmp):
+    """TWR: withdrawing everything yields a flat 0.0, not a fake ±100%."""
     _reset()
     add_transaction("2024-01-01", [
         {"ticker": "USD", "amount": 1000.0},
@@ -407,8 +424,13 @@ def test_cagr_zero_invested(tmp):
     add_transaction("2024-02-01", [
         {"ticker": "USD", "amount": -1000.0},
     ], account_operation=True)
-    cagr = compute_cagr(0.0, base_currency="USD", end="2024-07-01")
-    assert cagr is None
+    snapshots = [
+        {"date": "2024-01-01", "total_value": 1000.0},
+        {"date": "2024-02-01", "total_value": 0.0},
+    ]
+    twr = compute_twr(snapshots, base_currency="USD", end="2024-07-01")
+    assert twr is not None
+    assert twr == 0.0
 
 
 # - Scenario 17: Backdated transaction after many others -
@@ -754,8 +776,8 @@ def test_dividend_on_delisted_stock(tmp: Path):
     assert balance["USD"]["amount"] == 150.0
 
 
-def test_dividend_does_not_affect_cagr(tmp: Path):
-    """Dividends don't change CAGR (they're internal, not new investment)."""
+def test_dividend_does_not_affect_twr(tmp: Path):
+    """Dividends don't distort TWR (they're internal cash, not new investment)."""
     _reset()
 
     add_transaction("2024-01-01", [
@@ -767,15 +789,24 @@ def test_dividend_does_not_affect_cagr(tmp: Path):
         {"ticker": "USD", "amount": -1500.0},
     ])
 
-    cagr_before = compute_cagr(2000.0, base_currency="USD", end="2024-07-01")
+    snapshots = [
+        {"date": "2024-01-01", "total_value": 1000.0},
+        {"date": "2024-01-15", "total_value": 1005.0},
+        {"date": "2024-07-01", "total_value": 2050.0},
+    ]
+
+    twr_before = compute_twr(snapshots, base_currency="USD", end="2024-07-01")
 
     add_transaction("2024-03-15", [
         {"ticker": "USD", "amount": 50.00},
     ])
 
-    cagr_after = compute_cagr(2000.0, base_currency="USD", end="2024-07-01")
+    twr_after = compute_twr(snapshots, base_currency="USD", end="2024-07-01")
 
-    assert cagr_before == cagr_after
+    # The +50 dividend cash sits inside the final value but never counts as
+    # an external flow — the chained return is identical.
+    assert twr_before is not None
+    assert twr_before == twr_after
 
 
 def test_multiple_different_dividends_same_day(tmp: Path):

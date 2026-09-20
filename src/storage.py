@@ -317,37 +317,53 @@ def save_balance(balance: dict[str, dict]) -> None:
 
 
 # ── Price cache (shared) ──────────────────────────────────────────────────────
+# Two namespaces:
+#   data/prices/      RAW (unadjusted) closes — the default for everything:
+#                     portfolio valuation, charts, TWR/IRR, holdings P&L.
+#                     Raw prices keep history immutable across dividend
+#                     payouts and match broker cash flows exactly.
+#   data/prices_adj/  Dividend-ADJUSTED closes (Yahoo total-return series) —
+#                     used only by benchmark what-if overlays so the
+#                     comparison includes dividends, like the portfolio does
+#                     (dividends land as cash in the ledger).
 
-def price_cache_path(ticker: str, year: int) -> Path:
-    return PRICES_DIR / ticker.upper() / f"{year}.json"
+PRICES_DIR      = DATA_ROOT / "prices"
+ADJ_PRICES_DIR  = DATA_ROOT / "prices_adj"
 
 
-def load_price_year(ticker: str, year: int) -> dict[str, float]:
+def price_cache_path(ticker: str, year: int, adjusted: bool = False) -> Path:
+    base = ADJ_PRICES_DIR if adjusted else PRICES_DIR
+    return base / ticker.upper() / f"{year}.json"
+
+
+def load_price_year(ticker: str, year: int, adjusted: bool = False) -> dict[str, float]:
     """Return {YYYY-MM-DD: close_price} for a ticker/year, or {} if missing."""
-    p = price_cache_path(ticker, year)
+    p = price_cache_path(ticker, year, adjusted)
     if not p.exists():
         return {}
     return _loads(p.read_bytes())
 
 
-def save_price_year(ticker: str, year: int, prices: dict[str, float]) -> None:
+def save_price_year(ticker: str, year: int, prices: dict[str, float],
+                    adjusted: bool = False) -> None:
     """Persist {YYYY-MM-DD: close_price} for a ticker/year."""
-    p = price_cache_path(ticker, year)
+    p = price_cache_path(ticker, year, adjusted)
     _write_bytes_atomic(p, _dumps(prices).encode())
 
 
-def has_price_year(ticker: str, year: int) -> bool:
-    return price_cache_path(ticker, year).exists()
+def has_price_year(ticker: str, year: int, adjusted: bool = False) -> bool:
+    return price_cache_path(ticker, year, adjusted).exists()
 
 
-def load_prices_range(ticker: str, start: date, end: date) -> dict[str, float]:
+def load_prices_range(ticker: str, start: date, end: date,
+                      adjusted: bool = False) -> dict[str, float]:
     """
     Return merged {YYYY-MM-DD: close} for all years in [start.year, end.year].
     Uses the on-disk cache only — call ticker_data.ensure() first.
     """
     result: dict[str, float] = {}
     for year in range(start.year, end.year + 1):
-        result.update(load_price_year(ticker, year))
+        result.update(load_price_year(ticker, year, adjusted))
     return result
 
 
@@ -542,3 +558,31 @@ def save_dividends(dividends: dict) -> None:
     _dividends_cache = dividends
     with _cache_lock:
         _write_bytes_atomic(DIVIDENDS_PATH, _dumps(dividends).encode())
+
+
+# ── Split cache (per-ticker ex-date → split ratio) ──────────────────────────
+
+SPLITS_PATH = DATA_ROOT / "splits.json"
+
+_splits_cache: dict | None = None
+
+
+def load_splits() -> dict:
+    """Return {ticker: {YYYY-MM-DD: split_ratio}} from cache, or empty dict."""
+    global _splits_cache
+    if _splits_cache is not None:
+        return _splits_cache
+    if not SPLITS_PATH.exists():
+        _splits_cache = {}
+        return _splits_cache
+    with _cache_lock:
+        _splits_cache = _loads(SPLITS_PATH.read_bytes())
+    return _splits_cache
+
+
+def save_splits(splits: dict) -> None:
+    """Persist {ticker: {YYYY-MM-DD: split_ratio}} cache."""
+    global _splits_cache
+    _splits_cache = splits
+    with _cache_lock:
+        _write_bytes_atomic(SPLITS_PATH, _dumps(splits).encode())

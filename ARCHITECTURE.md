@@ -38,7 +38,7 @@ src/
 │                      price cache, registry, balance, benchmarks, dividends.
 ├── ledger_core.py     Transaction ledger: add/update/delete, chronological
 │                      order enforcement, balance + avg-price rebuild,
-│                      CAGR, IRR, holdings-at-date. Import dedup counts.
+│                      TWR, IRR, holdings-at-date. Import dedup counts.
 ├── currencies.py      Single source of truth: supported currencies, exchange
 │                      suffixes, triangulation rules, display symbols.
 ├── portfolio_core.py  Build the portfolio value time-series. The core engine.
@@ -232,8 +232,8 @@ avoid replaying the whole ledger every time the UI needs current holdings.
 - `total_value` = sum of all `value_base` entries.
 - `invested` = cumulative net deposits in base currency (the reference line on
   the chart). The invested rule:
-  - entries marked `account_operation` **always** count (deposits and withdrawals),
-  - unmarked pure-cash transactions also count,
+  - entries marked `account_operation` **are the only ones that** count (deposits and withdrawals),
+  - unmarked cash — dividends, interest, taxes, commissions, FX swaps — **never** counts (it credits cash inside the account, so it reads as performance, not new capital),
   - stock buys/sells **never** count — even though their cash leg moves money.
 - `base_currency` tags the snapshot so snapshots for different display
   currencies (PLN / EUR / USD) are stored and retrieved independently.

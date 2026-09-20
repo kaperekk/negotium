@@ -18,31 +18,6 @@ def test_xtb_parse_shares(tmp: Path):
     assert _parse_shares("no match here") is None
 
 
-def test_xtb_parse_transfer_rate(tmp: Path):
-    """_parse_transfer_rate extracts exchange rate from transfer comment."""
-    from xtb_import import _parse_transfer_rate
-
-    comment = "Currency conversion, EUR to USD from TA: 52016471 to: 51963109, Exchange rate:1.159044"
-    assert _parse_transfer_rate(comment) == 1.159044
-
-    assert _parse_transfer_rate(None) is None
-    assert _parse_transfer_rate("no rate here") is None
-
-
-def test_xtb_parse_transfer_target(tmp: Path):
-    """_parse_transfer_target extracts target currency from transfer comment."""
-    from xtb_import import _parse_transfer_target
-
-    comment = "Currency conversion, EUR to USD from TA: 52016471 to: 51963109, Exchange rate:1.159044"
-    assert _parse_transfer_target(comment) == "USD"
-
-    comment2 = "Currency conversion, PLN to EUR from TA: 53394664 to: 52016471, Exchange rate:0.23"
-    assert _parse_transfer_target(comment2) == "EUR"
-
-    assert _parse_transfer_target(None) is None
-    assert _parse_transfer_target("no currency here") is None
-
-
 def test_xtb_transfer_creates_source_entry(tmp: Path):
     """Transfer import creates the source currency entry (each file has its own side)."""
     from xtb_import import parse_xtb_excel

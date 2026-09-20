@@ -25,7 +25,6 @@ import re
 from pathlib import Path
 
 import storage
-import config as cfg_module
 from ledger_core import get_all_transactions
 from isin_resolve import resolve_isins_with_names
 
@@ -205,6 +204,10 @@ def import_bossa(file_path: str | Path, currency: str, progress_cb=None) -> dict
             len(fixed),
             ", ".join(f"{t} ({n} shares)" for t, n, _ in fixed),
         )
+
+    # Auto-fix unapplied stock splits detected via Yahoo Finance.
+    from ledger_core import auto_fix_splits_if_needed
+    auto_fix_splits_if_needed(transactions, starting_balance=starting)
 
     existing = _existing_entry_counts()
 

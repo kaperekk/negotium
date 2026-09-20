@@ -9,8 +9,6 @@ import json
 import logging
 from pathlib import Path
 
-from ledger_core import get_all_transactions
-
 log = logging.getLogger(__name__)
 
 

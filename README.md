@@ -16,7 +16,7 @@ Created by **Kacper Kaperek**. If you like this, buy me a coffee:
 - **Broker imports** — XTB Excel, BOSSA CSV, custom JSON; idempotent re-imports (duplicates skipped)
 - **Ticker translation** — rewrite broker symbols to Yahoo Finance format with rules; resolve ISINs for BOSSA
 - **Portfolio chart** — daily time-series with invested-capital line and benchmark overlays (S&P 500, NASDAQ 100, Semiconductors, FTSE All-World, EM, Bitcoin, Gold)
-- **Metrics** — value, P&L, contributions, CAGR, IRR, best performer
+- **Metrics** — value, P&L, contributions, TWR, IRR, best performer
 - **Analysis** — allocation donuts (sector / geography / asset class / currency), drawdown "underwater" chart, per-ticker trade history with dividends
 - **Watchlist** — track any Yahoo Finance ticker with price, change and sparkline (per project)
 - **Fast & local** — historical prices cached forever, only the current year re-fetches; everything except price downloads stays on localhost

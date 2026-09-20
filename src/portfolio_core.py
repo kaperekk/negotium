@@ -15,15 +15,19 @@ portfolio.jsonl schema (one object per line, chronological):
   }
 
 invested rule:
-  Entries marked ``account_operation`` (deposits, withdrawals) always count
-  toward invested capital.  Unmarked pure-cash transactions also count.
-  Stock buys/sells never count — even if their cash leg is positive.
+  Only entries marked ``account_operation`` (deposits, withdrawals) count
+  toward invested capital.  Everything else — stock buys/sells, dividends,
+  interest, taxes, commissions, FX swaps — never counts, even when it is a
+  pure-cash transaction. Dividends/interest simply credit cash inside the
+  account (raising total_value without raising invested), so they show up
+  as performance in P&L, TWR and IRR.
   - PLN +5000  (account_operation)       -> deposit, counts
   - PLN -2000  (account_operation)       -> withdrawal, counts
   - AAPL +10, USD -1700                  -> stock buy, neither counts
   - AAPL -10, USD +2100                  -> stock sell, neither counts
   - PLN +10000 (account_operation), AAPL +10, USD -1700
       -> deposit counts, stock buy does not
+  - PLN +50   (dividend / interest)      -> cash gain, does NOT count
 
 Key optimisations:
   1. Single forward pass: O(days + tx) not O(days x tx).
@@ -150,24 +154,19 @@ def build_portfolio(
             rec     = pending_tx[tx_idx]
             tx_year = int(rec["date"][:4])
 
-            # invested rule:
-            # Entries marked account_operation (deposits, withdrawals)
-            # always count toward invested capital.
-            # Unmarked pure-cash transactions (no stock entries) also count.
-            # Stock buys/sells never count.
+            # invested rule: ONLY account_operation entries (deposits /
+            # withdrawals) count toward invested capital. Unmarked pure-cash
+            # entries — dividends, interest, taxes, commissions, FX swaps —
+            # credit cash inside the account without raising invested, so they
+            # read as performance (P&L / TWR / IRR), not as new capital.
             entries_list = rec["entries"]
-            all_cash = all(
-                e["ticker"].upper() in SUPPORTED_CURRENCIES
-                for e in entries_list
-            )
 
             for e in entries_list:
                 t   = e["ticker"].upper()
                 amt = float(e["amount"])
                 balance[t] = balance.get(t, 0.0) + amt
 
-                is_entry_op = e.get("account_operation", False)
-                if is_entry_op or (all_cash and t in SUPPORTED_CURRENCIES):
+                if e.get("account_operation", False):
                     fx = cache.get_fx(t, base_currency, rec["date"], tx_year)
                     cumulative_contrib += amt * fx
 

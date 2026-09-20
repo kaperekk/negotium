@@ -17,9 +17,11 @@ from __future__ import annotations
 import atexit
 import logging
 import os
+import sys
 import threading
 import time
-from contextlib import contextmanager, redirect_stdout, redirect_stderr
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from datetime import date, timedelta
 from typing import Callable
 
@@ -39,17 +41,39 @@ logging.getLogger("urllib3").setLevel(logging.ERROR)
 _DEVNULL_STREAM = open(os.devnull, "w", encoding="utf-8")
 atexit.register(_DEVNULL_STREAM.close)
 
+_devnull_fd = os.open(os.devnull, os.O_WRONLY)
+_suppress_lock = threading.Lock()
+_suppress_count = 0
+_suppress_saved_stdout: int = -1
+_suppress_saved_stderr: int = -1
+
 
 @contextmanager
 def _suppress_output():
     """Suppress stdout/stderr to silence yfinance download noise.
 
-    Redirects to a shared /dev/null stream. Safe for concurrent use —
-    ``yf.download(threads=True)`` runs worker threads that each trigger this,
-    and since we discard all output, interleaved writes are harmless.
+    Thread-safe via ref-counting: the first caller saves the real fds and
+    redirects to /dev/null; concurrent callers just bump a counter.  The
+    last caller out restores the originals.
     """
-    with redirect_stdout(_DEVNULL_STREAM), redirect_stderr(_DEVNULL_STREAM):
+    global _suppress_count, _suppress_saved_stdout, _suppress_saved_stderr
+    with _suppress_lock:
+        _suppress_count += 1
+        if _suppress_count == 1:
+            _suppress_saved_stdout = os.dup(sys.stdout.fileno())
+            _suppress_saved_stderr = os.dup(sys.stderr.fileno())
+            os.dup2(_devnull_fd, sys.stdout.fileno())
+            os.dup2(_devnull_fd, sys.stderr.fileno())
+    try:
         yield
+    finally:
+        with _suppress_lock:
+            _suppress_count -= 1
+            if _suppress_count == 0:
+                os.dup2(_suppress_saved_stdout, sys.stdout.fileno())
+                os.dup2(_suppress_saved_stderr, sys.stderr.fileno())
+                os.close(_suppress_saved_stdout)
+                os.close(_suppress_saved_stderr)
 
 from storage import (
     has_price_year,
@@ -61,6 +85,8 @@ from storage import (
     save_ticker_meta,
     load_dividends,
     save_dividends,
+    load_splits,
+    save_splits,
     SUPPORTED_CURRENCIES,
     CURRENCY_SUFFIXES,
     TRIANGULATE_VIA_USD,
@@ -78,7 +104,7 @@ for ccy in TRIANGULATE_VIA_USD:
     FX_YAHOO[f"{ccy}USD"] = f"{ccy}USD=X"
 
 _RETRY_ATTEMPTS = 3
-_RETRY_DELAY    = 2   # seconds
+_RETRY_DELAY    = 0.5  # seconds
 
 
 def _yahoo_symbol(ticker: str) -> str:
@@ -228,7 +254,7 @@ def _download_year(ticker: str, year: int) -> dict[str, float] | None:
                     start=start.isoformat(),
                     end=(end + timedelta(days=1)).isoformat(),
                     progress=False,
-                    auto_adjust=True,
+                    auto_adjust=False,
                 )
             if df.empty:
                 return {}
@@ -237,6 +263,10 @@ def _download_year(ticker: str, year: int) -> dict[str, float] | None:
             if hasattr(df.columns, "levels"):
                 df.columns = df.columns.get_level_values(0)
 
+            # Raw (unadjusted) closes — the cache stores market prices that
+            # match what the broker charged. With auto_adjust=False the
+            # "Close" column is the raw close; "Adj Close" would be the
+            # dividend-adjusted series (kept for the adjusted namespace).
             close = df["Close"].dropna()
 
             # Convert GBp (pence) to GBP — Yahoo returns pence for LSE tickers
@@ -272,15 +302,18 @@ def ensure(
     - Historical years (fully elapsed): downloaded once, never re-fetched.
     - Current year: always re-fetched so we get the latest closes.
     - Cash tickers (USD/EUR/PLN): skipped — no price data needed.
-    Also fetches and caches the ticker's company name.
+    Years that need downloading are fetched in parallel.
     """
     if ticker.upper() in SUPPORTED_CURRENCIES:
         return  # cash holds its own value
 
-    # Ensure name is cached
-    names = load_ticker_names()
-    if ticker not in names:
-        get_ticker_name(ticker)
+    # Ensure name is cached (skip disk lookup if already in-memory)
+    with _names_lock:
+        if ticker not in _names_cache:
+            names = load_ticker_names()
+            _names_cache.update(names)
+            if ticker not in _names_cache:
+                get_ticker_name(ticker)
 
     if end_date is None:
         end_date = date.today()
@@ -289,24 +322,87 @@ def ensure(
     end_year   = end_date.year
     today_year = date.today().year
 
+    # Collect years that need downloading
+    years_to_fetch: list[int] = []
     for year in range(start_year, end_year + 1):
         is_current = (year == today_year)
         already_cached = has_price_year(ticker, year)
-
         if already_cached and not (is_current and force_refresh_current_year):
             continue
+        years_to_fetch.append(year)
 
+    if not years_to_fetch:
+        return
+
+    # Download needed years (sequentially per ticker — parallelism comes from
+    # ensure_parallel() running multiple tickers concurrently).
+    for year in years_to_fetch:
         if progress_cb:
             progress_cb(f"Downloading {ticker} {year}…")
-
         prices = _download_year(ticker, year)
         if prices is not None:
-            # Empty dict = Yahoo has no data for this year (e.g. pre-IPO or
-            # delisted listing): pin an empty slab so ``has_price_year`` turns
-            # True and the year is never re-requested (no repeated failed
-            # downloads). None = download failed — leave unpinned so the year
-            # is retried on a later refresh.
             save_price_year(ticker, year, prices)
+
+
+_names_cache: set[str] = set()
+_names_lock = threading.Lock()
+
+
+def ensure_parallel(
+    tickers: list[str],
+    start_date: date,
+    end_date: date | None = None,
+    force_refresh_current_year: bool = True,
+    max_workers: int = 5,
+    progress_cb: Callable[[str], None] | None = None,
+) -> list[str]:
+    """
+    Ensure price caches for multiple tickers in parallel.
+
+    Downloads tickers concurrently using a thread pool. Returns tickers
+    that failed entirely.
+    """
+    symbols = [t for t in dict.fromkeys(tickers)
+               if t.upper() not in SUPPORTED_CURRENCIES]
+    if not symbols:
+        return []
+
+    today = date.today()
+    if end_date is None:
+        end_date = today
+
+    # Pre-resolve names sequentially (yf.Ticker().info deadlocks when called
+    # concurrently, so we do this before spawning the download pool).
+    with _names_lock:
+        for t in symbols:
+            if t not in _names_cache:
+                names = load_ticker_names()
+                _names_cache.update(names)
+                if t not in _names_cache:
+                    get_ticker_name(t)
+
+    failed: list[str] = []
+
+    def _ensure_one(ticker: str) -> str | None:
+        try:
+            ensure(ticker, start_date, end_date, force_refresh_current_year, progress_cb)
+            # Check if at least one year got data
+            for y in range(start_date.year, end_date.year + 1):
+                if has_price_year(ticker, y):
+                    return None
+            return ticker
+        except Exception as exc:
+            log.warning("ensure_parallel failed for %s: %s", ticker, exc)
+            return ticker
+
+    with ThreadPoolExecutor(max_workers=min(len(symbols), max_workers)) as pool:
+        futures = {pool.submit(_ensure_one, t): t for t in symbols}
+        for future in as_completed(futures):
+            result = future.result()
+            if result is not None:
+                failed.append(result)
+
+    return sorted(failed)
 
 
 def ensure_batch(
@@ -315,9 +411,14 @@ def ensure_batch(
     end_date: date | None = None,
     force_refresh_current_year: bool = True,
     progress_cb: Callable[[str], None] | None = None,
+    adjusted: bool = False,
 ) -> list[str]:
-    """
-    Populate price caches for many tickers with a single batched Yahoo download.
+    """Populate price caches for many tickers with a single batched Yahoo download.
+
+    ``adjusted=False`` (default): writes raw (unadjusted) closes to data/prices/.
+    ``adjusted=True``: writes dividend-adjusted closes to data/prices_adj/ —
+    used only for benchmark what-if overlays so the comparison includes
+    dividends, like the portfolio does.
 
     Same cache rules as ensure(): historical years already on disk are kept,
     the current year is re-fetched so latest closes are picked up.
@@ -350,7 +451,7 @@ def ensure_batch(
         yrs = {
             y for y in range(start_date.year, end.year + 1)
             if (y == today.year and force_refresh_current_year)
-            or not has_price_year(t, y)
+            or not has_price_year(t, y, adjusted=adjusted)
         }
         if yrs:
             needed_years[t] = yrs
@@ -363,7 +464,8 @@ def ensure_batch(
     pair_by_sym = {_yahoo_symbol(t): t for t in needed_years}
     sym_list = list(pair_by_sym.keys())
 
-    _notify(f"Downloading {len(sym_list)} tickers ({batch_start.year}–{end.year})…")
+    kind = "adjusted benchmark" if adjusted else "tickers"
+    _notify(f"Downloading {len(sym_list)} {kind} ({batch_start.year}–{end.year})…")
 
     df = None
     last_exc: Exception | None = None
@@ -375,7 +477,7 @@ def ensure_batch(
                     start=batch_start.isoformat(),
                     end=(end + timedelta(days=1)).isoformat(),
                     progress=False,
-                    auto_adjust=True,
+                    auto_adjust=adjusted,
                     group_by="ticker",
                     threads=True,
                 )
@@ -432,22 +534,23 @@ def ensure_batch(
             yr_series = series[series.index.year == year]
             prices = {str(ts.date()): round(float(v), 6) for ts, v in yr_series.items()}
             if prices:
-                save_price_year(ticker, year, prices)
+                save_price_year(ticker, year, prices, adjusted=adjusted)
                 saved_any = True
         if not saved_any and ticker not in failed:
             failed.append(ticker)
         _notify(f"✓ {ticker} ({i}/{total})")
 
     # Yahoo sometimes silently drops symbols from large batch requests —
-    # retry stragglers one-by-one with the single-ticker path.
-    for ticker in list(failed):
-        try:
-            ensure(ticker, start_date, end_date, force_refresh_current_year)
-            if any(has_price_year(ticker, y)
-                   for y in needed_years.get(ticker, set())):
-                failed.remove(ticker)
-        except Exception as exc:
-            log.warning("single-ticker fallback failed for %s: %s", ticker, exc)
+    # retry stragglers sequentially via the single-ticker path.
+    if failed and not adjusted:
+        for ticker in list(failed):
+            try:
+                ensure(ticker, start_date, end_date, force_refresh_current_year)
+                if any(has_price_year(ticker, y)
+                       for y in needed_years.get(ticker, set())):
+                    failed.remove(ticker)
+            except Exception as exc:
+                log.warning("single-ticker fallback failed for %s: %s", ticker, exc)
 
     return sorted(failed)
 
@@ -479,14 +582,50 @@ def get_dividends(ticker: str) -> dict[str, float]:
     return result
 
 
+def get_splits(ticker: str) -> dict[str, float]:
+    """Return {YYYY-MM-DD: split_ratio} for ticker.
+
+    Fetched from Yahoo Finance and cached to disk. A ratio of 2.0 means
+    2-for-1 split (each share becomes 2). Returns an empty dict on
+    failure or when no split history is available.
+    """
+    if ticker.upper() in SUPPORTED_CURRENCIES:
+        return {}
+    cached = load_splits()
+    if ticker in cached:
+        return cached[ticker]
+    try:
+        with _suppress_output():
+            splits = yf.Ticker(_yahoo_symbol(ticker)).splits
+        result: dict[str, float] = {}
+        for dt, val in splits.items():
+            try:
+                ratio = float(val)
+                if ratio > 1.0:
+                    result[str(dt)[:10]] = round(ratio, 6)
+            except Exception:
+                continue
+    except Exception:
+        result = {}
+    cached[ticker] = result
+    save_splits(cached)
+    return result
+
+
 def get_price(
     ticker: str,
     on_date: str,
     cache: dict[str, dict[str, float]],
     year: int,
+    adjusted: bool = False,
 ) -> float | None:
     """
     Return close price for ticker on on_date (YYYY-MM-DD).
+
+    ``adjusted=False`` (default) reads the RAW close cache (data/prices/) —
+    the market price matching broker cash flows. ``adjusted=True`` reads the
+    dividend-adjusted cache (data/prices_adj/) — total-return series for
+    benchmark overlays only.
 
     `cache` is a dict[ticker][year] → {date_str: price} — mutated in place
     for performance so callers can reuse it across many calls.
@@ -502,7 +641,7 @@ def get_price(
     if ticker not in cache:
         cache[ticker] = {}
     if year not in cache[ticker]:
-        cache[ticker][year] = load_price_year(ticker, year)
+        cache[ticker][year] = load_price_year(ticker, year, adjusted)
 
     year_prices = cache[ticker][year]
 
@@ -521,7 +660,7 @@ def get_price(
         if check.year != year:
             prev = check.year
             if prev not in cache[ticker]:
-                cache[ticker][prev] = load_price_year(ticker, prev)
+                cache[ticker][prev] = load_price_year(ticker, prev, adjusted)
             year_prices = cache[ticker][prev]
             year = prev
 

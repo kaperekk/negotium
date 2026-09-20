@@ -48,8 +48,3 @@ TRIANGULATE_VIA_USD: frozenset[str] = frozenset({
 
 # Display symbols per base currency (UI).
 CURRENCY_SYMBOLS: dict[str, str] = {"PLN": " PLN", "EUR": "€", "USD": "$"}
-
-
-def is_cash(ticker: str) -> bool:
-    """True if the ticker is a supported cash currency (USD/EUR/PLN)."""
-    return ticker.upper() in SUPPORTED_CURRENCIES

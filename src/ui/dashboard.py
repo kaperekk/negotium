@@ -1,38 +1,36 @@
 from __future__ import annotations
 
-import json
 import time
-from datetime import date, datetime, timedelta
+from datetime import date
 
 import pandas as pd
-import plotly.graph_objects as go
 import streamlit as st
 
-import config as cfg_module
 import storage
-from bossa_import import import_bossa
 from currencies import CURRENCY_SYMBOLS
-from manual_import import import_manual
 from portfolio_core import (
     FX_TICKERS,
     _ticker_currency,
     build_portfolio,
     snapshots_to_series,
 )
-from ticker_data import ensure_batch, get_fx_rate, get_price, get_ticker_name, get_ticker_meta
+from ticker_data import (
+    ensure_batch,
+    get_fx_rate,
+    get_price,
+    get_ticker_name,
+    get_ticker_meta,
+)
 from ledger_core import (
     add_transaction,
-    compute_cagr,
+    annualize_twr,
     compute_irr,
+    compute_twr,
     delete_transaction,
     get_all_tickers,
     get_all_transactions,
-    get_ticker_history,
     rebuild_balance,
-    set_account_operation,
-    update_transaction,
 )
-from xtb_import import import_xtb
 from ui.holdings import render_holdings_table
 from ui.allocation import render_allocation_breakdown
 from ui.drawdown import render_drawdown_analysis
@@ -40,7 +38,6 @@ from ui.metrics import render_metric_section, render_pnl_toggle_section
 from ui.colors import BENCHMARKS, BENCH_COLORS
 from ui.portfolio_chart import render_portfolio_chart
 from ui.styles import (
-    build_app_styles,
     build_late_theme_override,
     build_streamlit_fix_script,
     render_empty_state,
@@ -191,6 +188,9 @@ def render_dashboard(cfg, storage, T, today, data_start_date, base_ccy: str | No
     all_snapshots: list[dict] = st.session_state[cache_key]
 
     # ── Download data for selected benchmarks ─────────────────────────────────────
+    # Benchmarks use the ADJUSTED (total-return) cache: the portfolio earns
+    # dividends as cash, so a fair what-if comparison needs the benchmark's
+    # dividends too. Everything else in the app uses the RAW price cache.
     bench_persist = st.session_state.get("bench_persist", [])
     if bench_persist:
         bench_date_start = date.fromisoformat(all_snapshots[0]["date"])
@@ -199,15 +199,17 @@ def render_dashboard(cfg, storage, T, today, data_start_date, base_ccy: str | No
         bench_missing = [
             t for t in bench_tickers_needed
             if t not in storage.SUPPORTED_CURRENCIES
-            and (force_refresh or not storage.has_price_year(t, today.year))
+            and (force_refresh or not storage.has_price_year(t, today.year, adjusted=True))
         ]
         if bench_missing:
             bench_dl = st.progress(0, text="Downloading benchmark data…")
             try:
-                bench_failed, _ = _ensure_batch_cached(
-                    tuple(bench_missing),
-                    bench_date_start.isoformat(),
-                    force_refresh,
+                bench_failed = ensure_batch(
+                    bench_missing,
+                    bench_date_start,
+                    bench_date_end,
+                    force_refresh_current_year=force_refresh,
+                    adjusted=True,
                 )
                 if bench_failed:
                     st.warning(f"Could not download benchmarks: {', '.join(bench_failed)}")
@@ -233,15 +235,15 @@ def render_dashboard(cfg, storage, T, today, data_start_date, base_ccy: str | No
             bench_date_end = date.fromisoformat(all_snapshots[-1]["date"])
             bench_result: list[dict] = []
             bench_tickers = [b_ticker for b_ticker in BENCHMARKS.values()
-                             if any(not storage.has_price_year(b_ticker, y)
+                             if any(not storage.has_price_year(b_ticker, y, adjusted=True)
                                     or (force_refresh and y == today.year)
                                     for y in range(bench_date_start.year, bench_date_end.year + 1))]
             if bench_tickers:
                 ensure_batch(bench_tickers, bench_date_start, bench_date_end,
-                             force_refresh_current_year=force_refresh)
+                             force_refresh_current_year=force_refresh, adjusted=True)
 
             for b_label, b_ticker in BENCHMARKS.items():
-                if not any(storage.has_price_year(b_ticker, y)
+                if not any(storage.has_price_year(b_ticker, y, adjusted=True)
                            for y in range(bench_date_start.year, bench_date_end.year + 1)):
                     continue
 
@@ -270,7 +272,7 @@ def render_dashboard(cfg, storage, T, today, data_start_date, base_ccy: str | No
 
                     pending_eur += new_eur
 
-                    price = get_price(b_ticker, day, bp_c, yr)
+                    price = get_price(b_ticker, day, bp_c, yr, adjusted=True)
                     if price is None or price <= 0:
                         b_vals.append(b_vals[-1] if b_vals else 0.0)
                         continue
@@ -343,15 +345,20 @@ def render_dashboard(cfg, storage, T, today, data_start_date, base_ccy: str | No
         return f"{SYM[base_ccy]}{formatted}"
 
     fx_cache: dict = {}
-    cagr = compute_cagr(cur_value, base_ccy, fx_cache=fx_cache, end=ce)
+    twr_cum = compute_twr(snapshots, base_ccy, fx_cache=fx_cache, end=ce)
     irr = compute_irr(cur_value, base_ccy, fx_cache=fx_cache, end=ce)
 
     best_ticker = max(latest["assets"], key=lambda a: a["value_base"])["ticker"] if latest["assets"] else "—"
 
-    cagr_str = f"{cagr * 100:.1f}%" if cagr is not None else "—"
+    twr = None
+    if twr_cum is not None:
+        span_days = (date.fromisoformat(snapshots[-1]["date"]) - date.fromisoformat(snapshots[0]["date"])).days
+        twr = annualize_twr(twr_cum, span_days)
+
+    twr_str = f"{twr * 100:.1f}%" if twr is not None else "—"
     irr_str = f"{irr * 100:.1f}%" if irr is not None else "—"
 
-    render_metric_section(T, base_ccy, cur_value, contrib, best_ticker, cagr_str, irr_str, _fmt_money)
+    render_metric_section(T, base_ccy, cur_value, contrib, best_ticker, twr_str, irr_str, _fmt_money)
     render_pnl_toggle_section(T, cur_value, pnl, pnl_pct, _fmt_money)
 
     chart_mode = st.session_state.chart_mode

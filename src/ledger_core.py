@@ -24,7 +24,7 @@ from __future__ import annotations
 import functools
 import logging
 import threading
-from datetime import date, timedelta
+from datetime import date
 
 import storage
 import config as cfg_module
@@ -318,53 +318,95 @@ def rebuild_balance() -> None:
     _rebuild_balance(records)
 
 
-def compute_cagr(current_value: float, base_currency: str | None = None, fx_cache: dict | None = None, end: str | None = None) -> float | None:
-    """Compute Compound Annual Growth Rate from first deposit to ``end`` (default today).
+def compute_twr(
+    snapshots: list[dict],
+    base_currency: str | None = None,
+    fx_cache: dict | None = None,
+    end: str | None = None,
+) -> float | None:
+    """Compute cumulative Time-Weighted Return (TWR) from daily snapshots.
 
-    current_value must be expressed in the same currency as base_currency
-    (the portfolio snapshot's total_value). Falls back to config's
-    default_currency when base_currency is not given.
+    TWR chains the daily portfolio growth factors between external cash
+    flows (deposits/withdrawals), so it measures the performance of the
+    investments themselves, independent of deposit timing. It is the natural
+    companion to :func:`compute_irr` (money-weighted return):
 
-    ``end`` is an ISO date string; when the metric is shown for a historical
-    range it should be the range's end date, not today.
+        factor_d = (V_d - CF_d) / V_prev        (CF > 0 for deposits)
+        TWR      = Π factor_d - 1
 
-    Returns CAGR as a decimal (e.g. 0.12 for 12%), or None if not enough data.
+    where ``V_prev`` is the previous day's close and ``V_d`` today's close
+    (both already including that day's flow sitting in cash). Days where the
+    portfolio held no value at the previous close (before the first deposit
+    or right after a full withdrawal) are skipped — no market return is
+    measurable there.
+
+    ``snapshots`` must be chronological dicts with at least ``"date"`` and
+    ``"total_value"`` (in ``base_currency``). Flows are the
+    ``account_operation`` ledger entries converted to base currency at each
+    transaction's date — the same flow rule as :func:`compute_irr`, so
+    dividends, stock buys/sells and internal FX swaps never distort TWR.
+
+    ``end`` is an ISO date string; snapshots and flows after it are ignored,
+    so the metric honours a chart's date-range end.
+
+    Returns cumulative TWR as a decimal (e.g. 0.12 for 12%), or None when no
+    measurable period exists (fewer than two snapshots, or the portfolio never
+    held a positive value on two consecutive days).
     """
+    if not snapshots:
+        return None
     from ticker_data import get_fx_rate
     from datetime import date as _date
 
-    records = get_all_transactions()
     if base_currency is None:
         base_currency = cfg_module.load().get("default_currency", "PLN")
     base_ccy = base_currency.upper()
-    end_date = _date.fromisoformat(end) if end else _date.today()
     if fx_cache is None:
         fx_cache = {}
 
-    first_date = None
-    net_invested = 0.0
-    for rec in records:
+    # External flows: deposits/withdrawals only, merged per date.
+    # Deposits are positive (money entering the portfolio).
+    flows: dict[str, float] = {}
+    for rec in get_all_transactions():
         if end and rec["date"] > end:
             continue
         for e in rec["entries"]:
-            is_entry_op = e.get("account_operation", False)
-            if not is_entry_op:
-                continue  # only explicit deposits/withdrawals count as invested
+            if not e.get("account_operation", False):
+                continue
             t = e["ticker"].upper()
             amt = float(e["amount"])
             fx = get_fx_rate(t, base_ccy, rec["date"], fx_cache, int(rec["date"][:4])) if t != base_ccy else 1.0
-            net_invested += amt * fx
-            if first_date is None:
-                first_date = rec["date"]
+            flows[rec["date"]] = flows.get(rec["date"], 0.0) + amt * fx
 
-    if first_date is None or net_invested <= 0:
+    cum = 1.0
+    chained_days = 0
+    prev_value: float | None = None
+    for snap in snapshots:
+        day = snap["date"]
+        if end and day > end:
+            break
+        value = float(snap.get("total_value") or 0.0)
+        cf = flows.get(day, 0.0)
+        if prev_value is not None and prev_value > 1e-9:
+            cum *= (value - cf) / prev_value
+            chained_days += 1
+        prev_value = value
+
+    if chained_days == 0:
         return None
+    return cum - 1.0
 
-    years = (end_date - _date.fromisoformat(first_date)).days / 365.25
-    if years <= 0:
-        return None
 
-    return (current_value / net_invested) ** (1.0 / years) - 1.0
+def annualize_twr(twr_cum: float, days: int) -> float:
+    """Annualize a cumulative TWR: ``(1 + TWR)^(365.25 / days) - 1``.
+
+    ``days`` is the span of the window the cumulative TWR was computed over.
+    Windows shorter than one day return the cumulative value unchanged
+    (annualizing is meaningless there).
+    """
+    if days <= 0:
+        return twr_cum
+    return (1.0 + twr_cum) ** (365.25 / days) - 1.0
 
 
 def compute_irr(current_value: float, base_currency: str | None = None, fx_cache: dict | None = None, end: str | None = None) -> float | None:
@@ -455,17 +497,23 @@ def compute_irr(current_value: float, base_currency: str | None = None, fx_cache
 
 
 def get_all_transactions() -> list[dict]:
-    """Return all transactions, chronologically (cached per file mtime)."""
+    """Return all transactions, chronologically (cached per file mtime).
+
+    Thread-safe: concurrent readers and writers are serialised so a
+    reader never sees a half-cleared cache.
+    """
     import os
     path = storage.transactions_path()
     mtime = os.path.getmtime(path) if path.exists() else 0.0
     cache_key = ("_tx_cache", mtime)
-    if cache_key not in get_all_transactions._cache:
-        get_all_transactions._cache.clear()
-        get_all_transactions._cache[cache_key] = storage.read_jsonl(path)
-    return get_all_transactions._cache[cache_key]
+    with _tx_cache_lock:
+        if cache_key not in get_all_transactions._cache:
+            get_all_transactions._cache.clear()
+            get_all_transactions._cache[cache_key] = storage.read_jsonl(path)
+        return get_all_transactions._cache[cache_key]
 
 get_all_transactions._cache: dict = {}
+_tx_cache_lock = threading.Lock()
 
 
 def first_transaction_date() -> date | None:
@@ -690,10 +738,110 @@ def auto_fix_negative_positions(
     return negatives
 
 
-def fix_negative_positions(transactions: list[dict], currency: str) -> None:
-    """Deprecated: replaced by auto_fix_negative_positions.
+def auto_fix_splits_if_needed(
+    transactions: list[dict],
+    starting_balance: dict[str, float] | None = None,
+) -> list[tuple[str, str, float, float]]:
+    """Run split auto-fix and log any corrections. Shared by all importers."""
+    fixes = auto_fix_splits(transactions, starting_balance=starting_balance)
+    if fixes:
+        log.info(
+            "Auto-fixed %d unapplied split(s): %s",
+            len(fixes),
+            ", ".join(f"{t} {d} {r}:1 (+{s:.4f})" for t, d, r, s in fixes),
+        )
+    return fixes
 
-    Retained for backward compatibility. Now auto-inserts zero-cost buys
-    instead of the old -0.01 cash hack.
+
+def auto_fix_splits(
+    transactions: list[dict],
+    starting_balance: dict[str, float] | None = None,
+) -> list[tuple[str, str, float, float]]:
+    """Auto-insert zero-cost buys for unapplied stock splits detected via Yahoo Finance.
+
+    For each held ticker, fetches split history from Yahoo and checks whether
+    the ledger reflects the post-split quantity. If not, inserts a zero-cost
+    buy on the split date for the missing shares.
+
+    Pass starting_balance to include existing ledger holdings.
+
+    Returns list of (ticker, split_date, split_ratio, shares_added).
     """
-    auto_fix_negative_positions(transactions)
+    from ticker_data import get_splits
+
+    all_tickers: set[str] = set()
+    for rec in transactions:
+        for e in rec["entries"]:
+            t = e["ticker"].upper()
+            if t not in storage.SUPPORTED_CURRENCIES:
+                all_tickers.add(t)
+
+    if not all_tickers:
+        return []
+
+    first_tx_date = min(rec["date"] for rec in transactions)
+
+    fixes: list[tuple[str, str, float, float]] = []
+
+    for ticker in sorted(all_tickers):
+        splits = get_splits(ticker)
+        if not splits:
+            continue
+
+        for split_date, ratio in sorted(splits.items()):
+            if ratio <= 1.0:
+                continue
+
+            if split_date < first_tx_date:
+                continue
+
+            balance_before = (starting_balance or {}).get(ticker, 0.0)
+            for rec in transactions:
+                if rec["date"] >= split_date:
+                    break
+                for e in rec["entries"]:
+                    if e["ticker"].upper() == ticker:
+                        balance_before += float(e["amount"])
+
+            if balance_before <= 1e-9:
+                continue
+
+            expected_after = balance_before * ratio
+
+            balance_after = balance_before
+            for rec in transactions:
+                if rec["date"] < split_date:
+                    continue
+                if rec["date"] > split_date:
+                    break
+                for e in rec["entries"]:
+                    if e["ticker"].upper() == ticker:
+                        balance_after += float(e["amount"])
+
+            missing = expected_after - balance_after
+            if missing > 1e-9:
+                # Skip if a fix for this (ticker, split_date) already exists
+                # in the ledger (not just in the current transaction batch).
+                from storage import SUPPORTED_CURRENCIES as _SC
+                existing_txs = get_all_transactions()
+                already_fixed = any(
+                    e["ticker"].upper() == ticker
+                    for rec in existing_txs
+                    if rec["date"] == split_date
+                    for e in rec["entries"]
+                )
+                if already_fixed:
+                    continue
+
+                log.warning(
+                    "Split %s %s %s:1 not reflected in ledger (%s → expected %s, "
+                    "got %s). Auto-inserting zero-cost buy for %s shares.",
+                    ticker, split_date, ratio, ratio, expected_after, balance_after, missing,
+                )
+                transactions.append({
+                    "date": split_date,
+                    "entries": [{"ticker": ticker, "amount": missing}],
+                })
+                fixes.append((ticker, split_date, ratio, missing))
+
+    return fixes

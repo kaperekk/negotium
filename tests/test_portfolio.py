@@ -120,7 +120,7 @@ def test_portfolio_invested_tracking(tmp: Path):
 
     # Deposit 10000 PLN, then buy AAPL (cash outflow should not count as invested)
     ledger_core.add_transaction("2023-01-03", [
-        {"ticker": "PLN", "amount": 10000.0},  # inflow → invested
+        {"ticker": "PLN", "amount": 10000.0, "account_operation": True},  # inflow → invested
     ])
     ledger_core.add_transaction("2023-01-04", [
         {"ticker": "AAPL", "amount": 5.0},
@@ -255,7 +255,7 @@ def test_sell_proceeds_not_counted_as_invested(tmp: Path):
 
     # Deposit real money: 1000 EUR
     ledger_core.add_transaction("2023-01-03", [
-        {"ticker": "EUR", "amount": 1000.0},
+        {"ticker": "EUR", "amount": 1000.0, "account_operation": True},
     ])
     # Buy QDVE.DE with it
     ledger_core.add_transaction("2023-01-04", [
@@ -286,14 +286,14 @@ def test_sell_proceeds_not_counted_as_invested(tmp: Path):
 
 
 def test_currency_exchange_counts_as_invested(tmp: Path):
-    """Wiring USD into the portfolio (pure cash) counts as invested."""
+    """Wiring USD into the portfolio (cash deposit) counts as invested."""
     import ledger_core, portfolio_core
 
     fx.inject_fake_prices(tmp)
 
-    # Wire in 1000 USD — pure cash deposit
+    # Wire in 1000 USD — cash deposit
     ledger_core.add_transaction("2023-01-03", [
-        {"ticker": "USD", "amount": 1000.0},
+        {"ticker": "USD", "amount": 1000.0, "account_operation": True},
     ])
 
     snaps = portfolio_core.build_portfolio(
@@ -390,7 +390,7 @@ def test_mixed_portfolio_pln_eur_usd(tmp: Path):
 
     # Deposit PLN cash
     ledger_core.add_transaction("2023-01-03", [
-        {"ticker": "PLN", "amount": 5000.0},
+        {"ticker": "PLN", "amount": 5000.0, "account_operation": True},
     ])
     # Buy EUR ETF
     ledger_core.add_transaction("2023-01-04", [
@@ -431,6 +431,45 @@ def test_mixed_portfolio_pln_eur_usd(tmp: Path):
         f"Only PLN deposit should count as invested: {last['invested']}"
 
 
+def test_dividend_and_interest_do_not_count_as_invested(tmp: Path):
+    """Dividends/interest credit cash but must NOT raise invested capital.
+
+    Raw prices + dividend cash = correct total return: the dividend lifts
+    total_value while invested stays flat, so P&L/TWR/IRR read it as gain.
+    """
+    import ledger_core, portfolio_core
+
+    fx.inject_fake_prices(tmp)
+
+    ledger_core.add_transaction("2023-01-03", [
+        {"ticker": "PLN", "amount": 10000.0, "account_operation": True},
+    ])
+    # Dividend + interest: unmarked pure-cash credits
+    ledger_core.add_transaction("2023-06-01", [
+        {"ticker": "PLN", "amount": 100.0},
+    ])
+    ledger_core.add_transaction("2023-07-01", [
+        {"ticker": "PLN", "amount": 5.0},
+    ])
+    ledger_core.add_transaction("2023-08-01", [
+        {"ticker": "PLN", "amount": -20.0},  # withholding tax / commission
+    ])
+
+    snaps = portfolio_core.build_portfolio(
+        start_date=date(2023, 1, 3),
+        end_date=date(2023, 8, 2),
+        base_currency="PLN",
+        precision="D",
+        use_cache=False,
+    )
+
+    last = snaps[-1]
+    assert abs(last["invested"] - 10000.0) < 1.0, \
+        f"dividends/interest/tax must not change invested, got {last['invested']}"
+    assert abs(last["total_value"] - 10085.0) < 1.0, \
+        f"cash gains should lift total_value, got {last['total_value']}"
+
+
 def test_withdrawal_decreases_invested(tmp: Path):
     """Withdrawal (negative account_operation) reduces invested capital."""
     import ledger_core, portfolio_core
@@ -438,7 +477,7 @@ def test_withdrawal_decreases_invested(tmp: Path):
     fx.inject_fake_prices(tmp)
 
     ledger_core.add_transaction("2023-01-03", [
-        {"ticker": "PLN", "amount": 10000.0},
+        {"ticker": "PLN", "amount": 10000.0, "account_operation": True},
     ])
     ledger_core.add_transaction("2023-01-04", [
         {"ticker": "PLN", "amount": -3000.0, "account_operation": True},
@@ -606,9 +645,9 @@ def test_price_slab_loaded_once_per_build(tmp: Path, monkeypatch):
     calls: list[tuple[str, int]] = []
     real_load = load_price_year
 
-    def counting_load(ticker, year):
+    def counting_load(ticker, year, adjusted=False):
         calls.append((ticker, year))
-        return real_load(ticker, year)
+        return real_load(ticker, year, adjusted)
 
     # ticker_data.get_price calls storage.load_price_year via its module-level import
     monkeypatch.setattr("ticker_data.load_price_year", counting_load)

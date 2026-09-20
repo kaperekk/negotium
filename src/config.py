@@ -87,11 +87,6 @@ def save(cfg: dict) -> None:
     invalidate_config_cache()
 
 
-def save_global(cfg: dict) -> None:
-    """Save to the global config file (alias for save)."""
-    save(cfg)
-
-
 def get_theme(cfg: dict) -> str:
     return cfg.get("theme", "dark")
 

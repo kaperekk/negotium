@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────
 #   Negotium - Investment Tracker — launcher
-#  Usage:  ./start.sh                 run tests then start UI
-#          ./start.sh --skip-tests    skip tests, start UI only
-#          ./start.sh --tests-only    run tests, don't start UI
+#   Usage:  ./start.sh                 start UI (skip tests)
+#          ./start.sh --run-tests      run tests then start UI
+#          ./start.sh --tests-only     run tests only
 #          ./start.sh --port 8502     custom port (default 8501)
 #          ./start.sh --reset         wipe all data and start fresh
 # ─────────────────────────────────────────────────────────────
@@ -12,14 +12,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-SKIP_TESTS=false
+RUN_TESTS=false
 TESTS_ONLY=false
 RESET=false
 PORT=8501
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --skip-tests)  SKIP_TESTS=true  ; shift ;;
+    --run-tests)   RUN_TESTS=true   ; shift ;;
     --tests-only)  TESTS_ONLY=true  ; shift ;;
     --reset)       RESET=true       ; shift ;;
     --port)        PORT="$2"        ; shift 2 ;;
@@ -91,7 +91,7 @@ echo -e "  Dir:     $SCRIPT_DIR"
 
 # ── Check dependencies (existing venvs may predate a new requirements.txt) ───
 MISSING=()
-for pkg in streamlit yfinance plotly pandas orjson openpyxl python_calamine; do
+for pkg in streamlit yfinance plotly pandas orjson openpyxl python_calamine pytest; do
   if ! "$PYTHON" -c "import $pkg" &>/dev/null 2>&1; then
     MISSING+=("$pkg")
   fi
@@ -103,14 +103,14 @@ fi
 echo ""
 
 # ── Run tests ─────────────────────────────────────────────────
-if [[ "$SKIP_TESTS" == "false" ]]; then
+if [[ "$RUN_TESTS" == "true" || "$TESTS_ONLY" == "true" ]]; then
   echo -e "${BOLD}Running tests…${RESET_C}"
   echo ""
   if "$PYTHON" -m pytest tests/; then
     echo ""
   else
     echo ""
-    echo -e "${RED}✗ Tests failed. Use --skip-tests to launch anyway.${RESET_C}"
+    echo -e "${RED}✗ Tests failed.${RESET_C}"
     exit 1
   fi
 fi

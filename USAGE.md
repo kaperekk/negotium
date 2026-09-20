@@ -46,14 +46,16 @@ Rules worth knowing:
 - Ticker symbols pass through your ticker rules (see
   [CONFIG.md](CONFIG.md#ticker-rules)) — enter symbols the way your broker
   writes them.
-- `account_operation` entries always count toward invested capital; plain
-  cash-only transactions count too; stock buys/sells never do.
+- `account_operation` entries are the only ones that count toward invested
+  capital (deposits/withdrawals); dividends, interest, taxes, commissions
+  and FX swaps credit cash without raising invested, so they read as
+  performance. Stock buys/sells never count.
 
 ## Dashboard
 
 Top to bottom:
 
-- **Metric cards** — current value, contributions, best performer, CAGR, IRR,
+- **Metric cards** — current value, contributions, best performer, TWR, IRR,
   plus a P&L toggle (amount ⇄ percent).
 - **Portfolio chart** — portfolio value over time with the invested-capital
   reference line and optional benchmark overlays (S&P 500, NASDAQ 100,

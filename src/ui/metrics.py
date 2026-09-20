@@ -6,7 +6,7 @@ from ui.styles import build_metric_card_styles, build_toggle_button_styles, rend
 
 
 def render_metric_section(T: dict[str, str], base_ccy: str, cur_value: float, contrib: float,
-                         best_ticker: str, cagr_str: str, irr_str: str, fmt) -> None:
+                         best_ticker: str, twr_str: str, irr_str: str, fmt) -> None:
     st.markdown(build_metric_card_styles(T), unsafe_allow_html=True)
     st.markdown(
         render_metric_cards(
@@ -14,7 +14,7 @@ def render_metric_section(T: dict[str, str], base_ccy: str, cur_value: float, co
             total_value=fmt(cur_value),
             invested=fmt(contrib),
             largest_position=best_ticker,
-            cagr=cagr_str,
+            twr=twr_str,
             irr=irr_str,
             base_ccy=base_ccy,
         ),
