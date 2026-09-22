@@ -260,6 +260,227 @@ def _existing_entry_counts() -> dict[tuple[str, str, float], int]:
     return existing_entry_counts()
 
 
+def parse_closed_positions(file_path: str | Path, currency: str) -> list[dict]:
+    """Parse the 'Closed Positions' sheet into transactions.
+
+    Each BUY row becomes an acquisition transaction with the open date,
+    volume (shares), and purchase value. SELL rows are skipped — they are
+    already represented as 'Stock sell' entries in Cash Operations.
+    """
+    currency = currency.upper()
+    rules = cfg_module.load().get("ticker_rules", [])
+    log.info("Parsing closed positions from %s", file_path)
+
+    wb, engine = _open_workbook(file_path)
+    try:
+        if engine == "openpyxl":
+            if "Closed Positions" not in wb.sheetnames:
+                log.info("No 'Closed Positions' sheet — skipping")
+                return []
+            ws = wb["Closed Positions"]
+            rows_iter = ws.iter_rows(values_only=True)
+        else:
+            if "Closed Positions" not in wb.sheet_names:
+                log.info("No 'Closed Positions' sheet — skipping")
+                return []
+            df = wb.parse("Closed Positions", header=None)
+            header_idx = 0
+            for idx, row in df.iterrows():
+                if row.iloc[0] == "Instrument":
+                    header_idx = idx + 1
+                    break
+            df.columns = df.iloc[header_idx - 1].values
+            df = df.iloc[header_idx:].reset_index(drop=True)
+            rows_iter = [tuple(row) for _, row in df.iterrows()]
+
+        header: list[str] = []
+        raw: list[tuple] = []
+        for row in rows_iter:
+            if not header and any(str(c).strip().lower() == "instrument" for c in row if c):
+                header = [str(c) if c else "" for c in row]
+                continue
+            if header:
+                raw.append(row)
+    finally:
+        try:
+            wb.close()
+        except Exception:
+            pass
+
+    if not header:
+        log.warning("No header found in Closed Positions")
+        return []
+
+    col = {name.strip().lower(): i for i, name in enumerate(header) if name.strip()}
+    idx_ticker = col.get("ticker")
+    idx_type = col.get("type")
+    idx_volume = col.get("volume")
+    idx_open_price = col.get("open price")
+    idx_open_time = col.get("open time (utc)")
+    idx_purchase_value = col.get("purchase value")
+
+    transactions: list[dict] = []
+    for row in raw:
+        ticker = row[idx_ticker] if idx_ticker is not None and idx_ticker < len(row) else None
+        op_type = row[idx_type] if idx_type is not None and idx_type < len(row) else None
+        volume = row[idx_volume] if idx_volume is not None and idx_volume < len(row) else None
+        open_price = row[idx_open_price] if idx_open_price is not None and idx_open_price < len(row) else None
+        open_time = row[idx_open_time] if idx_open_time is not None and idx_open_time < len(row) else None
+        purchase_value = row[idx_purchase_value] if idx_purchase_value is not None and idx_purchase_value < len(row) else None
+
+        if not ticker or not op_type or str(op_type).strip().upper() != "BUY":
+            continue
+        if volume is None or (isinstance(volume, float) and pd.isna(volume)):
+            continue
+        if open_time is None:
+            continue
+
+        if isinstance(open_time, str):
+            try:
+                open_time = datetime.fromisoformat(open_time)
+            except ValueError:
+                continue
+        if not isinstance(open_time, datetime):
+            continue
+
+        volume = float(volume)
+        if volume <= 0:
+            continue
+
+        purchase = float(purchase_value) if purchase_value is not None and not isinstance(purchase_value, str) else 0.0
+        if isinstance(purchase_value, str):
+            try:
+                purchase = float(purchase_value)
+            except ValueError:
+                purchase = 0.0
+
+        translated = translate_ticker(str(ticker), rules)
+        entries: list[dict] = [
+            {"ticker": translated, "amount": round(volume, 8)},
+            {"ticker": currency, "amount": round(-abs(purchase), 8)},
+        ]
+        transactions.append({
+            "date": open_time.strftime("%Y-%m-%d"),
+            "entries": entries,
+            "_source": "closed_positions",
+            "_ticker_raw": str(ticker).upper(),
+        })
+
+    transactions.sort(key=lambda r: r["date"])
+    log.info("Parsed %d closed position BUY entries", len(transactions))
+    return transactions
+
+
+def parse_open_positions(file_path: str | Path, currency: str) -> list[dict]:
+    """Parse the 'Open Positions' sheet into acquisition transactions.
+
+    Each BUY row with a valid open date becomes an acquisition transaction.
+    Rows without an open time (summary rows, instrument headers) are skipped.
+    """
+    currency = currency.upper()
+    rules = cfg_module.load().get("ticker_rules", [])
+    log.info("Parsing open positions from %s", file_path)
+
+    wb, engine = _open_workbook(file_path)
+    try:
+        if engine == "openpyxl":
+            if "Open Positions" not in wb.sheetnames:
+                log.info("No 'Open Positions' sheet — skipping")
+                return []
+            ws = wb["Open Positions"]
+            rows_iter = ws.iter_rows(values_only=True)
+        else:
+            if "Open Positions" not in wb.sheet_names:
+                log.info("No 'Open Positions' sheet — skipping")
+                return []
+            df = wb.parse("Open Positions", header=None)
+            header_idx = 0
+            for idx, row in df.iterrows():
+                if row.iloc[0] == "Product" and row.iloc[1] == "Instrument/Position":
+                    header_idx = idx + 1
+                    break
+            df.columns = df.iloc[header_idx - 1].values
+            df = df.iloc[header_idx:].reset_index(drop=True)
+            rows_iter = [tuple(row) for _, row in df.iterrows()]
+
+        header: list[str] = []
+        raw: list[tuple] = []
+        for row in rows_iter:
+            if not header and (
+                str(row[0]).strip().lower() == "product"
+                and str(row[1]).strip().lower() == "instrument/position"
+            ):
+                header = [str(c) if c else "" for c in row]
+                continue
+            if header:
+                raw.append(row)
+    finally:
+        try:
+            wb.close()
+        except Exception:
+            pass
+
+    if not header:
+        log.warning("No header found in Open Positions")
+        return []
+
+    col = {name.strip().lower(): i for i, name in enumerate(header) if name.strip()}
+    idx_ticker = col.get("ticker")
+    idx_type = col.get("type")
+    idx_volume = col.get("volume")
+    idx_open_price = col.get("open price")
+    idx_open_time = col.get("open time (utc)")
+
+    transactions: list[dict] = []
+    for row in raw:
+        ticker = row[idx_ticker] if idx_ticker is not None and idx_ticker < len(row) else None
+        op_type = row[idx_type] if idx_type is not None and idx_type < len(row) else None
+        volume = row[idx_volume] if idx_volume is not None and idx_volume < len(row) else None
+        open_price = row[idx_open_price] if idx_open_price is not None and idx_open_price < len(row) else None
+        open_time = row[idx_open_time] if idx_open_time is not None and idx_open_time < len(row) else None
+
+        if not ticker or not op_type or str(op_type).strip().upper() != "BUY":
+            continue
+        if volume is None or (isinstance(volume, float) and pd.isna(volume)):
+            continue
+        if open_time is None:
+            continue
+
+        if isinstance(open_time, str):
+            try:
+                open_time = datetime.fromisoformat(open_time)
+            except ValueError:
+                continue
+        if not isinstance(open_time, datetime):
+            continue
+
+        volume = float(volume)
+        if volume <= 0:
+            continue
+
+        price = float(open_price) if open_price is not None and not isinstance(open_price, str) else 0.0
+        if isinstance(open_price, str):
+            try:
+                price = float(open_price)
+            except ValueError:
+                price = 0.0
+
+        translated = translate_ticker(str(ticker), rules)
+        purchase = round(volume * price, 8) if price > 0 else 0.0
+        entries: list[dict] = [
+            {"ticker": translated, "amount": round(volume, 8)},
+            {"ticker": currency, "amount": round(-abs(purchase), 8)},
+        ]
+        transactions.append({
+            "date": open_time.strftime("%Y-%m-%d"),
+            "entries": entries,
+        })
+
+    transactions.sort(key=lambda r: r["date"])
+    log.info("Parsed %d open position BUY entries", len(transactions))
+    return transactions
+
+
 def import_xtb(file_path: str | Path, currency: str) -> dict:
     log.info("=== XTB import: %s (currency=%s) ===", file_path, currency)
     valid, msg = validate_xtb_file(file_path)
@@ -268,33 +489,58 @@ def import_xtb(file_path: str | Path, currency: str) -> dict:
         return {"success": False, "error": msg}
 
     transactions = parse_xtb_excel(file_path, currency)
+    closed_buys = parse_closed_positions(file_path, currency)
+    open_buys = parse_open_positions(file_path, currency)
 
-    # Include existing ledger balance so manually-added corporate-action
-    # entries (split/spin-off) cover sells from the broker statement
-    from ledger_core import get_all_transactions
-    starting: dict[str, float] = {}
-    for rec in get_all_transactions():
+    # Deduplicate position buys against cash operations.
+    # Regular buys already appear in cash_ops; only keep corporate-action
+    # acquisitions (spinoffs, splits) that cash_ops doesn't have.
+    # Open/Closed Positions may show post-split quantities while Cash Ops
+    # has pre-split quantities, so we compare volumes: only add the
+    # difference when position volume exceeds cash ops volume.
+    cash_volumes: dict[tuple[str, str], float] = {}
+    for rec in transactions:
         for e in rec["entries"]:
-            t = e["ticker"].upper()
-            if t in storage.SUPPORTED_CURRENCIES:
+            if e["ticker"].upper() in storage.SUPPORTED_CURRENCIES:
                 continue
-            starting[t] = starting.get(t, 0.0) + float(e["amount"])
+            if float(e["amount"]) > 0:
+                key = (rec["date"], e["ticker"].upper())
+                cash_volumes[key] = cash_volumes.get(key, 0.0) + float(e["amount"])
 
-    # Auto-fix negative positions (e.g. corporate actions where the broker
-    # statement doesn't record the acquisition of new shares).
-    # Inserts a zero-cost buy on the date the position first went negative.
-    from ledger_core import auto_fix_negative_positions
-    fixed = auto_fix_negative_positions(transactions, starting_balance=starting)
-    if fixed:
-        log.info(
-            "Auto-fixed %d negative position(s) from corporate action: %s",
-            len(fixed),
-            ", ".join(f"{t} ({n} shares)" for t, n, _ in fixed),
-        )
+    def _add_uncovered(positions: list[dict], label: str) -> int:
+        added = 0
+        for rec in positions:
+            share_entry = rec["entries"][0]
+            share_ticker = share_entry["ticker"].upper()
+            position_volume = float(share_entry["amount"])
+            cash_vol = cash_volumes.get((rec["date"], share_ticker), 0.0)
+            diff = position_volume - cash_vol
+            if diff < 1e-6:
+                continue
+            log.warning(
+                "Corporate action detected: %s has %s shares with no buy "
+                "in cash operations — auto-inserting zero-cost acquisition "
+                "of %s shares on %s (source: %s). "
+                "Adjust cost basis later if needed.",
+                share_ticker, round(position_volume, 4), round(diff, 4),
+                rec["date"], label,
+            )
+            # Build entries: share entry gets the diff, currency entry is
+            # zeroed out (split/spinoff shares have no cash leg).
+            entries = []
+            for e in rec["entries"]:
+                if e["ticker"].upper() == share_ticker:
+                    entries.append({"ticker": e["ticker"], "amount": round(diff, 8)})
+                elif e["ticker"].upper() in storage.SUPPORTED_CURRENCIES:
+                    entries.append({"ticker": e["ticker"], "amount": 0.0})
+                else:
+                    entries.append({"ticker": e["ticker"], "amount": e["amount"]})
+            transactions.append({"date": rec["date"], "entries": entries})
+            added += 1
+        return added
 
-    # Auto-fix unapplied stock splits detected via Yahoo Finance.
-    from ledger_core import auto_fix_splits_if_needed
-    auto_fix_splits_if_needed(transactions, starting_balance=starting)
+    _add_uncovered(closed_buys, "closed positions")
+    _add_uncovered(open_buys, "open positions")
 
     existing = _existing_entry_counts()
 

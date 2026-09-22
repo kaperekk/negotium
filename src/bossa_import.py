@@ -183,32 +183,6 @@ def import_bossa(file_path: str | Path, currency: str, progress_cb=None) -> dict
 
     transactions, unresolved = parse_bossa_csv(file_path, currency, progress_cb=progress_cb)
 
-    # Include existing ledger balance so manually-added corporate-action
-    # entries (split/spin-off) cover sells from the broker statement
-    starting: dict[str, float] = {}
-    for rec in get_all_transactions():
-        for e in rec["entries"]:
-            t = e["ticker"].upper()
-            if t in storage.SUPPORTED_CURRENCIES:
-                continue
-            starting[t] = starting.get(t, 0.0) + float(e["amount"])
-
-    # Auto-fix negative positions (e.g. corporate actions where the broker
-    # statement doesn't record the acquisition of new shares).
-    # Inserts a zero-cost buy on the date the position first went negative.
-    from ledger_core import auto_fix_negative_positions
-    fixed = auto_fix_negative_positions(transactions, starting_balance=starting)
-    if fixed:
-        log.info(
-            "Auto-fixed %d negative position(s) from corporate action: %s",
-            len(fixed),
-            ", ".join(f"{t} ({n} shares)" for t, n, _ in fixed),
-        )
-
-    # Auto-fix unapplied stock splits detected via Yahoo Finance.
-    from ledger_core import auto_fix_splits_if_needed
-    auto_fix_splits_if_needed(transactions, starting_balance=starting)
-
     existing = existing_entry_counts()
 
     imported = 0

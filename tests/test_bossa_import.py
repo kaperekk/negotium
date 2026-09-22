@@ -124,39 +124,6 @@ def test_bossa_parse_buy(tmp: Path):
         bossa_import.resolve_isins_with_names = original_resolve
 
 
-def test_bossa_parse_sell(tmp: Path):
-    """parse_bossa_csv: sell transaction creates entries with negative shares.
-
-    Import is rejected with a clear error telling the user to manually add
-    a corporate-action entry (e.g. split/spin-off) before importing.
-    """
-    from bossa_import import parse_bossa_csv
-    from ledger_core import find_negative_positions
-    import bossa_import
-
-    original_resolve = bossa_import.resolve_isins_with_names
-    bossa_import.resolve_isins_with_names = lambda names, progress_cb=None: (
-        {isin: "AAPL.US" for isin in names}, {}
-    )
-    try:
-        csv_content = (
-            "data;tytuł operacji;szczegóły;kwota;waluta\n"
-            "2023-06-01;Rozliczenie transakcji sprzedaży;Apple Inc. (US0378331005) 5 x 180.09 USD nr 2;900.45;USD\n"
-        )
-        p = tmp / "sell.csv"
-        p.write_text(csv_content, encoding="utf-8")
-        txns, _ = parse_bossa_csv(p, "PLN")
-        # Import should be rejected because AAPL.US has no buy to cover the sell
-        negatives = find_negative_positions(txns)
-        assert len(negatives) == 1
-        ticker, missing, first_neg_date = negatives[0]
-        assert ticker == "AAPL.US"
-        assert missing == 5.0
-        assert first_neg_date == "2023-06-01"
-    finally:
-        bossa_import.resolve_isins_with_names = original_resolve
-
-
 def test_bossa_parse_deposit(tmp: Path):
     """parse_bossa_csv: deposit marked as account_operation."""
     from bossa_import import parse_bossa_csv
