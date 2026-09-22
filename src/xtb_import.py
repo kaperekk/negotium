@@ -481,6 +481,122 @@ def parse_open_positions(file_path: str | Path, currency: str) -> list[dict]:
     return transactions
 
 
+def fix_avg_prices_from_open_positions(file_path: str | Path, currency: str) -> None:
+    """Override avg_price in balance.json with real broker values from Open Positions.
+
+    Computes volume-weighted average open price per ticker from the Open Positions
+    sheet and updates balance.json.  This replaces the approximated avg_price
+    that _update_avg_prices() derives from Yahoo Finance closing prices.
+    """
+    currency = currency.upper()
+    rules = cfg_module.load().get("ticker_rules", [])
+
+    wb, engine = _open_workbook(file_path)
+    try:
+        if engine == "openpyxl":
+            if "Open Positions" not in wb.sheetnames:
+                return
+            ws = wb["Open Positions"]
+            rows_iter = ws.iter_rows(values_only=True)
+        else:
+            if "Open Positions" not in wb.sheet_names:
+                return
+            df = wb.parse("Open Positions", header=None)
+            header_idx = 0
+            for idx, row in df.iterrows():
+                if row.iloc[0] == "Product" and row.iloc[1] == "Instrument/Position":
+                    header_idx = idx + 1
+                    break
+            df.columns = df.iloc[header_idx - 1].values
+            df = df.iloc[header_idx:].reset_index(drop=True)
+            rows_iter = [tuple(row) for _, row in df.iterrows()]
+
+        header: list[str] = []
+        raw: list[tuple] = []
+        for row in rows_iter:
+            if not header and (
+                str(row[0]).strip().lower() == "product"
+                and str(row[1]).strip().lower() == "instrument/position"
+            ):
+                header = [str(c) if c else "" for c in row]
+                continue
+            if header:
+                raw.append(row)
+    finally:
+        try:
+            wb.close()
+        except Exception:
+            pass
+
+    if not header:
+        return
+
+    col = {name.strip().lower(): i for i, name in enumerate(header) if name.strip()}
+    idx_ticker = col.get("ticker")
+    idx_type = col.get("type")
+    idx_volume = col.get("volume")
+    idx_open_price = col.get("open price")
+
+    # Aggregate: total cost and total volume per translated ticker
+    agg: dict[str, dict[str, float]] = {}
+    for row in raw:
+        ticker = row[idx_ticker] if idx_ticker is not None and idx_ticker < len(row) else None
+        op_type = row[idx_type] if idx_type is not None and idx_type < len(row) else None
+        volume = row[idx_volume] if idx_volume is not None and idx_volume < len(row) else None
+        open_price = row[idx_open_price] if idx_open_price is not None and idx_open_price < len(row) else None
+
+        if not ticker or not op_type or str(op_type).strip().upper() != "BUY":
+            continue
+        if volume is None or (isinstance(volume, float) and pd.isna(volume)):
+            continue
+
+        volume = float(volume)
+        if volume <= 0:
+            continue
+
+        price = 0.0
+        if open_price is not None:
+            if isinstance(open_price, (int, float)):
+                price = float(open_price)
+            elif isinstance(open_price, str):
+                try:
+                    price = float(open_price)
+                except ValueError:
+                    pass
+
+        translated = translate_ticker(str(ticker), rules)
+        if translated.upper() in storage.SUPPORTED_CURRENCIES:
+            continue
+
+        if translated not in agg:
+            agg[translated] = {"total_cost": 0.0, "total_vol": 0.0}
+        agg[translated]["total_cost"] += volume * price
+        agg[translated]["total_vol"] += volume
+
+    if not agg:
+        return
+
+    balance = storage.load_balance()
+    updated = 0
+    for ticker, data in agg.items():
+        if data["total_vol"] <= 0:
+            continue
+        real_avg = data["total_cost"] / data["total_vol"]
+        if ticker in balance and balance[ticker]["amount"] > 1e-9:
+            old_avg = balance[ticker]["avg_price"]
+            balance[ticker]["avg_price"] = round(real_avg, 6)
+            if abs(old_avg - real_avg) > 0.01:
+                log.info(
+                    "Fixed avg_price for %s: %.4f -> %.4f (from open positions)",
+                    ticker, old_avg, real_avg,
+                )
+            updated += 1
+
+    if updated:
+        storage.save_balance(balance)
+        log.info("Updated avg_price for %d tickers from open positions", updated)
+
+
 def import_xtb(file_path: str | Path, currency: str) -> dict:
     log.info("=== XTB import: %s (currency=%s) ===", file_path, currency)
     valid, msg = validate_xtb_file(file_path)

@@ -36,7 +36,6 @@ def patch_root(tmp: Path):
     storage.PRICES_DIR         = tmp / "data" / "prices"
     storage.ADJ_PRICES_DIR     = tmp / "data" / "prices_adj"
     storage.PROJECTS_PATH      = tmp / "data" / "projects.json"
-    storage.SPLITS_PATH        = tmp / "data" / "splits.json"
 
     # Set up a default test project
     test_project = tmp / "data" / "test_project"

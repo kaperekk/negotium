@@ -472,3 +472,401 @@ def test_xtb_unknown_type_with_amount_is_skipped(tmp: Path):
     txns = parse_xtb_excel(p, "PLN")
     assert txns == []
 
+
+# ── Helpers for Closed / Open Positions tests ──────────────────────────────
+
+
+def _positions_book(
+    tmp: Path,
+    name: str,
+    cash_rows: list[list] | None = None,
+    closed_header: list[str] | None = None,
+    closed_rows: list[list] | None = None,
+    open_header: list[str] | None = None,
+    open_rows: list[list] | None = None,
+) -> Path:
+    """Build an XTB workbook with Cash Operations, Closed Positions, Open Positions."""
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+
+    # Cash Operations
+    ws_cash = wb.active
+    ws_cash.title = "Cash Operations"
+    ws_cash.append(["Type", "Ticker", "Amount", "Time", "Comment"])
+    for r in (cash_rows or []):
+        ws_cash.append(r)
+
+    # Closed Positions
+    ws_closed = wb.create_sheet("Closed Positions")
+    closed_h = closed_header or [
+        "Instrument", "Ticker", "Category", "Type", "Volume",
+        "Open Price", "Open Time (UTC)", "Close Price",
+        "Close Time (UTC)", "Product", "Purchase Value",
+    ]
+    ws_closed.append(closed_h)
+    for r in (closed_rows or []):
+        ws_closed.append(r)
+
+    # Open Positions
+    ws_open = wb.create_sheet("Open Positions")
+    open_h = open_header or [
+        "Product", "Instrument/Position", "Ticker", "Category",
+        "Type", "Volume", "Value", "Open Price",
+        "Current Price", "Open Time (UTC)",
+    ]
+    ws_open.append(open_h)
+    for r in (open_rows or []):
+        ws_open.append(r)
+
+    p = tmp / name
+    wb.save(p)
+    wb.close()
+    return p
+
+
+# ── parse_closed_positions tests ───────────────────────────────────────────
+
+
+def test_closed_positions_parses_buy(tmp: Path):
+    """parse_closed_positions: BUY row creates an acquisition transaction."""
+    from xtb_import import parse_closed_positions
+
+    p = _positions_book(
+        tmp, "closed.xlsx",
+        closed_rows=[[
+            "Apple", "AAPL.US", "STOCK", "BUY", 5.0,
+            150.0, "2025-01-15 10:00:00", 170.0,
+            "2025-06-20 14:00:00", "My Trades", 750.0,
+        ]],
+    )
+    txns = parse_closed_positions(str(p), "USD")
+    assert len(txns) == 1
+    assert txns[0]["date"] == "2025-01-15"
+    assert txns[0]["entries"][0]["ticker"] == "AAPL.US"
+    assert txns[0]["entries"][0]["amount"] == 5.0
+    assert txns[0]["entries"][1]["amount"] == -750.0
+
+
+def test_closed_positions_skips_sell(tmp: Path):
+    """parse_closed_positions: SELL rows are skipped."""
+    from xtb_import import parse_closed_positions
+
+    p = _positions_book(
+        tmp, "closed_sell.xlsx",
+        closed_rows=[[
+            "Apple", "AAPL.US", "STOCK", "SELL", 5.0,
+            150.0, "2025-01-15 10:00:00", 170.0,
+            "2025-06-20 14:00:00", "My Trades", 850.0,
+        ]],
+    )
+    txns = parse_closed_positions(str(p), "USD")
+    assert len(txns) == 0
+
+
+def test_closed_positions_skips_no_open_time(tmp: Path):
+    """parse_closed_positions: rows without open time are skipped (summary rows)."""
+    from xtb_import import parse_closed_positions
+
+    p = _positions_book(
+        tmp, "closed_notime.xlsx",
+        closed_rows=[[
+            "Apple", "AAPL.US", "STOCK", "BUY", 5.0,
+            150.0, None, 170.0,
+            "2025-06-20 14:00:00", "My Trades", 750.0,
+        ]],
+    )
+    txns = parse_closed_positions(str(p), "USD")
+    assert len(txns) == 0
+
+
+def test_closed_positions_translates_ticker(tmp: Path):
+    """parse_closed_positions: .PL tickers are translated when rules are configured."""
+    from xtb_import import parse_closed_positions
+
+    p = _positions_book(
+        tmp, "closed_pl.xlsx",
+        closed_rows=[[
+            "Dino", "DNP.PL", "STOCK", "BUY", 0.2712,
+            393.2, "2024-12-27 11:58:22", 501.4,
+            "2025-07-31 06:57:05", "IKE", 106.64,
+        ]],
+    )
+    txns = parse_closed_positions(str(p), "PLN")
+    assert len(txns) == 1
+    ticker = txns[0]["entries"][0]["ticker"]
+    assert ticker in ("DNP.PL", "DNP.WA")
+
+
+def test_closed_positions_empty_sheet(tmp: Path):
+    """parse_closed_positions: returns [] when sheet has no data rows."""
+    from xtb_import import parse_closed_positions
+
+    p = _positions_book(tmp, "closed_empty.xlsx")
+    txns = parse_closed_positions(str(p), "PLN")
+    assert txns == []
+
+
+# ── parse_open_positions tests ─────────────────────────────────────────────
+
+
+def test_open_positions_parses_buy(tmp: Path):
+    """parse_open_positions: BUY row creates an acquisition transaction."""
+    from xtb_import import parse_open_positions
+
+    p = _positions_book(
+        tmp, "open.xlsx",
+        open_rows=[[
+            "My Trades", "1234567", "AAPL.US", "STOCK", "BUY",
+            10.0, 1500.0, 150.0, 170.0,
+            "2025-01-15 10:00:00",
+        ]],
+    )
+    txns = parse_open_positions(str(p), "USD")
+    assert len(txns) == 1
+    assert txns[0]["entries"][0]["ticker"] == "AAPL.US"
+    assert txns[0]["entries"][0]["amount"] == 10.0
+    assert txns[0]["entries"][1]["amount"] == -1500.0
+    assert txns[0]["date"] == "2025-01-15"
+
+
+def test_open_positions_skips_no_open_time(tmp: Path):
+    """parse_open_positions: summary rows (no open time) are skipped."""
+    from xtb_import import parse_open_positions
+
+    p = _positions_book(
+        tmp, "open_notime.xlsx",
+        open_rows=[[
+            "My Trades", "AAPL", "AAPL.US", "STOCK", "",
+            10.0, 1500.0, 150.0, 170.0, "",
+        ]],
+    )
+    txns = parse_open_positions(str(p), "USD")
+    assert len(txns) == 0
+
+
+def test_open_positions_skips_sells(tmp: Path):
+    """parse_open_positions: only BUY rows are parsed."""
+    from xtb_import import parse_open_positions
+
+    p = _positions_book(
+        tmp, "open_sell.xlsx",
+        open_rows=[[
+            "My Trades", "1234567", "AAPL.US", "STOCK", "SELL",
+            10.0, 1500.0, 150.0, 170.0,
+            "2025-01-15 10:00:00",
+        ]],
+    )
+    txns = parse_open_positions(str(p), "USD")
+    assert len(txns) == 0
+
+
+def test_open_positions_translates_ticker(tmp: Path):
+    """parse_open_positions: .PL tickers are translated when rules are configured."""
+    from xtb_import import parse_open_positions
+
+    p = _positions_book(
+        tmp, "open_pl.xlsx",
+        open_rows=[[
+            "IKE", "1234567", "DNP.PL", "STOCK", "BUY",
+            25.0, 903.0, 36.12, 39.32,
+            "2024-12-27 11:58:22",
+        ]],
+    )
+    txns = parse_open_positions(str(p), "PLN")
+    assert len(txns) == 1
+    ticker = txns[0]["entries"][0]["ticker"]
+    assert ticker in ("DNP.PL", "DNP.WA")
+
+
+def test_open_positions_skips_currencies(tmp: Path):
+    """parse_open_positions: currency tickers are returned (filtering is in fix_avg_prices)."""
+    from xtb_import import parse_open_positions
+
+    p = _positions_book(
+        tmp, "open_ccy.xlsx",
+        open_rows=[[
+            "My Trades", "1234567", "EUR", "CASH", "BUY",
+            1000.0, 1000.0, 1.0, 1.0,
+            "2025-01-15 10:00:00",
+        ]],
+    )
+    txns = parse_open_positions(str(p), "EUR")
+    assert len(txns) == 1
+    assert txns[0]["entries"][0]["ticker"] == "EUR"
+
+
+def test_open_positions_empty_sheet(tmp: Path):
+    """parse_open_positions: returns [] when sheet has no data rows."""
+    from xtb_import import parse_open_positions
+
+    p = _positions_book(tmp, "open_empty.xlsx")
+    txns = parse_open_positions(str(p), "PLN")
+    assert txns == []
+
+
+# ── Volume-based dedup tests ──────────────────────────────────────────────
+
+
+def test_import_xtb_adds_spinoff_not_in_cash_ops(tmp: Path):
+    """import_xtb: spinoff shares from Open Positions added when Cash Ops has no buy."""
+    from xtb_import import import_xtb
+    from ledger_core import get_all_transactions
+
+    p = _positions_book(
+        tmp, "spinoff.xlsx",
+        cash_rows=[],
+        open_rows=[[
+            "IKE", "1234567", "S2B.PL", "STOCK", "BUY",
+            13.8382, 0.0, 0.0, 58.0,
+            "2026-04-13 10:00:00",
+        ]],
+    )
+    import_xtb(str(p), "PLN")
+    txns = get_all_transactions()
+    s2b_txns = [t for t in txns if any("S2B" in e["ticker"].upper() for e in t["entries"])]
+    assert len(s2b_txns) == 1
+    share_entry = [e for e in s2b_txns[0]["entries"] if "S2B" in e["ticker"].upper()][0]
+    assert abs(share_entry["amount"] - 13.8382) < 0.001
+
+
+def test_import_xtb_skips_when_cash_ops_covers_position(tmp: Path):
+    """import_xtb: position buy skipped when Cash Ops already has a buy for same date+ticker."""
+    from xtb_import import import_xtb
+    from ledger_core import get_all_transactions
+
+    p = _positions_book(
+        tmp, "covered.xlsx",
+        cash_rows=[
+            ["Stock purchase", "AAPL.US", -500.0, "2025-01-15 10:00:00",
+             "OPEN BUY 5 @ 100.00"],
+        ],
+        open_rows=[[
+            "My Trades", "1234567", "AAPL.US", "STOCK", "BUY",
+            5.0, 500.0, 100.0, 120.0,
+            "2025-01-15 10:00:00",
+        ]],
+    )
+    import_xtb(str(p), "USD")
+    txns = get_all_transactions()
+    aapl_buys = [
+        t for t in txns
+        if any(e["ticker"] == "AAPL.US" and float(e["amount"]) > 0 for e in t["entries"])
+    ]
+    assert len(aapl_buys) == 1
+
+
+def test_import_xtb_adds_split_difference(tmp: Path):
+    """import_xtb: split adjustment added when Open Position volume > Cash Ops volume."""
+    from xtb_import import import_xtb
+    from ledger_core import get_all_transactions
+
+    p = _positions_book(
+        tmp, "split.xlsx",
+        cash_rows=[
+            ["Stock purchase", "DNP.PL", -393.2, "2024-12-27 11:58:22",
+             "OPEN BUY 1/1.2712 @ 393.20"],
+        ],
+        open_rows=[[
+            "IKE", "1589229756", "DNP.PL", "STOCK", "BUY",
+            10.0, 361.2, 36.12, 39.32,
+            "2024-12-27 11:58:22",
+        ]],
+    )
+    import_xtb(str(p), "PLN")
+    txns = get_all_transactions()
+    dnp_buys = [
+        t for t in txns
+        if any("DNP" in e["ticker"].upper() and float(e["amount"]) > 0 for e in t["entries"])
+    ]
+    total = sum(
+        float(e["amount"])
+        for t in dnp_buys
+        for e in t["entries"]
+        if "DNP" in e["ticker"].upper() and float(e["amount"]) > 0
+    )
+    assert abs(total - 10.0) < 0.01
+
+
+# ── fix_avg_prices_from_open_positions tests ──────────────────────────────
+
+
+def test_fix_avg_prices_overrides_with_real_price(tmp: Path):
+    """fix_avg_prices: avg_price is overridden with volume-weighted open price."""
+    from xtb_import import fix_avg_prices_from_open_positions
+    import storage
+
+    storage.save_balance({
+        "AAPL.US": {"amount": 10.0, "avg_price": 200.0},
+    })
+
+    p = _positions_book(
+        tmp, "fix_avg.xlsx",
+        open_rows=[
+            ["My Trades", "111", "AAPL.US", "STOCK", "BUY",
+             5.0, 750.0, 150.0, 170.0, "2025-01-15 10:00:00"],
+            ["My Trades", "222", "AAPL.US", "STOCK", "BUY",
+             5.0, 800.0, 160.0, 170.0, "2025-06-20 10:00:00"],
+        ],
+    )
+    fix_avg_prices_from_open_positions(str(p), "USD")
+    bal = storage.load_balance()
+    # weighted avg: (5*150 + 5*160) / 10 = 155.0
+    assert abs(bal["AAPL.US"]["avg_price"] - 155.0) < 0.01
+
+
+def test_fix_avg_prices_skips_tickers_not_in_balance(tmp: Path):
+    """fix_avg_prices: tickers not in balance.json are ignored."""
+    from xtb_import import fix_avg_prices_from_open_positions
+    import storage
+
+    storage.save_balance({})
+
+    p = _positions_book(
+        tmp, "fix_nobal.xlsx",
+        open_rows=[[
+            "My Trades", "111", "AAPL.US", "STOCK", "BUY",
+            5.0, 750.0, 150.0, 170.0, "2025-01-15 10:00:00",
+        ]],
+    )
+    fix_avg_prices_from_open_positions(str(p), "USD")
+    bal = storage.load_balance()
+    assert "AAPL.US" not in bal
+
+
+def test_fix_avg_prices_empty_open_positions(tmp: Path):
+    """fix_avg_prices: no-op when Open Positions sheet is empty."""
+    from xtb_import import fix_avg_prices_from_open_positions
+    import storage
+
+    storage.save_balance({
+        "AAPL.US": {"amount": 10.0, "avg_price": 200.0},
+    })
+
+    p = _positions_book(tmp, "fix_empty.xlsx")
+    fix_avg_prices_from_open_positions(str(p), "USD")
+    bal = storage.load_balance()
+    assert bal["AAPL.US"]["avg_price"] == 200.0
+
+
+def test_fix_avg_prices_translates_tickers(tmp: Path):
+    """fix_avg_prices: tickers matching translation rules are translated before lookup."""
+    from xtb_import import fix_avg_prices_from_open_positions
+    import storage
+
+    # Use a ticker that exists in balance (US ticker, no translation needed)
+    storage.save_balance({
+        "NVDA.US": {"amount": 2.0, "avg_price": 100.0},
+    })
+
+    p = _positions_book(
+        tmp, "fix_translate.xlsx",
+        open_rows=[
+            ["My Trades", "111", "NVDA.US", "STOCK", "BUY",
+             2.0, 464.16, 232.08, 232.08, "2025-03-28 13:30:18"],
+        ],
+    )
+    fix_avg_prices_from_open_positions(str(p), "USD")
+    bal = storage.load_balance()
+    assert abs(bal["NVDA.US"]["avg_price"] - 232.08) < 0.01
+

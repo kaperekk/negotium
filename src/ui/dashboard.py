@@ -138,6 +138,13 @@ def render_dashboard(cfg, storage, T, today, data_start_date, base_ccy: str | No
 
     if force_refresh:
         rebuild_balance()
+        from xtb_import import fix_avg_prices_from_open_positions
+        from ui.helpers import detect_currency
+        xtb_dir = storage.imports_dir() / "xtb"
+        if xtb_dir.exists():
+            for fpath in sorted(xtb_dir.glob("*.xlsx")):
+                ccy = detect_currency(fpath.name)
+                fix_avg_prices_from_open_positions(str(fpath), ccy)
 
     # Warn if we have stock tickers but zero price files at all
     stock_tickers = [t for t in tickers_needed

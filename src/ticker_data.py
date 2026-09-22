@@ -85,8 +85,6 @@ from storage import (
     save_ticker_meta,
     load_dividends,
     save_dividends,
-    load_splits,
-    save_splits,
     SUPPORTED_CURRENCIES,
     CURRENCY_SUFFIXES,
     TRIANGULATE_VIA_USD,
@@ -581,35 +579,6 @@ def get_dividends(ticker: str) -> dict[str, float]:
     save_dividends(cached)
     return result
 
-
-def get_splits(ticker: str) -> dict[str, float]:
-    """Return {YYYY-MM-DD: split_ratio} for ticker.
-
-    Fetched from Yahoo Finance and cached to disk. A ratio of 2.0 means
-    2-for-1 split (each share becomes 2). Returns an empty dict on
-    failure or when no split history is available.
-    """
-    if ticker.upper() in SUPPORTED_CURRENCIES:
-        return {}
-    cached = load_splits()
-    if ticker in cached:
-        return cached[ticker]
-    try:
-        with _suppress_output():
-            splits = yf.Ticker(_yahoo_symbol(ticker)).splits
-        result: dict[str, float] = {}
-        for dt, val in splits.items():
-            try:
-                ratio = float(val)
-                if ratio > 1.0:
-                    result[str(dt)[:10]] = round(ratio, 6)
-            except Exception:
-                continue
-    except Exception:
-        result = {}
-    cached[ticker] = result
-    save_splits(cached)
-    return result
 
 
 def get_price(

@@ -13,7 +13,7 @@ from currencies import SUPPORTED_CURRENCIES
 from ledger_core import remap_tickers
 from manual_import import import_manual
 from ui.styles import render_project_banner
-from xtb_import import import_xtb
+from xtb_import import import_xtb, fix_avg_prices_from_open_positions
 
 BROKERS = ["XTB", "BOSSA", "Custom"]
 BROKER_CURRENCIES = {"XTB": sorted(SUPPORTED_CURRENCIES), "BOSSA": ["EUR", "PLN", "Many"]}
@@ -50,6 +50,11 @@ def _run_refresh(storage, today, detect_currency, base_ccy):
                 total_imported += result["imported"]
         bar.progress(1.0, text="Done")
         bar.empty()
+
+        for kind, fpath in all_files:
+            if kind == "xtb":
+                ccy = detect_currency(fpath.name)
+                fix_avg_prices_from_open_positions(str(fpath), ccy)
 
     storage.invalidate_portfolio_from((today - timedelta(days=1)).isoformat())
     st.session_state.pop(f"snapshots_{base_ccy}_D", None)
@@ -387,6 +392,7 @@ def render_sidebar(cfg, storage, T, today, data_start_date, detect_currency):
                             detected = ccy_options[0]
                         with st.spinner(f"Importing {uf.name}…"):
                             result = import_xtb(str(dest), detected)
+                        fix_avg_prices_from_open_positions(str(dest), detected)
                     if result["success"]:
                         n = result["imported"]
                         s = result["skipped"]

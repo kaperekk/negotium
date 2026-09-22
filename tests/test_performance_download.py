@@ -127,7 +127,7 @@ def _run_download_perf(
     storage.PRICES_DIR = tmp / "data" / "prices"
     storage.ADJ_PRICES_DIR = tmp / "data" / "prices_adj"
     storage.PROJECTS_PATH = tmp / "data" / "projects.json"
-    storage.SPLITS_PATH = tmp / "data" / "splits.json"
+
     storage.set_current_project("perf_test")
 
     cfg_module.ROOT = tmp
@@ -183,7 +183,7 @@ def _run_parallel_download_perf(
     storage.PRICES_DIR = tmp / "data" / "prices"
     storage.ADJ_PRICES_DIR = tmp / "data" / "prices_adj"
     storage.PROJECTS_PATH = tmp / "data" / "projects.json"
-    storage.SPLITS_PATH = tmp / "data" / "splits.json"
+
     storage.set_current_project("perf_test")
 
     cfg_module.ROOT = tmp
@@ -242,7 +242,7 @@ def _run_batch_download_perf(
     storage.PRICES_DIR = tmp / "data" / "prices"
     storage.ADJ_PRICES_DIR = tmp / "data" / "prices_adj"
     storage.PROJECTS_PATH = tmp / "data" / "projects.json"
-    storage.SPLITS_PATH = tmp / "data" / "splits.json"
+
     storage.set_current_project("perf_test")
 
     cfg_module.ROOT = tmp

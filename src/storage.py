@@ -558,31 +558,3 @@ def save_dividends(dividends: dict) -> None:
     _dividends_cache = dividends
     with _cache_lock:
         _write_bytes_atomic(DIVIDENDS_PATH, _dumps(dividends).encode())
-
-
-# ── Split cache (per-ticker ex-date → split ratio) ──────────────────────────
-
-SPLITS_PATH = DATA_ROOT / "splits.json"
-
-_splits_cache: dict | None = None
-
-
-def load_splits() -> dict:
-    """Return {ticker: {YYYY-MM-DD: split_ratio}} from cache, or empty dict."""
-    global _splits_cache
-    if _splits_cache is not None:
-        return _splits_cache
-    if not SPLITS_PATH.exists():
-        _splits_cache = {}
-        return _splits_cache
-    with _cache_lock:
-        _splits_cache = _loads(SPLITS_PATH.read_bytes())
-    return _splits_cache
-
-
-def save_splits(splits: dict) -> None:
-    """Persist {ticker: {YYYY-MM-DD: split_ratio}} cache."""
-    global _splits_cache
-    _splits_cache = splits
-    with _cache_lock:
-        _write_bytes_atomic(SPLITS_PATH, _dumps(splits).encode())
