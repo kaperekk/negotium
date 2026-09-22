@@ -5,10 +5,16 @@ import streamlit as st
 from ui.colors import (
     ACCENT,
     ACCENT_FILL,
+    MUTED_LINE,
+)
+from ui.sizes import (
+    HOVER_LABEL_SIZE,
     AXIS_TICK_FONT_SIZE,
     AXIS_TITLE_FONT_SIZE,
-    HOVER_LABEL_SIZE,
-    MUTED_LINE,
+    CHART_HEIGHT_PORTFOLIO,
+    PORTFOLIO_TICK_FONT,
+    PORTFOLIO_TITLE_FONT,
+    PORTFOLIO_GLOBAL_FONT,
 )
 
 
@@ -38,10 +44,10 @@ def render_portfolio_chart(T: dict[str, str], base_ccy: str, dates, values, inve
         ))
         yaxis_cfg = dict(
             showgrid=True, gridcolor=T["chart_grid"],
-            zeroline=False, tickfont=dict(size=20, color=T["text_muted"]), tickformat=",.2f",
+            zeroline=False, tickfont=dict(size=PORTFOLIO_TICK_FONT, color=T["text_muted"]), tickformat=",.2f",
             ticksuffix=f" {base_ccy}" if base_ccy == "PLN" else "",
             tickprefix="" if base_ccy == "PLN" else SYM[base_ccy],
-            title=dict(font=dict(size=18, color=T["text_muted"]))
+            title=dict(font=dict(size=PORTFOLIO_TITLE_FONT, color=T["text_muted"]))
         )
     elif chart_mode == "profit":
         pnl_series = [round(v - inv, 2) for v, inv in zip(values, investeds)]
@@ -57,10 +63,10 @@ def render_portfolio_chart(T: dict[str, str], base_ccy: str, dates, values, inve
         yaxis_cfg = dict(
             showgrid=True, gridcolor=T["chart_grid"],
             zeroline=True, zerolinecolor=T["chart_zeroline"],
-            tickfont=dict(size=20, color=T["text_muted"]), tickformat=",.2f",
+            tickfont=dict(size=PORTFOLIO_TICK_FONT, color=T["text_muted"]), tickformat=",.2f",
             ticksuffix=f" {base_ccy}" if base_ccy == "PLN" else "",
             tickprefix="" if base_ccy == "PLN" else SYM[base_ccy],
-            title=dict(font=dict(size=18, color=T["text_muted"]))
+            title=dict(font=dict(size=PORTFOLIO_TITLE_FONT, color=T["text_muted"]))
         )
 
     else:
@@ -172,7 +178,7 @@ def render_portfolio_chart(T: dict[str, str], base_ccy: str, dates, values, inve
         paper_bgcolor=T["chart_bg"],
         plot_bgcolor=T["chart_bg"],
         margin=dict(l=10, r=10, t=10, b=10),
-        height=900,
+        height=CHART_HEIGHT_PORTFOLIO,
         legend=dict(orientation="h", yanchor="top", y=0.98, xanchor="left", x=0.01, font=dict(color=T["text"])),
         hovermode="x unified",
         hoverlabel=dict(
@@ -181,7 +187,7 @@ def render_portfolio_chart(T: dict[str, str], base_ccy: str, dates, values, inve
             font=dict(size=HOVER_LABEL_SIZE, color=T["hover_text"], family="sans-serif"),
             namelength=-1,
         ),
-        font=dict(family="sans-serif", size=20, color=T["text"]),
+        font=dict(family="sans-serif", size=PORTFOLIO_GLOBAL_FONT, color=T["text"]),
         xaxis=dict(
             showgrid=False,
             tickfont=dict(size=AXIS_TICK_FONT_SIZE, color=T["text_muted"]),

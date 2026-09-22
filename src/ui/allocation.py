@@ -11,6 +11,12 @@ import colorsys
 import plotly.graph_objects as go
 import streamlit as st
 from ui.colors import ACCENT
+from ui.sizes import (
+    CHART_HEIGHT_ALLOCATION,
+    ALLOCATION_PIE_TEXT_FONT,
+    ALLOCATION_GLOBAL_FONT,
+    ALLOCATION_LEGEND_FONT,
+)
 
 
 def _accent_palette(n: int, accent_hex: str, is_light: bool) -> list[str]:
@@ -87,7 +93,7 @@ def _render_donut(data: dict, total: float, T: dict, chart_key: str = "alloc") -
                 textinfo="label+percent",
                 textposition="inside",
                 insidetextorientation="radial",
-                textfont=dict(size=24, color="#ffffff"),
+                textfont=dict(size=ALLOCATION_PIE_TEXT_FONT, color="#ffffff"),
                 marker=dict(colors=slice_colors),
                 domain=dict(x=[0.0, 0.62], y=[0.0, 1.0]),
             )
@@ -96,11 +102,11 @@ def _render_donut(data: dict, total: float, T: dict, chart_key: str = "alloc") -
     txt = "#1F2328" if is_light else "#E6EDF3"
 
     fig.update_layout(
-        height=900,
+        height=CHART_HEIGHT_ALLOCATION,
         margin=dict(t=10, b=10, l=10, r=10),
         paper_bgcolor=T["chart_bg"],
         plot_bgcolor=T["chart_bg"],
-        font=dict(color=txt, size=22),
+        font=dict(color=txt, size=ALLOCATION_GLOBAL_FONT),
         showlegend=True,
         legend=dict(
             orientation="v",
@@ -108,7 +114,7 @@ def _render_donut(data: dict, total: float, T: dict, chart_key: str = "alloc") -
             y=0.5,
             xanchor="left",
             yanchor="middle",
-            font=dict(size=28, color=txt),
+            font=dict(size=ALLOCATION_LEGEND_FONT, color=txt),
             bgcolor="rgba(0,0,0,0)",
         ),
     )

@@ -12,9 +12,14 @@ import plotly.graph_objects as go
 import streamlit as st
 from ui.colors import (
     ACCENT,
+)
+from ui.sizes import (
+    HOVER_LABEL_SIZE,
     AXIS_TICK_FONT_SIZE,
     AXIS_TITLE_FONT_SIZE,
-    HOVER_LABEL_SIZE,
+    CHART_HEIGHT_DRAWDOWN,
+    DRAWDOWN_ANNOTATION_FONT,
+    DRAWDOWN_GLOBAL_FONT,
 )
 
 
@@ -149,16 +154,16 @@ def render_drawdown_analysis(snapshots, T: dict) -> None:
         text=f"Max {pct(m['max_dd'])}",
         showarrow=True,
         arrowhead=2,
-        font=dict(color=accent, size=22),
+        font=dict(color=accent, size=DRAWDOWN_ANNOTATION_FONT),
         yshift=-10,
     )
     fig.update_layout(
         template="plotly_white" if is_light else "plotly_dark",
-        height=420,
+        height=CHART_HEIGHT_DRAWDOWN,
         margin=dict(t=20, b=10, l=10, r=10),
         paper_bgcolor=T["chart_bg"],
         plot_bgcolor=T["chart_bg"],
-        font=dict(color=txt, size=24),
+        font=dict(color=txt, size=DRAWDOWN_GLOBAL_FONT),
         yaxis=dict(
             title=dict(text="Drawdown from peak (%)", font=dict(color=txt, size=AXIS_TITLE_FONT_SIZE)),
             tickfont=dict(color=txt, size=AXIS_TICK_FONT_SIZE),

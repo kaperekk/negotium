@@ -106,12 +106,8 @@ STAT_CARD_ACCENTS: dict[str, str] = {
 }
 STAT_CARD_TINT_ALPHA = 0x1A  # ~10% accent opacity at the card's top edge
 
-# Shared size for chart hover-label text (watchlist, portfolio, drawdown).
-HOVER_LABEL_SIZE = 30
-
-# Shared axis label/tick font sizes.
-AXIS_TICK_FONT_SIZE = 16
-AXIS_TITLE_FONT_SIZE = 18
+# Re-exported from sizes.py for backward compatibility.
+from ui.sizes import HOVER_LABEL_SIZE, AXIS_TICK_FONT_SIZE, AXIS_TITLE_FONT_SIZE  # noqa: F401
 
 
 # ── Benchmark palette ─────────────────────────────────────────────────────────

@@ -13,6 +13,7 @@ from currencies import SUPPORTED_CURRENCIES
 from ledger_core import remap_tickers
 from manual_import import import_manual
 from ui.styles import render_project_banner
+from ui.sizes import SIDEBAR_TEXT_AREA_HEIGHT, SIDEBAR_LABEL_FONT_REM
 from xtb_import import import_xtb, fix_avg_prices_from_open_positions
 
 BROKERS = ["XTB", "BOSSA", "Custom"]
@@ -145,7 +146,7 @@ def render_sidebar(cfg, storage, T, today, data_start_date, detect_currency):
             st.rerun()
 
         st.markdown(
-            f"<div style='color:{T['text']};font-size:0.85rem;font-weight:600;"
+            f"<div style='color:{T['text']};font-size:{SIDEBAR_LABEL_FONT_REM}rem;font-weight:600;"
             f"margin-bottom:0.25rem'>Currency</div>",
             unsafe_allow_html=True,
         )
@@ -244,7 +245,7 @@ def render_sidebar(cfg, storage, T, today, data_start_date, detect_currency):
             rules_text = st.text_area(
                 "Rules",
                 value="\n".join(cfg.get("ticker_rules", [])),
-                height=200,
+                height=SIDEBAR_TEXT_AREA_HEIGHT,
                 key="ticker_rules_text",
                 label_visibility="collapsed",
                 placeholder="AMZN.DE=AMZ.DE\n*.PL=*.WA\n.US=",

@@ -24,10 +24,21 @@ from ticker_data import (
 )
 from ui.colors import (
     ACCENT,
-    AXIS_TICK_FONT_SIZE,
-    HOVER_LABEL_SIZE,
     NEGATIVE,
     POSITIVE,
+)
+from ui.sizes import (
+    HOVER_LABEL_SIZE,
+    AXIS_TICK_FONT_SIZE,
+    CHART_HEIGHT_WATCHLIST,
+    WATCHLIST_SYMBOL_FONT_REM,
+    WATCHLIST_NAME_FONT_REM,
+    WATCHLIST_PRICE_FONT_REM,
+    WATCHLIST_PRICE_LABEL_FONT_REM,
+    WATCHLIST_PERIOD_FONT_REM,
+    WATCHLIST_CHANGE_FONT_REM,
+    WATCHLIST_NOTE_FONT_REM,
+    WATCHLIST_GRAB_CURSOR_FONT_PX,
 )
 
 
@@ -110,7 +121,7 @@ def _render_dnd_list(watch: list[str], T: dict[str, str]) -> None:
       #wl-dnd .wl-item {{
         padding:8px 12px; background:{T['card_bg']};
         border:1px solid {T['border']}; border-radius:10px;
-        cursor:grab; font-size:16px; color:{T['text']};
+        cursor:grab; font-size:{WATCHLIST_GRAB_CURSOR_FONT_PX}px; color:{T['text']};
       }}
       #wl-dnd .wl-item:active {{ cursor:grabbing; }}
       #wl-dnd .wl-item .g {{ color:{T['text_muted']}; }}
@@ -298,8 +309,8 @@ def _render_card(T: dict[str, str], sym: str, days: int = 60) -> None:
     head = st.columns([0.86, 0.14])
     with head[0]:
         st.markdown(
-            f"<div style='font-size:2rem;font-weight:700;line-height:1.1'>{sym}</div>"
-            f"<div style='font-size:1rem;color:{T['text_muted']};line-height:1.2'>"
+            f"<div style='font-size:{WATCHLIST_SYMBOL_FONT_REM}rem;font-weight:700;line-height:1.1'>{sym}</div>"
+            f"<div style='font-size:{WATCHLIST_NAME_FONT_REM}rem;color:{T['text_muted']};line-height:1.2'>"
             f"{name}</div>",
             unsafe_allow_html=True,
         )
@@ -321,11 +332,11 @@ def _render_card(T: dict[str, str], sym: str, days: int = 60) -> None:
     price_col, drop_col = st.columns([0.5, 0.5])
     with price_col:
         st.markdown(
-            f"<div style='font-size:1.35rem;font-weight:700;line-height:1.2'>"
-            f"<span style='font-size:0.78rem;font-weight:600;color:{T['text_muted']};"
+            f"<div style='font-size:{WATCHLIST_PRICE_FONT_REM}rem;font-weight:700;line-height:1.2'>"
+            f"<span style='font-size:{WATCHLIST_PRICE_LABEL_FONT_REM}rem;font-weight:600;color:{T['text_muted']};"
             f"text-transform:uppercase;letter-spacing:0.03em'> Trading Price: </span>"
             f"{latest:,.2f} "
-            f"<span style='font-size:0.78rem;font-weight:600;color:{T['text_muted']}'>"
+            f"<span style='font-size:{WATCHLIST_PRICE_LABEL_FONT_REM}rem;font-weight:600;color:{T['text_muted']}'>"
             f"{ccy}</span></div>",
             unsafe_allow_html=True,
         )
@@ -336,8 +347,8 @@ def _render_card(T: dict[str, str], sym: str, days: int = 60) -> None:
             dist = (latest / ath - 1.0) * 100.0
             color = POSITIVE if dist >= 0 else NEGATIVE
             st.markdown(
-                f"<div style='font-size:1.35rem;font-weight:700;line-height:1.2'>"
-                f"<span style='font-size:0.78rem;font-weight:600;color:{T['text_muted']};"
+                f"<div style='font-size:{WATCHLIST_PRICE_FONT_REM}rem;font-weight:700;line-height:1.2'>"
+                f"<span style='font-size:{WATCHLIST_PRICE_LABEL_FONT_REM}rem;font-weight:600;color:{T['text_muted']};"
                 f"text-transform:uppercase;letter-spacing:0.03em'>Drop from ATH: </span>"
                 f"<span style='color:{color}'>{dist:+.1f}%</span></div>",
                 unsafe_allow_html=True,
@@ -385,7 +396,7 @@ def _render_card(T: dict[str, str], sym: str, days: int = 60) -> None:
         hovertemplate="%{x|%Y-%m-%d}<br>%{y:.2f}<extra></extra>",
     ))
     fig.update_layout(
-        height=260,
+        height=CHART_HEIGHT_WATCHLIST,
         margin=dict(l=4, r=4, t=6, b=6),
         paper_bgcolor=T["chart_bg"],
         plot_bgcolor=T["chart_bg"],

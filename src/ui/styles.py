@@ -7,6 +7,25 @@ returning HTML <style> blocks are injected via st.markdown(unsafe_allow_html=Tru
 from __future__ import annotations
 
 from ui.colors import NEGATIVE, POSITIVE, STAT_CARD_ACCENTS, STAT_CARD_TINT_ALPHA
+from ui.sizes import (
+    ROOT_FONT_PX, SIDEBAR_WIDTH_PX,
+    CONTAINER_PADDING_TOP_REM, CONTAINER_PADDING_LEFT_REM, CONTAINER_PADDING_RIGHT_REM,
+    METRIC_VALUE_FONT_REM, SIDEBAR_HEADING_FONT_REM, SIDEBAR_GAP_REM,
+    HOLDINGS_CELL_FONT_REM, HOLDINGS_NAME_FONT_REM, HOLDINGS_COL_HEADER_FONT_REM,
+    STAT_CARD_LABEL_FONT_REM, STAT_CARD_VALUE_FONT_REM,
+    STAT_CARD_PADDING_REM, STAT_ROW_GAP_REM, STAT_ROW_MARGIN_TOP_REM, STAT_ROW_MARGIN_BOTTOM_REM,
+    TOGGLE_BUTTON_FONT_REM, TOGGLE_BUTTON_TEXT_FONT_REM, TOGGLE_BUTTON_PADDING_PX,
+    TOGGLE_BUTTON_MIN_HEIGHT_PX, BORDER_RADIUS_BUTTON,
+    FORM_SUBMIT_FONT_REM,
+    BANNER_TITLE_FONT_REM,
+    EMPTY_STATE_ICON_FONT_REM, EMPTY_STATE_TITLE_FONT_REM, EMPTY_STATE_SUBTITLE_FONT_REM,
+    EMPTY_STATE_DETAILS_FONT_REM, EMPTY_STATE_PADDING_REM,
+    TRADE_EMPTY_TITLE_FONT_REM, TRADE_EMPTY_SUBTITLE_FONT_REM, TRADE_EMPTY_PADDING_REM,
+    TRADE_SUMMARY_VALUE_FONT_REM, TRADE_SUMMARY_LABEL_FONT_REM, TRADE_SUMMARY_GAP_REM,
+    DIALOG_METRIC_FONT_REM, DIALOG_HEADING_FONT_REM, DIALOG_MIN_HEIGHT_VH, DIALOG_WIDTH_VW,
+    TRADE_TABLE_FONT_PX,
+    SIDEBAR_LABEL_FONT_REM, SIDEBAR_CAPTION_FONT_REM,
+)
 
 
 # Base app styles
@@ -17,7 +36,7 @@ def build_app_styles(theme: dict[str, str]) -> str:
     t = theme
     return f"""
     <style>
-        html, body, [class*="css"] {{ font-size: 18px !important; }}
+        html, body, [class*="css"] {{ font-size: {ROOT_FONT_PX}px !important; }}
 
         .stApp {{ background-color: {t["page_bg"]}; }}
         [data-testid="stHeader"] {{ background-color: {t["page_bg"]}; }}
@@ -29,7 +48,7 @@ def build_app_styles(theme: dict[str, str]) -> str:
             --secondary-background-color: {t["panel_bg"]};
             --text-color: {t["text"]};
             --primary-color: {t["accent"]};
-            --sidebar-width: 400px;
+            --sidebar-width: {SIDEBAR_WIDTH_PX}px;
         }}
 
         [data-baseweb="select"] {{
@@ -94,7 +113,7 @@ def build_app_styles(theme: dict[str, str]) -> str:
         }}
         [data-testid="metric-container"] [class*="Value"],
         [data-testid="metric-container"] [class*="Value"] p {{
-            font-size: 2rem !important;
+            font-size: {METRIC_VALUE_FONT_REM}rem !important;
             font-weight: 700 !important;
             color: {t["text"]} !important;
         }}
@@ -108,9 +127,9 @@ def build_app_styles(theme: dict[str, str]) -> str:
             background: {t["card_bg"]} !important;
             border: 1px solid {t["border"]} !important;
         }}
-        [data-testid="stSidebar"] [data-testid="stHorizontalBlock"] {{ gap: 0.3rem; }}
+        [data-testid="stSidebar"] [data-testid="stHorizontalBlock"] {{ gap: {SIDEBAR_GAP_REM}rem; }}
         [data-testid="stSidebar"] [data-testid="stMarkdown"] h1 {{
-            font-size: 2rem !important;
+            font-size: {SIDEBAR_HEADING_FONT_REM}rem !important;
             text-align: center !important;
             margin-top: -1rem !important;
             padding-top: 0 !important;
@@ -123,9 +142,9 @@ def build_app_styles(theme: dict[str, str]) -> str:
         [data-testid="stSidebar"] [data-testid="stCaptionContainer"] p {{ color: {t["text_muted"]}; }}
 
         .block-container {{
-            padding-top: 2.5rem !important;
-            padding-left: 1rem !important;
-            padding-right: 1rem !important;
+            padding-top: {CONTAINER_PADDING_TOP_REM}rem !important;
+            padding-left: {CONTAINER_PADDING_LEFT_REM}rem !important;
+            padding-right: {CONTAINER_PADDING_RIGHT_REM}rem !important;
             max-width: 100% !important;
         }}
 
@@ -474,14 +493,14 @@ def build_trade_dialog_styles(theme: dict[str, str]) -> str:
     return f"""
     <style>
     [role="dialog"],
-    [data-testid="stDialog"] {{ min-width:95vw !important; min-height:85vh !important; max-width:95vw !important; background-color:{t["panel_bg"]} !important; border:1px solid {t["border_strong"]} !important; }}
+    [data-testid="stDialog"] {{ min-width:{DIALOG_WIDTH_VW}vw !important; min-height:{DIALOG_MIN_HEIGHT_VH}vh !important; max-width:{DIALOG_WIDTH_VW}vw !important; background-color:{t["panel_bg"]} !important; border:1px solid {t["border_strong"]} !important; }}
     [role="dialog"] > div,
     [data-testid="stDialog"] > div {{ width:100% !important; max-width:100% !important; height:100% !important; background-color:{t["panel_bg"]} !important; border:1px solid {t["border_strong"]} !important; }}
     [role="dialog"] [data-testid="stVerticalBlock"],
     [data-testid="stDialog"] [data-testid="stVerticalBlock"] {{ background-color:{t["panel_bg"]} !important; }}
-    [data-testid="stDialog"] .stMetric label {{ font-size:3rem !important; }}
-    [data-testid="stDialog"] .stMetric [data-testid="stMetricValue"] {{ font-size:3rem !important; }}
-    [data-testid="stDialog"] h3 {{ font-size:1.5rem !important; font-weight:600 !important; color:{t["text_muted"]} !important; }}
+    [data-testid="stDialog"] .stMetric label {{ font-size:{DIALOG_METRIC_FONT_REM}rem !important; }}
+    [data-testid="stDialog"] .stMetric [data-testid="stMetricValue"] {{ font-size:{DIALOG_METRIC_FONT_REM}rem !important; }}
+    [data-testid="stDialog"] h3 {{ font-size:{DIALOG_HEADING_FONT_REM}rem !important; font-weight:600 !important; color:{t["text_muted"]} !important; }}
     [role="dialog"] button[aria-label="Close"],
     [data-testid="stDialog"] button[aria-label="Close"] {{ color:{t["text"]} !important; background-color:transparent !important; }}
     [role="dialog"] button[aria-label="Close"]:hover,
@@ -499,16 +518,16 @@ def build_holdings_styles(theme: dict[str, str]) -> str:
     .holdings-row {{ border-bottom:1px solid {t["holdings_bar_bg"]}; }}
     .holdings-row:last-child {{ border-bottom:none; }}
     .h-hdr {{ border-bottom:2px solid {t["border"]}; padding:0; margin-bottom:4px; }}
-    .h-col-hdr {{ color:{t["text_muted"]}; font-size:0.75rem; font-weight:700;
+    .h-col-hdr {{ color:{t["text_muted"]}; font-size:{HOLDINGS_COL_HEADER_FONT_REM}rem; font-weight:700;
         text-transform:uppercase; letter-spacing:0.08em; text-align:center; display:block;
         padding:0.5rem 0; background:{t["card_faint"]}; border-radius:0.5rem; }}
-    .h-cell {{ padding:12px 0; font-size:1.5rem; font-family:sans-serif; color:{t["text_cell"]}; text-align:center; }}
+    .h-cell {{ padding:4px 0; font-size:{HOLDINGS_CELL_FONT_REM}rem; font-family:sans-serif; color:{t["text_cell"]}; text-align:center; }}
     .h-ticker {{ position:relative; overflow:hidden; }}
     .h-bar {{ position:absolute; top:0; left:0; height:100%; opacity:0.10;
         border-radius:4px; transition:width 0.3s ease; }}
-    .h-name {{ position:relative; font-weight:600; color:{t["text"]}; font-size:1.5rem; }}
+    .h-name {{ position:relative; font-weight:600; color:{t["text"]}; font-size:{HOLDINGS_NAME_FONT_REM}rem; }}
     .h-sub {{ position:relative; display:block; font-size:0.85em; color:{t["text_muted"]}; font-weight:400; }}
-    [data-testid="stSidebar"] [data-testid="stCaptionContainer"] p {{ font-size:0.75rem; }}
+    [data-testid="stSidebar"] [data-testid="stCaptionContainer"] p {{ font-size:{SIDEBAR_CAPTION_FONT_REM}rem; }}
     </style>
     """
 
@@ -524,15 +543,15 @@ def build_metric_card_styles(theme: dict[str, str]) -> str:
     )
     return f"""
     <style>
-    .stat-row {{ display:flex; gap:1rem; margin:0.5rem 0 1rem 0; }}
+    .stat-row {{ display:flex; gap:{STAT_ROW_GAP_REM}rem; margin:{STAT_ROW_MARGIN_TOP_REM}rem 0 {STAT_ROW_MARGIN_BOTTOM_REM}rem 0; }}
     .stat-card {{
-      flex:1; padding:0.8rem 1.2rem; border-radius:0.75rem;
+      flex:1; padding:{STAT_CARD_PADDING_REM}; border-radius:0.5rem;
       background:{t["card_bg"]};
       border:1px solid {t["border"]};
     }}
 {tint_rules}
-    .stat-card .label {{ font-size:0.75rem; color:{t["text_faint"]}; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.2rem; text-align:center; }}
-    .stat-card .value {{ font-size:1.4rem; font-weight:700; color:{t["text"]}; text-align:center; }}
+    .stat-card .label {{ font-size:{STAT_CARD_LABEL_FONT_REM}rem; color:{t["text_faint"]}; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.2rem; text-align:center; }}
+    .stat-card .value {{ font-size:{STAT_CARD_VALUE_FONT_REM}rem; font-weight:700; color:{t["text"]}; text-align:center; }}
     .green .value,
     .blue .value,
     .purple .value,
@@ -552,13 +571,13 @@ def build_toggle_button_styles(theme: dict[str, str]) -> str:
     div[data-testid="stHorizontalBlock"] > div:has(button[kind="primary"]) button[kind="primary"] {{
         background: {t["card_bg"]} !important;
         border: 1px solid {t["border"]} !important;
-        border-radius: 16px !important;
-        padding: 20px 24px !important;
-        min-height: 85px !important;
+        border-radius: {BORDER_RADIUS_BUTTON}px !important;
+        padding: {TOGGLE_BUTTON_PADDING_PX} !important;
+        min-height: {TOGGLE_BUTTON_MIN_HEIGHT_PX}px !important;
         width: 100% !important;
         transition: all 0.2s ease !important;
         color: {t["text"]} !important;
-        font-size: 1.7rem !important;
+        font-size: {TOGGLE_BUTTON_FONT_REM}rem !important;
         font-weight: 600 !important;
     }}
     div[data-testid="stHorizontalBlock"] > div:has(button[kind="secondary"]) button[kind="secondary"]:hover,
@@ -583,13 +602,13 @@ def build_toggle_button_styles(theme: dict[str, str]) -> str:
        currency-toggle-sized text. */
     div[data-testid="stHorizontalBlock"] button[kind="secondary"] p,
     div[data-testid="stHorizontalBlock"] button[kind="primary"] p {{
-        font-size: 1.4rem !important;
+        font-size: {TOGGLE_BUTTON_TEXT_FONT_REM}rem !important;
         font-weight: 600 !important;
     }}
     /* Form submit buttons inside columns (Add row / Remove row) stay compact */
     div[data-testid="stHorizontalBlock"] button[kind="secondaryFormSubmit"],
     div[data-testid="stHorizontalBlock"] button[kind="primaryFormSubmit"] {{
-        font-size: 0.95rem !important;
+        font-size: {FORM_SUBMIT_FONT_REM}rem !important;
         font-weight: 500 !important;
         padding: 0.3rem 0.9rem !important;
         min-height: 0 !important;
@@ -609,7 +628,7 @@ def render_project_banner(project_name: str, theme: dict[str, str]) -> str:
         background:{t["card_bg"]}; border:1px solid {t["border"]};
         margin-top:-1rem; margin-bottom:0.5rem;
     ">
-        <div style="font-size:1.6rem; font-weight:700; color:{t["text"]};">📈 {project_name}</div>
+        <div style="font-size:{BANNER_TITLE_FONT_REM}rem; font-weight:700; color:{t["text"]};">📈 {project_name}</div>
     </div>
     """
 
@@ -620,12 +639,12 @@ def render_empty_state(title: str, subtitle: str, theme: dict[str, str], *, deta
     t = theme
     details_html = ""
     if details:
-        details_html = f'<div style="font-size:0.85rem;color:{t["text_muted"]};">{details}</div>'
+        details_html = f'<div style="font-size:{EMPTY_STATE_DETAILS_FONT_REM}rem;color:{t["text_muted"]};">{details}</div>'
     return f"""
-    <div style="text-align:center;padding:4rem 2rem;border-radius:1rem;background:{t["card_bg"]};border:1px solid {t["border"]};margin:2rem 0;">
-        <div style="font-size:3rem;margin-bottom:1rem;">{icon}</div>
-        <div style="font-size:1.4rem;font-weight:600;color:{t["text"]};margin-bottom:0.5rem;">{title}</div>
-        <div style="font-size:1rem;color:{t["text_muted"]};margin-bottom:0.3rem;">{subtitle}</div>
+    <div style="text-align:center;padding:{EMPTY_STATE_PADDING_REM};border-radius:0.75rem;background:{t["card_bg"]};border:1px solid {t["border"]};margin:0.5rem 0;">
+        <div style="font-size:{EMPTY_STATE_ICON_FONT_REM}rem;margin-bottom:0.3rem;">{icon}</div>
+        <div style="font-size:{EMPTY_STATE_TITLE_FONT_REM}rem;font-weight:600;color:{t["text"]};margin-bottom:0.2rem;">{title}</div>
+        <div style="font-size:{EMPTY_STATE_SUBTITLE_FONT_REM}rem;color:{t["text_muted"]};margin-bottom:0.15rem;">{subtitle}</div>
         {details_html}
     </div>
     """
@@ -636,9 +655,9 @@ def render_empty_state(title: str, subtitle: str, theme: dict[str, str], *, deta
 def render_trade_empty_state(theme: dict[str, str]) -> str:
     t = theme
     return f"""
-    <div style="text-align:center;padding:3rem 2rem;border-radius:1rem;background:{t["card_bg"]};border:1px solid {t["border"]};margin:1rem 0;">
-        <div style="font-size:1.2rem;font-weight:600;color:{t["text"]};margin-bottom:0.3rem;">No trades found</div>
-        <div style="font-size:0.9rem;color:{t["text_muted"]};">This position has no trade history yet.</div>
+    <div style="text-align:center;padding:{TRADE_EMPTY_PADDING_REM};border-radius:0.75rem;background:{t["card_bg"]};border:1px solid {t["border"]};margin:0.3rem 0;">
+        <div style="font-size:{TRADE_EMPTY_TITLE_FONT_REM}rem;font-weight:600;color:{t["text"]};margin-bottom:0.15rem;">No trades found</div>
+        <div style="font-size:{TRADE_EMPTY_SUBTITLE_FONT_REM}rem;color:{t["text_muted"]};">This position has no trade history yet.</div>
     </div>
     """
 
@@ -648,18 +667,18 @@ def render_trade_empty_state(theme: dict[str, str]) -> str:
 def render_trade_summary_cards(theme: dict[str, str], total_bought: float, total_sold: float, net: float) -> str:
     t = theme
     return f"""
-    <div style="display:flex;gap:1rem;margin:0.5rem 0 1.5rem 0;">
+    <div style="display:flex;gap:{TRADE_SUMMARY_GAP_REM}rem;margin:0.5rem 0 1.5rem 0;">
       <div style="flex:1;padding:0.8rem 1.2rem;border-radius:0.75rem;background:{t["card_bg"]};border:1px solid {t["border"]};text-align:center;">
-        <div style="font-size:0.75rem;color:{t["text_faint"]};text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.3rem;">Bought</div>
-        <div style="font-size:1.4rem;font-weight:700;color:{POSITIVE};">{total_bought:.4f}</div>
+        <div style="font-size:{TRADE_SUMMARY_LABEL_FONT_REM}rem;color:{t["text_faint"]};text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.3rem;">Bought</div>
+        <div style="font-size:{TRADE_SUMMARY_VALUE_FONT_REM}rem;font-weight:700;color:{POSITIVE};">{total_bought:.4f}</div>
       </div>
       <div style="flex:1;padding:0.8rem 1.2rem;border-radius:0.75rem;background:{t["card_bg"]};border:1px solid {t["border"]};text-align:center;">
-        <div style="font-size:0.75rem;color:{t["text_faint"]};text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.3rem;">Sold</div>
-        <div style="font-size:1.4rem;font-weight:700;color:{NEGATIVE};">{total_sold:.4f}</div>
+        <div style="font-size:{TRADE_SUMMARY_LABEL_FONT_REM}rem;color:{t["text_faint"]};text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.3rem;">Sold</div>
+        <div style="font-size:{TRADE_SUMMARY_VALUE_FONT_REM}rem;font-weight:700;color:{NEGATIVE};">{total_sold:.4f}</div>
       </div>
       <div style="flex:1;padding:0.8rem 1.2rem;border-radius:0.75rem;background:{t["card_bg"]};border:1px solid {t["border"]};text-align:center;">
-        <div style="font-size:0.75rem;color:{t["text_faint"]};text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.3rem;">Net</div>
-        <div style="font-size:1.4rem;font-weight:700;color:{t["text"]};">{net:.4f}</div>
+        <div style="font-size:{TRADE_SUMMARY_LABEL_FONT_REM}rem;color:{t["text_faint"]};text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.3rem;">Net</div>
+        <div style="font-size:{TRADE_SUMMARY_VALUE_FONT_REM}rem;font-weight:700;color:{t["text"]};">{net:.4f}</div>
       </div>
     </div>
     """
@@ -714,7 +733,7 @@ def render_trade_table_html(theme: dict[str, str], trade_df) -> str:
     return f"""
     <style>
     body {{ margin:0; font-family:system-ui,-apple-system,sans-serif; background:transparent; color:{t["table_text"]}; }}
-    table {{ width:100%; border-collapse:collapse; font-size:24px; }}
+    table {{ width:100%; border-collapse:collapse; font-size:{TRADE_TABLE_FONT_PX}px; }}
     tr:hover {{ background:{t["table_hover"]}; }}
     </style>
     <table>
