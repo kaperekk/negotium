@@ -30,21 +30,28 @@ Part of the Negotium docs: [README](README.md) · [USAGE](USAGE.md) · [IMPORTS]
 src/
 ├── app.py             Streamlit entry point. Wires runtime, sidebar, dashboard.
 │                      Owns no logic of its own.
-├── config.py          Read / write data/config.json (single global config).
-│                      No logic beyond that. Theme helpers.
-├── storage.py         All file I/O. The only module that touches the
-│                      filesystem (except ticker_data, which also writes the
-│                      price cache). Multi-project paths, JSONL helpers,
-│                      price cache, registry, balance, benchmarks, dividends.
-├── ledger_core.py     Transaction ledger: add/update/delete, chronological
-│                      order enforcement, balance + avg-price rebuild,
-│                      TWR, IRR, holdings-at-date. Import dedup counts.
-├── currencies.py      Single source of truth: supported currencies, exchange
-│                      suffixes, triangulation rules, display symbols.
-├── portfolio_core.py  Build the portfolio value time-series. The core engine.
-├── ticker_data.py     Yahoo Finance: batched price download, per-year cache,
-│                      FX rates, dividends, earnings dates, ticker names and
-│                      metadata, all-time-highs.
+├── domain/            Pure domain layer (zero external framework dependencies):
+│   ├── models.py          Slotted dataclasses: Transaction, LedgerEntry, AssetHolding,
+│   │                      PortfolioSnapshot, TickerMeta.
+│   ├── currencies.py      Single source of truth: supported currencies, exchange
+│   │                      suffixes, triangulation rules, display symbols.
+│   └── exceptions.py      Domain exceptions (CorruptedLedgerError, PriceFetchError, etc.).
+├── storage/           Data access layer & typed repositories:
+│   ├── context.py         ProjectContext (data directory resolution & multi-project isolation).
+│   ├── repositories.py    TransactionRepository, SnapshotRepository, BalanceRepository.
+│   └── __init__.py        Storage façade for backwards-compatible file I/O operations.
+├── market_data/       Market data & Yahoo Finance integration:
+│   ├── provider.py        MarketDataProvider (thread-safe price/FX slab caching & conversions).
+│   └── downloader.py      ensure_batch & Yahoo download with stdout/stderr suppression.
+├── services/          Business logic & orchestration:
+│   ├── ledger_service.py    LedgerService (replaying, mutation, avg_price, metrics).
+│   ├── portfolio_service.py PortfolioService (O(days+tx) portfolio forward pass engine).
+│   ├── import_service.py    ImportService (orchestrator for multi-broker batch imports).
+│   └── importers/           BaseBrokerImporter, XTB, BOSSA, and Custom importers.
+├── config.py          Read / write data/config.json (single global config). Theme helpers.
+├── ledger_core.py     Façade for LedgerService (backward compatibility with legacy scripts).
+├── portfolio_core.py  Façade for PortfolioService (backward compatibility with legacy scripts).
+├── ticker_data.py     Façade for MarketDataProvider and downloader helpers.
 ├── ticker_translate.py  Rule-based ticker symbol translation.
 ├── isin_resolve.py    ISIN → ticker resolution from config mappings.
 ├── bossa_import.py    BOSSA "Historia finansowa" CSV importer.

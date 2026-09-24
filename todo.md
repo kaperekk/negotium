@@ -126,7 +126,3 @@ Ensure 100% feature parity, performance preservation, and documentation accuracy
 
 - [ ] **7.2. Architecture Documentation Update (`ARCHITECTURE.md`)**
   - Update module maps, dependency diagrams, and flow descriptions to reflect the clean layered architecture.
-
-
-log scale vs linear
-trade history UI

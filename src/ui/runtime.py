@@ -20,6 +20,8 @@ def init_runtime() -> tuple[dict, dict, str, str, date]:
     cfg = cfg_module.load()
     if "theme" not in st.session_state:
         st.session_state["theme"] = cfg_module.get_theme(cfg)
+    if "log_scale" not in st.session_state:
+        st.session_state["log_scale"] = cfg_module.get_log_scale(cfg)
 
     theme = get_theme(st.session_state["theme"])
     return cfg, storage, st.session_state["theme"], theme, date.today()

@@ -18,6 +18,7 @@ DEFAULTS: dict = {
     "ticker_rules": [],
     "isin_tickers": [],
     "theme": "dark",
+    "log_scale": False,
 }
 
 
@@ -94,4 +95,14 @@ def get_theme(cfg: dict) -> str:
 def save_theme(theme: str) -> None:
     cfg = load()
     cfg["theme"] = theme
+    save(cfg)
+
+
+def get_log_scale(cfg: dict) -> bool:
+    return bool(cfg.get("log_scale", False))
+
+
+def save_log_scale(log_scale: bool) -> None:
+    cfg = load()
+    cfg["log_scale"] = bool(log_scale)
     save(cfg)

@@ -20,10 +20,12 @@ from ui.sizes import (
 
 def render_portfolio_chart(T: dict[str, str], base_ccy: str, dates, values, investeds,
                            bench_by_date: dict[str, dict], BENCHMARKS: dict[str, str],
-                           BENCH_COLORS: dict[str, str], chart_mode: str) -> None:
+                           BENCH_COLORS: dict[str, str], chart_mode: str,
+                           log_scale: bool = False) -> None:
     SYM = {"PLN": " PLN", "EUR": "€", "USD": "$"}
 
     fig = go.Figure()
+    is_log = bool(log_scale)
 
     if chart_mode == "amount":
         fig.add_trace(go.Scatter(
@@ -47,7 +49,8 @@ def render_portfolio_chart(T: dict[str, str], base_ccy: str, dates, values, inve
             zeroline=False, tickfont=dict(size=PORTFOLIO_TICK_FONT, color=T["text_muted"]), tickformat=",.2f",
             ticksuffix=f" {base_ccy}" if base_ccy == "PLN" else "",
             tickprefix="" if base_ccy == "PLN" else SYM[base_ccy],
-            title=dict(font=dict(size=PORTFOLIO_TITLE_FONT, color=T["text_muted"]))
+            title=dict(font=dict(size=PORTFOLIO_TITLE_FONT, color=T["text_muted"])),
+            type="log" if is_log else "linear",
         )
     elif chart_mode == "profit":
         pnl_series = [round(v - inv, 2) for v, inv in zip(values, investeds)]
@@ -66,7 +69,8 @@ def render_portfolio_chart(T: dict[str, str], base_ccy: str, dates, values, inve
             tickfont=dict(size=PORTFOLIO_TICK_FONT, color=T["text_muted"]), tickformat=",.2f",
             ticksuffix=f" {base_ccy}" if base_ccy == "PLN" else "",
             tickprefix="" if base_ccy == "PLN" else SYM[base_ccy],
-            title=dict(font=dict(size=PORTFOLIO_TITLE_FONT, color=T["text_muted"]))
+            title=dict(font=dict(size=PORTFOLIO_TITLE_FONT, color=T["text_muted"])),
+            type="log" if is_log else "linear",
         )
 
     else:
@@ -88,7 +92,8 @@ def render_portfolio_chart(T: dict[str, str], base_ccy: str, dates, values, inve
             tickfont=dict(size=AXIS_TICK_FONT_SIZE, color=T["text_muted"]),
             ticksuffix="%",
             tickformat="+.1f",
-            title=dict(font=dict(size=AXIS_TITLE_FONT_SIZE, color=T["text_muted"]))
+            title=dict(font=dict(size=AXIS_TITLE_FONT_SIZE, color=T["text_muted"])),
+            type="log" if is_log else "linear",
         )
 
     bench_selected = {
@@ -154,14 +159,30 @@ def render_portfolio_chart(T: dict[str, str], base_ccy: str, dates, values, inve
     if chart_mode == "amount":
         ys = [v for tr in fig.data if tr.y is not None for v in tr.y if v is not None]
         if ys:
-            fig.update_yaxes(range=[min(ys) * 0.98, max(ys) * 1.02])
+            if is_log:
+                pos_ys = [v for v in ys if v > 0]
+                if pos_ys:
+                    import math
+                    min_val = min(pos_ys) * 0.98
+                    max_val = max(pos_ys) * 1.02
+                    fig.update_yaxes(type="log", range=[math.log10(max(min_val, 1e-4)), math.log10(max_val)])
+            else:
+                fig.update_yaxes(range=[min(ys) * 0.98, max(ys) * 1.02])
     elif chart_mode == "profit":
         ys = [v for tr in fig.data if tr.y is not None for v in tr.y if v is not None]
         if ys:
-            # Keep the breakeven line (0) in view; 5% headroom on each side.
-            lo, hi = min(min(ys), 0.0), max(max(ys), 0.0)
-            pad = max((hi - lo) * 0.05, 1.0)
-            fig.update_yaxes(range=[lo - pad, hi + pad])
+            if is_log:
+                pos_ys = [v for v in ys if v > 0]
+                if pos_ys:
+                    import math
+                    min_val = min(pos_ys) * 0.98
+                    max_val = max(pos_ys) * 1.02
+                    fig.update_yaxes(type="log", range=[math.log10(max(min_val, 1e-4)), math.log10(max_val)])
+            else:
+                # Keep the breakeven line (0) in view; 5% headroom on each side.
+                lo, hi = min(min(ys), 0.0), max(max(ys), 0.0)
+                pad = max((hi - lo) * 0.05, 1.0)
+                fig.update_yaxes(range=[lo - pad, hi + pad])
     else:
         # Include every percent-mode trace (portfolio return + benchmark
         # overlays) — otherwise a benchmark outperforming the portfolio is
@@ -169,9 +190,17 @@ def render_portfolio_chart(T: dict[str, str], base_ccy: str, dates, values, inve
         # 5% headroom on each side (not zero-centred symmetric).
         pct_values = [v for tr in fig.data if tr.y is not None for v in tr.y if v is not None]
         if pct_values:
-            lo, hi = min(pct_values), max(pct_values)
-            pad = max((hi - lo) * 0.05, 1.0)  # ≥1pp floor keeps flat series readable
-            fig.update_yaxes(range=[lo - pad, hi + pad])
+            if is_log:
+                pos_pcts = [v for v in pct_values if v > 0]
+                if pos_pcts:
+                    import math
+                    min_val = min(pos_pcts) * 0.98
+                    max_val = max(pos_pcts) * 1.02
+                    fig.update_yaxes(type="log", range=[math.log10(max(min_val, 1e-4)), math.log10(max_val)])
+            else:
+                lo, hi = min(pct_values), max(pct_values)
+                pad = max((hi - lo) * 0.05, 1.0)  # ≥1pp floor keeps flat series readable
+                fig.update_yaxes(range=[lo - pad, hi + pad])
 
     fig.update_layout(
         template=T["plotly_template"],

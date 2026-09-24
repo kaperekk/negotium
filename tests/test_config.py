@@ -21,6 +21,7 @@ def test_config_save_and_reload(tmp: Path):
         "ticker_rules": ["AMZN.DE=AMZ.DE"],
         "isin_tickers": ["IE00B4L5Y983=IWDA.L"],
         "theme": "light",
+        "log_scale": True,
     }
     config.save(custom)
     loaded = config.load()
@@ -28,6 +29,7 @@ def test_config_save_and_reload(tmp: Path):
     assert loaded["isin_tickers"] == ["IE00B4L5Y983=IWDA.L"]
     assert loaded["ticker_rules"] == ["AMZN.DE=AMZ.DE"]
     assert loaded["theme"] == "light"
+    assert loaded["log_scale"] is True
 
 
 def test_config_is_global(tmp: Path):

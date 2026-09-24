@@ -369,7 +369,8 @@ def render_dashboard(cfg, storage, T, today, data_start_date, base_ccy: str | No
     render_pnl_toggle_section(T, cur_value, pnl, pnl_pct, _fmt_money)
 
     chart_mode = st.session_state.chart_mode
-    render_portfolio_chart(T, base_ccy, dates, values, investeds, bench_by_date, BENCHMARKS, BENCH_COLORS, chart_mode)
+    log_scale = bool(st.session_state.get("log_scale", False))
+    render_portfolio_chart(T, base_ccy, dates, values, investeds, bench_by_date, BENCHMARKS, BENCH_COLORS, chart_mode, log_scale=log_scale)
 
     bench_selected_keys = st.multiselect(
         "What-if benchmarks",

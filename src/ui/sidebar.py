@@ -241,6 +241,17 @@ def render_sidebar(cfg, storage, T, today, data_start_date, detect_currency):
                 st.session_state["theme_fade"] = time.time()
                 st.rerun()
 
+            current_log_scale = st.session_state.get("log_scale", cfg_module.get_log_scale(cfg))
+            log_scale_on = st.checkbox(
+                "Use logarithmic scale in charts",
+                value=current_log_scale,
+                key="log_scale_checkbox",
+            )
+            if log_scale_on != current_log_scale:
+                st.session_state["log_scale"] = log_scale_on
+                cfg_module.save_log_scale(log_scale_on)
+                st.rerun()
+
             st.subheader("Ticker rules")
             rules_text = st.text_area(
                 "Rules",

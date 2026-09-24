@@ -172,6 +172,7 @@ def render_trade_history_dialog(T: dict[str, str], ticker: str, name: str, ccy: 
                     customdata=[r["amount"] for r in div_markers],
                 ))
 
+            is_log = bool(st.session_state.get("log_scale", False))
             fig.update_layout(
                 xaxis_title="Date",
                 yaxis_title="Price",
@@ -194,6 +195,9 @@ def render_trade_history_dialog(T: dict[str, str], ticker: str, name: str, ccy: 
                         activecolor=T["range_active"],
                         font=dict(color=T["text"]),
                     ),
+                ),
+                yaxis=dict(
+                    type="log" if is_log else "linear",
                 ),
             )
             st.plotly_chart(fig, width='stretch', key=f"trade_history_{ticker}", config={"displayModeBar": False})
