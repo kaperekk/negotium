@@ -19,7 +19,7 @@ ROOT_FONT_PX: int = 11
 SIDEBAR_WIDTH_PX: int = 200
 
 # Main content container padding (applied to .block-container).
-CONTAINER_PADDING_TOP_REM: float = 1.0
+CONTAINER_PADDING_TOP_REM: float = 3.0
 CONTAINER_PADDING_LEFT_REM: float = 1.0
 CONTAINER_PADDING_RIGHT_REM: float = 1.0
 
