@@ -103,4 +103,3 @@ Everything is plain human-readable files under `data/` — back up the folder
 and you have backed up the app. `data/{PROJECT}/transactions.jsonl` is the
 source of truth; every other project file is derived and can be rebuilt.
 See [CONFIG.md](CONFIG.md#data-files) for a per-file reference.
-
