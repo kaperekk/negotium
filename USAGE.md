@@ -25,8 +25,8 @@ or strategy (e.g. `XTB`, `Retirement`).
 | **Date range** | Start and end dates for the chart window |
 | **⚙️ Settings** | Theme toggle (dark/light), ticker rules, ISIN mappings |
 | **➕ Add transaction** | Manual single-date transaction entry |
-| **📥 Import statement** | Upload XTB / BOSSA / Custom files (see [IMPORTS.md](IMPORTS.md)) |
-| **🔄 Refresh** | Replay all stored import files, re-download current-year prices, rebuild |
+| **📥 Import statement** | Upload XTB / BOSSA / Custom files; skipped rows and unresolved ISINs are reported under the result (see [IMPORTS.md](IMPORTS.md)) |
+| **🔄 Refresh** | Replay all stored import files, re-download current-year prices, rebuild; import warnings are listed in an expander |
 
 ## Adding a transaction manually
 

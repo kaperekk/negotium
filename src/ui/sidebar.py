@@ -8,54 +8,39 @@ from datetime import date, datetime, timedelta
 import streamlit as st
 
 import config as cfg_module
-from bossa_import import import_bossa
-from currencies import SUPPORTED_CURRENCIES
 from ledger_core import remap_tickers
-from manual_import import import_manual
+from services.import_service import BROKER_EXTENSIONS, ImportService
+from services.importers import summarize_warnings
 from ui.styles import render_project_banner
 from ui.sizes import SIDEBAR_TEXT_AREA_HEIGHT, SIDEBAR_LABEL_FONT_REM
-from xtb_import import import_xtb, fix_avg_prices_from_open_positions
 
 BROKERS = ["XTB", "BOSSA", "Custom"]
-BROKER_CURRENCIES = {"XTB": sorted(SUPPORTED_CURRENCIES), "BOSSA": ["EUR", "PLN", "Many"]}
+BROKER_KEYS = {"XTB": "xtb", "BOSSA": "bossa", "Custom": "custom"}
 
 
-def _run_refresh(storage, today, detect_currency, base_ccy):
+def _render_import_warnings(filename: str, warnings: list[str]) -> None:
+    """Show non-fatal import problems (unresolved ISINs, skipped rows)."""
+    for w in summarize_warnings(warnings):
+        st.warning(f"**{filename}** — {w}")
+
+
+def _run_refresh(storage, today, base_ccy, service: ImportService | None = None):
     """Re-import all broker files and invalidate cached data."""
-    _imports_dir = storage.imports_dir()
-    all_files = []
-    for b in BROKERS:
-        bdir = _imports_dir / b.lower()
-        if not bdir.exists():
-            continue
-        for fpath in sorted(bdir.glob("*.xlsx")):
-            all_files.append(("xtb", fpath))
-        for fpath in sorted(bdir.glob("*.csv")):
-            all_files.append(("bossa", fpath))
-        for fpath in sorted(bdir.glob("*.json")):
-            all_files.append(("custom", fpath))
-
-    total_imported = 0
-    if all_files:
-        bar = st.progress(0, text="Importing…")
-        for idx, (kind, fpath) in enumerate(all_files):
-            ccy = detect_currency(fpath.name)
-            bar.progress(idx / len(all_files), text=f"Importing {fpath.name}…")
-            if kind == "bossa":
-                result = import_bossa(str(fpath), ccy)
-            elif kind == "custom":
-                result = import_manual(str(fpath))
-            else:
-                result = import_xtb(str(fpath), ccy)
-            if result["success"]:
-                total_imported += result["imported"]
-        bar.progress(1.0, text="Done")
+    service = service or ImportService()
+    bar = st.progress(0.0, text="Importing…")
+    try:
+        report = service.run_full_refresh(
+            today=today,
+            base_ccy=base_ccy,
+            progress_cb=lambda frac, text: bar.progress(frac, text=text),
+        )
+    finally:
         bar.empty()
 
-        for kind, fpath in all_files:
-            if kind == "xtb":
-                ccy = detect_currency(fpath.name)
-                fix_avg_prices_from_open_positions(str(fpath), ccy)
+    if report.warnings:
+        with st.expander(f"⚠️ {len(report.warnings)} import warning(s)", expanded=True):
+            for w in report.warnings:
+                st.warning(w)
 
     storage.invalidate_portfolio_from((today - timedelta(days=1)).isoformat())
     st.session_state.pop(f"snapshots_{base_ccy}_D", None)
@@ -64,11 +49,11 @@ def _run_refresh(storage, today, detect_currency, base_ccy):
             st.session_state.pop(k)
     st.session_state["force_refresh"] = True
 
-    return len(all_files), total_imported
+    return report.file_count, report.imported
 
 
 def _should_auto_refresh(storage, project_name, today):
-    """Return True if the last refresh was more than 24 h ago (or never ran)."""
+    """Return True if the last refresh was more than 24 h old (or never ran)."""
     last = storage.get_last_refresh(project_name)
     if not last:
         return True
@@ -76,18 +61,22 @@ def _should_auto_refresh(storage, project_name, today):
         return (today - date.fromisoformat(last)).days >= 1
     except (ValueError, TypeError):
         return True
+
+
 def _add_transaction_to_ledger(tx_date, entries, storage, data_start_date, base_ccy):
     """Write a custom JSON file and import it as a new transaction."""
-    custom_dir = storage.imports_dir() / "custom"
+    service = ImportService()
+    custom_dir = service.context.imports_dir / "custom"
     custom_dir.mkdir(parents=True, exist_ok=True)
     tx_doc = [{"date": tx_date.isoformat(), "entries": entries}]
     tx_path = custom_dir / f"{tx_date.isoformat()}_{datetime.now().strftime('%H%M%S')}.json"
     tx_path.write_text(json.dumps(tx_doc, indent=2), encoding="utf-8")
-    result = import_manual(str(tx_path))
-    if result["success"]:
+    result = service.import_file("custom", tx_path, run_post_import=False)
+    if result.success:
         st.success(f"Added for {tx_date}.")
+        _render_import_warnings(tx_path.name, result.warnings)
     else:
-        st.error(result["error"])
+        st.error(result.error)
     st.session_state["force_refresh"] = True
     for k in list(st.session_state.keys()):
         if k.startswith("snapshots_") or k.startswith("benchmarks_"):
@@ -96,7 +85,8 @@ def _add_transaction_to_ledger(tx_date, entries, storage, data_start_date, base_
     st.rerun()
 
 
-def render_sidebar(cfg, storage, T, today, data_start_date, detect_currency):
+def render_sidebar(cfg, storage, T, today, data_start_date):
+    _import_service = ImportService()
     with st.sidebar:
         project_name = html.escape(storage.get_current_project())
         st.markdown(render_project_banner(project_name, T), unsafe_allow_html=True)
@@ -172,7 +162,9 @@ def render_sidebar(cfg, storage, T, today, data_start_date, detect_currency):
             base_ccy = ccy_options[st.session_state["base_ccy_idx"]]
 
         if _should_auto_refresh(storage, storage.get_current_project(), today):
-            file_count, imported = _run_refresh(storage, today, detect_currency, base_ccy)
+            file_count, imported = _run_refresh(
+                storage, today, base_ccy, service=_import_service
+            )
             storage.set_last_refresh(today.isoformat())
             st.rerun()
 
@@ -271,6 +263,30 @@ def render_sidebar(cfg, storage, T, today, data_start_date, detect_currency):
                 else:
                     st.success("Rules saved!")
                 st.rerun()
+
+            st.subheader("ISIN mappings")
+            st.caption("BOSSA statements identify instruments by ISIN. Map them to Yahoo tickers — one `ISIN=TICKER` per line.")
+            isin_text = st.text_area(
+                "ISIN mappings",
+                value="\n".join(cfg.get("isin_tickers", [])),
+                height=SIDEBAR_TEXT_AREA_HEIGHT,
+                key="isin_tickers_text",
+                label_visibility="collapsed",
+                placeholder="IE00B4L5Y983=IWDA.AS\nIE000I8KRLL9=SEMI.AS",
+            )
+            if st.button("Save ISIN mappings"):
+                raw_lines = [line.strip() for line in isin_text.strip().splitlines() if line.strip()]
+                bad = [ln for ln in raw_lines if "=" not in ln or not ln.split("=", 1)[0].strip()]
+                if bad:
+                    st.error("Each line must look like `ISIN=TICKER` — invalid: " + ", ".join(bad[:3]))
+                else:
+                    cfg["isin_tickers"] = raw_lines
+                    cfg_module.save(cfg)
+                    st.success(
+                        f"Saved {len(raw_lines)} mapping(s). Re-import your BOSSA statement "
+                        "(🔄 Refresh replays the stored file) to pick them up."
+                    )
+                    st.rerun()
 
             st.subheader("Project")
             rename_val = st.text_input("Rename project to", value=storage.get_current_project() or "", key="rename_proj_input")
@@ -371,13 +387,16 @@ def render_sidebar(cfg, storage, T, today, data_start_date, detect_currency):
             _imports.mkdir(parents=True, exist_ok=True)
 
             broker = st.selectbox("Broker", BROKERS, key="broker_select")
-            broker_dir = _imports / broker.lower()
+            broker_dir = _imports / BROKER_KEYS[broker]
             broker_dir.mkdir(parents=True, exist_ok=True)
 
             if broker == "XTB":
                 st.info("ℹ️ Name your file starting with the currency code, e.g. `EUR_history.xlsx` — the currency is auto-detected from the prefix.")
+            elif broker == "BOSSA":
+                st.info("ℹ️ The currency is read per row from the statement's `waluta` column — nothing to set here. Unmapped ISINs are listed under ⚙️ Settings → ISIN mappings.")
 
-            file_types = ["csv"] if broker == "BOSSA" else ["json"] if broker == "Custom" else ["xlsx"]
+            broker_key = BROKER_KEYS[broker]
+            file_types = [BROKER_EXTENSIONS.get(broker_key, "csv")]
             uploaded_files = st.file_uploader(
                 f"Upload {broker} files",
                 type=file_types,
@@ -390,30 +409,16 @@ def render_sidebar(cfg, storage, T, today, data_start_date, detect_currency):
                 for uf in uploaded_files:
                     dest = broker_dir / uf.name
                     dest.write_bytes(uf.getvalue())
-                    detected = detect_currency(uf.name)
-                    if broker == "BOSSA":
-                        ccy = "Many"
-                        with st.spinner(f"Importing {uf.name}…"):
-                            result = import_bossa(str(dest), ccy)
-                    elif broker == "Custom":
-                        with st.spinner(f"Importing {uf.name}…"):
-                            result = import_manual(str(dest))
-                    else:
-                        ccy_options = BROKER_CURRENCIES.get(broker, sorted(SUPPORTED_CURRENCIES))
-                        if detected not in ccy_options:
-                            detected = ccy_options[0]
-                        with st.spinner(f"Importing {uf.name}…"):
-                            result = import_xtb(str(dest), detected)
-                        fix_avg_prices_from_open_positions(str(dest), detected)
-                    if result["success"]:
-                        n = result["imported"]
-                        s = result["skipped"]
-                        msg = f"**{uf.name}** — {n} imported"
-                        if s:
-                            msg += f", {s} skipped (duplicates)"
+                    with st.spinner(f"Importing {uf.name}…"):
+                        result = _import_service.import_file(broker_key, dest)
+                    if result.success:
+                        msg = f"**{uf.name}** — {result.imported} imported"
+                        if result.skipped:
+                            msg += f", {result.skipped} skipped (duplicates)"
                         st.success(msg)
+                        _render_import_warnings(uf.name, result.warnings)
                     else:
-                        st.error(f"**{uf.name}** — {result['error']}")
+                        st.error(f"**{uf.name}** — {result.error}")
                 st.session_state["force_refresh"] = True
                 st.session_state.pop(f"{_proj}_{broker}_upload", None)
                 for k in list(st.session_state.keys()):
@@ -430,7 +435,9 @@ def render_sidebar(cfg, storage, T, today, data_start_date, detect_currency):
                 st.caption("No files uploaded yet.")
 
         if st.button("📈  Refresh data", width="stretch"):
-            file_count, total_imported = _run_refresh(storage, today, detect_currency, base_ccy)
+            file_count, total_imported = _run_refresh(
+                storage, today, base_ccy, service=_import_service
+            )
             if file_count:
                 st.success(f"Refreshed from {file_count} files — {total_imported} transactions imported.")
             else:

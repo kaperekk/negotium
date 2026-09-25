@@ -15,7 +15,6 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import ledger_core
 from ui.dashboard import render_dashboard
-from ui.helpers import detect_currency
 from ui.runtime import init_runtime
 from ui.sidebar import render_sidebar
 from ui.styles import (
@@ -59,5 +58,5 @@ if _fade_ts is not None and (time.time() - _fade_ts) < 3:
     st.markdown(build_theme_veil(T), unsafe_allow_html=True)
 
 data_start_date = ledger_core.first_transaction_date() or today
-base_ccy = render_sidebar(cfg, storage, T, today, data_start_date, detect_currency)
+base_ccy = render_sidebar(cfg, storage, T, today, data_start_date)
 render_dashboard(cfg, storage, T, today, data_start_date, base_ccy)

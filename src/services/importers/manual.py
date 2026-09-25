@@ -4,9 +4,14 @@ manual.py — Manual JSON transaction statement importer implementation.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable
 
-from services.importers.base import BaseBrokerImporter, ImportResult, ValidationResult
+from services.importers.base import (
+    BaseBrokerImporter,
+    ImportResult,
+    ParseResult,
+    ValidationResult,
+)
 import manual_import
 
 
@@ -22,8 +27,8 @@ class ManualImporter(BaseBrokerImporter):
         file_path: str | Path,
         currency: str = "",
         progress_cb: Callable[[float, str], None] | None = None,
-    ) -> list[dict]:
-        return manual_import.parse_manual_json(file_path)
+    ) -> ParseResult:
+        return ParseResult(transactions=manual_import.parse_manual_json(file_path))
 
     def import_file(
         self,
@@ -37,4 +42,5 @@ class ManualImporter(BaseBrokerImporter):
             imported=int(res.get("imported", 0)),
             skipped=int(res.get("skipped", 0)),
             error=str(res.get("error", "")),
+            warnings=list(res.get("warnings", [])),
         )

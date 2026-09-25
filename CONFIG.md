@@ -113,10 +113,14 @@ IE00B4L5Y983=IWDA.AS
 US5949181085=MSFT.US
 ```
 
+Edit them under **⚙️ Settings → ISIN mappings** in the sidebar, or by hand in
+`data/config.json` under `"isin_tickers"`.
+
 - When the BOSSA importer meets an ISIN it looks it up here and prices the
   position with the mapped ticker.
-- ISINs without a mapping are reported as unresolved and skipped (the cash
-  leg still imports) until you add a mapping and re-import via 🔄 Refresh.
+- ISINs without a mapping are reported by name and ISIN, and the **whole trade**
+  (share leg *and* cash leg) is skipped — a buy without its cash leg would
+  unbalance the ledger. Add a mapping and re-import via 🔄 Refresh.
 
 ## Supported currencies & exchange suffixes
 
@@ -148,7 +152,7 @@ from its ticker suffix; unknown suffixes fall back to USD (with a warning):
 
 FX rates come from Yahoo Finance (`{CCY}PLN=X` pairs plus `EURUSD=X`); MXN and
 HUF are triangulated through USD (Yahoo has no direct `HUFPLN=X` pair).
-Details: [ARCHITECTURE.md](ARCHITECTURE.md#7-multi-currency-logic).
+Details: [ARCHITECTURE.md](ARCHITECTURE.md#8-multi-currency-logic).
 
 ## Project registry — `data/projects.json`
 

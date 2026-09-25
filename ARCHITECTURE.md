@@ -15,12 +15,13 @@ Part of the Negotium docs: [README](README.md) · [USAGE](USAGE.md) · [IMPORTS]
 3. [File formats](#3-file-formats)
 4. [Data flow — startup](#4-data-flow--startup)
 5. [Data flow — add a transaction](#5-data-flow--add-a-transaction)
-6. [Data flow — build portfolio](#6-data-flow--build-portfolio)
-7. [Multi-currency logic](#7-multi-currency-logic)
-8. [Caching strategy](#8-caching-strategy)
-9. [Performance decisions](#9-performance-decisions)
-10. [Dependency map](#10-dependency-map)
-11. [Benchmark numbers](#11-benchmark-numbers)
+6. [Data flow — import a statement](#6-data-flow--import-a-statement)
+7. [Data flow — build portfolio](#7-data-flow--build-portfolio)
+8. [Multi-currency logic](#8-multi-currency-logic)
+9. [Caching strategy](#9-caching-strategy)
+10. [Performance decisions](#10-performance-decisions)
+11. [Dependency map](#11-dependency-map)
+12. [Benchmark numbers](#12-benchmark-numbers)
 
 ---
 
@@ -47,15 +48,14 @@ src/
 │   ├── ledger_service.py    LedgerService (replaying, mutation, avg_price, metrics).
 │   ├── portfolio_service.py PortfolioService (O(days+tx) portfolio forward pass engine).
 │   ├── import_service.py    ImportService (orchestrator for multi-broker batch imports).
-│   └── importers/           BaseBrokerImporter, XTB, BOSSA, and Custom importers.
-├── config.py          Read / write data/config.json (single global config). Theme helpers.
+│   └── importers/           BaseBrokerImporter, XTB, BOSSA, and Custom importers.├── config.py          Read / write data/config.json (single global config). Theme helpers.
 ├── ledger_core.py     Façade for LedgerService (backward compatibility with legacy scripts).
 ├── portfolio_core.py  Façade for PortfolioService (backward compatibility with legacy scripts).
 ├── ticker_data.py     Façade for MarketDataProvider and downloader helpers.
 ├── ticker_translate.py  Rule-based ticker symbol translation.
 ├── isin_resolve.py    ISIN → ticker resolution from config mappings.
-├── bossa_import.py    BOSSA "Historia finansowa" CSV importer.
-├── xtb_import.py      XTB Excel (Cash Operations sheet) importer.
+├── bossa_import.py    BOSSA "Historia finansowa" CSV importer (format parsing).
+├── xtb_import.py      XTB Excel (Cash Operations sheet) importer (format parsing).
 ├── manual_import.py   Custom JSON importer + file validation.
 ├── fixtures.py        Test helpers: temp roots, fake price data.
 └── ui/                Streamlit view layer — one module per concern:
@@ -215,7 +215,7 @@ avoid replaying the whole ledger every time the UI needs current holdings.
 - Historical years are written once and never re-fetched; the current year is
   re-downloaded on every startup / refresh so the latest closes are picked up.
 - FX pairs are stored under their internal names (`USDPLN`, `EURPLN`, …) —
-  see section 7 for how they map to Yahoo Finance symbols.
+  see section 8 for how they map to Yahoo Finance symbols.
 
 ### portfolio.jsonl — computed daily snapshots (derived)
 
@@ -298,7 +298,7 @@ start.sh
           ├─ ledger_core.get_all_tickers()    scan ledger → tickers + FX pairs
           ├─ ticker_data.ensure_batch()       ONE batched Yahoo download for
           │                                   every missing (ticker, year) slab
-          ├─ portfolio.build_portfolio()      resume from last snapshot (§6)
+          ├─ portfolio.build_portfolio()      resume from last snapshot (§7)
           ├─ benchmark series compute / cache
           └─ render: metrics, chart, holdings, allocation, drawdown, watchlist
 ```
@@ -348,7 +348,42 @@ from the invalidated date onward.
 
 ---
 
-## 6. Data flow — build portfolio
+## 6. Data flow — import a statement
+
+Both the **📥 Import statement** uploader and the **🔄 Refresh** button go
+through the same service, so there is one import path, not two:
+
+```
+ui.sidebar  ──►  services.import_service.ImportService
+                       │
+                       ├─ importer_for(broker)          BROKER_IMPORTERS registry
+                       ├─ currency_for(broker, path)   importer.file_currency(name)
+                       │                               XTB: filename prefix → EUR
+                       │                               BOSSA: "" (currency is per row)
+                       ├─ importer.validate/parse/import_file
+                       │     └─ bossa_import / xtb_import / manual_import
+                       │           └─ ParseResult(transactions, unresolved, warnings)
+                       ├─ importers.base.ingest_transactions()
+                       │     └─ ledger_core.existing_entry_counts()  multiset dedup
+                       │        ledger_core.add_transaction()        per day
+                       ├─ importer.post_import()      XTB avg-price fixes, after all files
+                       └─ storage.invalidate_portfolio_from(yesterday)
+```
+
+Two rules the import path enforces:
+
+- **A broker's importer owns its own currency.** Statements that carry the
+  currency per row return an empty string from `file_currency()`, so a
+  filename can never invent a cash ticker (`MANY`, `USD`) in the ledger.
+- **Non-fatal problems travel as `warnings`, not as silent drops.**
+  `ImportResult.warnings` carries unresolved ISINs, unreadable dates/amounts,
+  blank currencies, unrecognised operation titles and unpaired FX legs. The
+  sidebar renders them under the import result, capped at 10 with a count of
+  the remainder, and they are always written to `data/{PROJECT}/import.log`.
+
+---
+
+## 7. Data flow — build portfolio
 
 The most algorithmically significant function. Replaying all transactions for
 every day would be O(days × transactions); a single forward pass gives
@@ -405,7 +440,7 @@ Each `(ticker, year)` slab is loaded from disk exactly once per
 
 ---
 
-## 7. Multi-currency logic
+## 8. Multi-currency logic
 
 ### Ticker currency detection
 
@@ -485,7 +520,7 @@ reflects the rate at the time of the transfer.
 
 ---
 
-## 8. Caching strategy
+## 9. Caching strategy
 
 Six distinct caches, each with different scope and lifetime:
 
@@ -523,7 +558,7 @@ triggers a recompute.
 
 ---
 
-## 9. Performance decisions
+## 10. Performance decisions
 
 ### Algorithm: forward pass over time (O(days + tx), not O(days × tx))
 
@@ -593,7 +628,7 @@ mid-invalidation cannot corrupt the file.
 
 ---
 
-## 10. Dependency map
+## 11. Dependency map
 
 ```
 app.py
@@ -621,7 +656,7 @@ requests.
 
 ---
 
-## 11. Benchmark numbers
+## 12. Benchmark numbers
 
 Measured on Python 3.12 with orjson, using a synthetic portfolio of 2 stock
 tickers (AAPL, MSFT), FX pairs (USDPLN, EURPLN, EURUSD), and 150 transactions

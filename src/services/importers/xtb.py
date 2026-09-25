@@ -4,9 +4,15 @@ xtb.py — XTB broker statement importer implementation.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable
 
-from services.importers.base import BaseBrokerImporter, ImportResult, ValidationResult
+from currencies import SUPPORTED_CURRENCIES
+from services.importers.base import (
+    BaseBrokerImporter,
+    ImportResult,
+    ParseResult,
+    ValidationResult,
+)
 import xtb_import
 
 
@@ -22,8 +28,8 @@ class XtbImporter(BaseBrokerImporter):
         file_path: str | Path,
         currency: str,
         progress_cb: Callable[[float, str], None] | None = None,
-    ) -> list[dict]:
-        return xtb_import.parse_xtb_excel(file_path, currency)
+    ) -> ParseResult:
+        return ParseResult(transactions=xtb_import.parse_xtb_excel(file_path, currency))
 
     def import_file(
         self,
@@ -37,8 +43,14 @@ class XtbImporter(BaseBrokerImporter):
             imported=int(res.get("imported", 0)),
             skipped=int(res.get("skipped", 0)),
             error=str(res.get("error", "")),
+            warnings=list(res.get("warnings", [])),
         )
 
     def post_import(self, file_path: str | Path, currency: str) -> None:
         """Run post-import actions such as updating average cost basis from Open Positions."""
         xtb_import.fix_avg_prices_from_open_positions(file_path, currency)
+
+    def file_currency(self, filename: str) -> str:
+        """XTB exports one account per file, named after its currency (e.g. `EUR_history.xlsx`)."""
+        prefix = Path(filename).name.strip()[:3].upper()
+        return prefix if prefix in SUPPORTED_CURRENCIES else "EUR"

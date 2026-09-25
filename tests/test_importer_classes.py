@@ -36,6 +36,17 @@ def test_validation_and_import_result_conversions():
     assert res_clean.to_dict() == {"success": True, "imported": 3, "skipped": 0}
 
 
+def test_import_result_summarises_warnings():
+    """Warnings ride along with a successful result and are capped for display."""
+    res = ImportResult(success=True, imported=1, warnings=[f"w{i}" for i in range(25)])
+    d = res.to_dict()
+    assert len(d["warnings"]) == 11  # 10 shown + 1 summary line
+    assert "15 more warnings" in d["warnings"][-1]
+
+    assert ImportResult(success=True, imported=1, warnings=["only one"]).to_dict()["warnings"] == ["only one"]
+    assert "warnings" not in ImportResult(success=True, imported=1).to_dict()
+
+
 def test_ingest_transactions_with_transaction_objects(tmp: Path):
     """ingest_transactions handles Transaction models directly."""
     from ledger_core import get_all_transactions
@@ -87,11 +98,27 @@ def test_xtb_importer_class(tmp: Path):
     assert val.valid is True
 
     parsed = importer.parse(xlsx_path, "USD")
-    assert len(parsed) == 1
+    assert len(parsed.transactions) == 1
 
     res = importer.import_file(xlsx_path, "USD")
     assert res.success is True
     assert res.imported == 1
+
+
+def test_xtb_file_currency_from_prefix(tmp: Path):
+    """XTB resolves the account currency from the filename prefix, defaulting to EUR."""
+    importer = XtbImporter()
+    assert importer.file_currency("EUR_history.xlsx") == "EUR"
+    assert importer.file_currency("PLN_history.xlsx") == "PLN"
+    assert importer.file_currency("2026-09-25_historia.xlsx") == "EUR"
+
+
+def test_bossa_file_currency_is_never_guessed(tmp: Path):
+    """BOSSA reads the currency per row, so no filename prefix may become a ticker."""
+    importer = BossaImporter()
+    assert importer.file_currency("PLN_bossa.csv") == ""
+    assert importer.file_currency("EUR_bossa.csv") == ""
+    assert importer.file_currency("historia_finansowa.csv") == ""
 
 
 def test_bossa_importer_class(tmp: Path):
@@ -110,11 +137,34 @@ def test_bossa_importer_class(tmp: Path):
     assert val.valid is True
 
     parsed = importer.parse(csv_path, "PLN")
-    assert len(parsed) == 1
+    assert len(parsed.transactions) == 1
 
     res = importer.import_file(csv_path, "PLN")
     assert res.success is True
     assert res.imported == 1
+
+
+def test_bossa_importer_keeps_unresolved_isins(tmp: Path):
+    """The polymorphic path must not drop the unresolved-ISIN report."""
+    importer = BossaImporter()
+    csv_path = tmp / "bossa_unresolved.csv"
+    csv_path.write_text(
+        "data;tytuł operacji;szczegóły;kwota;waluta\n"
+        "2026-02-01;Rozliczenie transakcji kupna:;"
+        "Unknown Fund (DE0005793303) 10 x 100.00 PLN nr 1;-1000,00;PLN\n",
+        encoding="utf-8",
+    )
+
+    parsed = importer.parse(csv_path)
+    assert parsed.transactions == []
+    assert "DE0005793303" in parsed.unresolved
+    assert any("DE0005793303" in w for w in parsed.warnings)
+
+    res = importer.import_file(csv_path)
+    assert res.success is True
+    assert res.imported == 0
+    assert any("DE0005793303" in w for w in res.warnings)
+    assert any("DE0005793303" in w for w in res.to_dict()["warnings"])
 
 
 def test_manual_importer_class(tmp: Path):
@@ -137,7 +187,7 @@ def test_manual_importer_class(tmp: Path):
     assert val.valid is True
 
     parsed = importer.parse(json_path)
-    assert len(parsed) == 1
+    assert len(parsed.transactions) == 1
 
     res = importer.import_file(json_path)
     assert res.success is True
@@ -180,11 +230,92 @@ def test_import_service_orchestration(tmp: Path):
     wb.close()
 
     service = ImportService(context=ctx)
-    file_count, imported_count = service.run_full_refresh(
-        today=date(2026, 3, 1),
-        base_ccy="PLN",
-        detect_currency_fn=lambda name: "EUR" if "EUR" in name else "PLN",
+    report = service.run_full_refresh(today=date(2026, 3, 1), base_ccy="PLN")
+
+    assert report.file_count == 3
+    assert report.imported == 3
+    assert report.warnings == []
+
+
+def test_import_service_collects_warnings(tmp: Path):
+    """Full refresh surfaces per-file warnings instead of swallowing them."""
+    from storage.context import ProjectContext
+
+    ctx = ProjectContext(name="warn_proj", data_root=tmp)
+    ctx.ensure_directories()
+    bossa_dir = ctx.imports_dir / "bossa"
+    bossa_dir.mkdir(parents=True, exist_ok=True)
+    (bossa_dir / "historia.csv").write_text(
+        "data;tytuł operacji;szczegóły;kwota;waluta\n"
+        "2026-01-02;Rozliczenie transakcji kupna:;"
+        "Unknown Fund (DE0005793303) 10 x 100.00 PLN nr 1;-1000,00;PLN\n",
+        encoding="utf-8",
     )
 
-    assert file_count == 3
-    assert imported_count == 3
+    service = ImportService(context=ctx)
+    report = service.run_full_refresh(today=date(2026, 3, 1), base_ccy="PLN")
+
+    assert report.file_count == 1
+    assert report.imported == 0
+    assert any("historia.csv" in w and "DE0005793303" in w for w in report.warnings)
+
+
+def test_import_service_single_file_and_dispatch(tmp: Path):
+    """import_file routes one file through the registry and resolves its own currency."""
+    from storage.context import ProjectContext
+
+    ctx = ProjectContext(name="single_proj", data_root=tmp)
+    ctx.ensure_directories()
+    bossa_dir = ctx.imports_dir / "bossa"
+    bossa_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = bossa_dir / "USD_history.csv"
+    csv_path.write_text(
+        "data;tytuł operacji;szczegóły;kwota;waluta\n"
+        "2026-02-01;Przelew do DM BOŚ;;3000.00;USD\n",
+        encoding="utf-8",
+    )
+
+    service = ImportService(context=ctx)
+    assert service.broker_for_filename("anything.csv") == "bossa"
+    assert service.broker_for_filename("anything.xlsx") == "xtb"
+    assert service.broker_for_filename("anything.txt") is None
+    assert service.currency_for("bossa", csv_path) == ""
+    assert service.validate_file("bossa", csv_path).valid is True
+
+    result = service.import_file("bossa", csv_path)
+    assert result.success is True
+    assert result.imported == 1
+
+    with pytest.raises(ValueError):
+        service.importer_for("nope")
+
+
+def test_ingest_warns_on_partially_duplicate_transaction(tmp: Path):
+    """A trade whose cash leg is already on file keeps the multiset invariant."""
+    from ledger_core import get_all_transactions
+
+    # First import lands both legs.
+    tx = Transaction(
+        date="2026-04-01",
+        entries=[
+            LedgerEntry(ticker="IWDA.AS", amount=10.0),
+            LedgerEntry(ticker="PLN", amount=-1500.0),
+        ],
+    )
+    assert ingest_transactions([tx]).imported == 1
+
+    # A second statement repeats the cash leg under a different quantity.
+    tx2 = Transaction(
+        date="2026-04-01",
+        entries=[
+            LedgerEntry(ticker="IWDA.AS", amount=5.0),
+            LedgerEntry(ticker="PLN", amount=-1500.0),
+        ],
+    )
+    result = ingest_transactions([tx2])
+    assert result.imported == 1
+
+    entries = get_all_transactions()[0]["entries"]
+    assert entries.count({"ticker": "IWDA.AS", "amount": 10.0}) == 1
+    assert entries.count({"ticker": "IWDA.AS", "amount": 5.0}) == 1
+    assert entries.count({"ticker": "PLN", "amount": -1500.0}) == 1

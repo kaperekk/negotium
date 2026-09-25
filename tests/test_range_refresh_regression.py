@@ -39,7 +39,6 @@ cfg_module.GLOBAL_CONFIG_PATH = TMP / "data" / "config.json"
 
 import ledger_core
 from ui.dashboard import render_dashboard
-from ui.helpers import detect_currency
 from ui.runtime import init_runtime
 from ui.sidebar import render_sidebar
 from ui.styles import build_app_styles
@@ -58,7 +57,7 @@ st.set_page_config(page_title="Negotium", page_icon="\\u26a1", layout="wide")
 cfg, storage, _theme_name, T, today = init_runtime()
 st.markdown(build_app_styles(T), unsafe_allow_html=True)
 data_start_date = ledger_core.first_transaction_date() or today
-base_ccy = render_sidebar(cfg, storage, T, today, data_start_date, detect_currency)
+base_ccy = render_sidebar(cfg, storage, T, today, data_start_date)
 render_dashboard(cfg, storage, T, today, data_start_date, base_ccy)
 '''
 
