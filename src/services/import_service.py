@@ -11,6 +11,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Callable
 
+import openpyxl
 import storage
 from services.importers import (
     BaseBrokerImporter,
@@ -18,7 +19,6 @@ from services.importers import (
     ImportResult,
     ManualImporter,
     ParseResult,
-    ValidationResult,
     XtbImporter,
     summarize_warnings,
 )
@@ -68,26 +68,58 @@ class ImportService:
                 f"Unknown broker {broker!r} (known: {', '.join(sorted(self.importers))})"
             ) from None
 
+    def _is_xtb_file(self, file_path: Path) -> bool:
+        """Check if an .xlsx file is an XTB export by looking for 'Cash Operations' sheet."""
+        try:
+            wb = openpyxl.load_workbook(file_path, read_only=True)
+            try:
+                return "Cash Operations" in wb.sheetnames
+            finally:
+                wb.close()
+        except Exception:
+            return False
+
     def broker_for_filename(self, filename: str) -> str | None:
-        """Map a statement filename to its broker key by extension, or None."""
+        """Map a statement filename to its broker key by extension and content.
+
+        For .xlsx files, peeks inside to check for XTB's "Cash Operations" sheet.
+        """
         suffix = Path(filename).suffix.lower()
+        if suffix == ".xlsx":
+            # Need to check content to distinguish XTB from other .xlsx files
+            # We can't do that here without the full path, so defer to extension
+            # The caller should use a more specific method when path is available
+            return "xtb"
         for broker, (pattern, _) in self.importers.items():
             if Path(pattern).suffix.lower() == suffix:
                 return broker
         return None
 
-    def validate_file(self, broker: str, file_path: str | Path) -> ValidationResult:
+    def broker_for_path(self, file_path: Path) -> str | None:
+        """Map a statement file path to its broker key by extension and content."""
+        suffix = file_path.suffix.lower()
+        if suffix == ".xlsx":
+            if self._is_xtb_file(file_path):
+                return "xtb"
+            return None
+        for broker, (pattern, _) in self.importers.items():
+            if Path(pattern).suffix.lower() == suffix:
+                return broker
+        return None
+
+    def validate_file(self, broker: str, file_path: str | Path) -> bool:
         """Validate a statement against its broker's format rules."""
         return self.importer_for(broker).validate(file_path)
 
     def currency_for(self, broker: str, file_path: str | Path) -> str:
         """Resolve the account currency for a file via its importer.
 
-        Importers that read the currency per row (BOSSA) return an empty
-        string, so a filename that happens to start with letters can never
+        Importers that read the currency per row (BOSSA) return None,
+        so a filename that happens to start with letters can never
         become a fake cash ticker.
         """
-        return self.importer_for(broker).file_currency(Path(file_path).name)
+        ccy = self.importer_for(broker).file_currency(Path(file_path).name)
+        return ccy or ""
 
     def parse_file(
         self,

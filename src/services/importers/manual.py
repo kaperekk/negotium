@@ -10,7 +10,6 @@ from services.importers.base import (
     BaseBrokerImporter,
     ImportResult,
     ParseResult,
-    ValidationResult,
 )
 import manual_import
 
@@ -18,14 +17,14 @@ import manual_import
 class ManualImporter(BaseBrokerImporter):
     """Manual/custom JSON transaction importer."""
 
-    def validate(self, file_path: str | Path) -> ValidationResult:
-        valid, msg = manual_import.validate_manual_file(file_path)
-        return ValidationResult(valid=valid, message=msg)
+    def validate(self, file_path: str | Path) -> bool:
+        valid, _ = manual_import.validate_manual_file(file_path)
+        return valid
 
     def parse(
         self,
         file_path: str | Path,
-        currency: str = "",
+        currency: str | None = None,
         progress_cb: Callable[[float, str], None] | None = None,
     ) -> ParseResult:
         return ParseResult(transactions=manual_import.parse_manual_json(file_path))
@@ -33,10 +32,13 @@ class ManualImporter(BaseBrokerImporter):
     def import_file(
         self,
         file_path: str | Path,
-        currency: str = "",
+        currency: str | None = None,
         progress_cb: Callable[[float, str], None] | None = None,
     ) -> ImportResult:
-        res = manual_import.import_manual(file_path)
+        try:
+            res = manual_import.import_manual(file_path)
+        except Exception as e:
+            return ImportResult(success=False, error=str(e))
         return ImportResult(
             success=bool(res.get("success", False)),
             imported=int(res.get("imported", 0)),
@@ -44,3 +46,7 @@ class ManualImporter(BaseBrokerImporter):
             error=str(res.get("error", "")),
             warnings=list(res.get("warnings", [])),
         )
+
+    def file_currency(self, filename: str) -> str | None:
+        """Manual JSON files don't carry a currency hint."""
+        return None

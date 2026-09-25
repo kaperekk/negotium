@@ -17,17 +17,14 @@ from services.importers import (
     BossaImporter,
     ImportResult,
     ManualImporter,
-    ValidationResult,
+    ParseResult,
     XtbImporter,
     ingest_transactions,
 )
 
 
-def test_validation_and_import_result_conversions():
-    """ValidationResult and ImportResult properly convert to expected types."""
-    v = ValidationResult(valid=True, message="OK")
-    assert v.to_tuple() == (True, "OK")
-
+def test_import_result_conversions():
+    """ImportResult properly converts to expected types."""
     res = ImportResult(success=True, imported=5, skipped=2, error="warn")
     d = res.to_dict()
     assert d == {"success": True, "imported": 5, "skipped": 2, "error": "warn"}
@@ -95,7 +92,7 @@ def test_xtb_importer_class(tmp: Path):
     wb.close()
 
     val = importer.validate(xlsx_path)
-    assert val.valid is True
+    assert val is True
 
     parsed = importer.parse(xlsx_path, "USD")
     assert len(parsed.transactions) == 1
@@ -111,14 +108,15 @@ def test_xtb_file_currency_from_prefix(tmp: Path):
     assert importer.file_currency("EUR_history.xlsx") == "EUR"
     assert importer.file_currency("PLN_history.xlsx") == "PLN"
     assert importer.file_currency("2026-09-25_historia.xlsx") == "EUR"
+    assert importer.file_currency("random.xlsx") == "EUR"
 
 
 def test_bossa_file_currency_is_never_guessed(tmp: Path):
     """BOSSA reads the currency per row, so no filename prefix may become a ticker."""
     importer = BossaImporter()
-    assert importer.file_currency("PLN_bossa.csv") == ""
-    assert importer.file_currency("EUR_bossa.csv") == ""
-    assert importer.file_currency("historia_finansowa.csv") == ""
+    assert importer.file_currency("PLN_bossa.csv") is None
+    assert importer.file_currency("EUR_bossa.csv") is None
+    assert importer.file_currency("historia_finansowa.csv") is None
 
 
 def test_bossa_importer_class(tmp: Path):
@@ -134,7 +132,7 @@ def test_bossa_importer_class(tmp: Path):
     )
 
     val = importer.validate(csv_path)
-    assert val.valid is True
+    assert val is True
 
     parsed = importer.parse(csv_path, "PLN")
     assert len(parsed.transactions) == 1
@@ -184,7 +182,7 @@ def test_manual_importer_class(tmp: Path):
     json_path.write_text(json.dumps(data), encoding="utf-8")
 
     val = importer.validate(json_path)
-    assert val.valid is True
+    assert val is True
 
     parsed = importer.parse(json_path)
     assert len(parsed.transactions) == 1
@@ -280,7 +278,7 @@ def test_import_service_single_file_and_dispatch(tmp: Path):
     assert service.broker_for_filename("anything.xlsx") == "xtb"
     assert service.broker_for_filename("anything.txt") is None
     assert service.currency_for("bossa", csv_path) == ""
-    assert service.validate_file("bossa", csv_path).valid is True
+    assert service.validate_file("bossa", csv_path) is True
 
     result = service.import_file("bossa", csv_path)
     assert result.success is True
@@ -319,3 +317,71 @@ def test_ingest_warns_on_partially_duplicate_transaction(tmp: Path):
     assert entries.count({"ticker": "IWDA.AS", "amount": 10.0}) == 1
     assert entries.count({"ticker": "IWDA.AS", "amount": 5.0}) == 1
     assert entries.count({"ticker": "PLN", "amount": -1500.0}) == 1
+
+
+def test_import_file_error_handling(tmp: Path, monkeypatch):
+    """import_file wraps exceptions from legacy modules and returns failed ImportResult."""
+    import bossa_import
+
+    # Make the legacy module raise an exception
+    def failing_import(*args, **kwargs):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(bossa_import, "import_bossa", failing_import)
+
+    importer = BossaImporter()
+    res = importer.import_file(tmp / "dummy.csv")
+    assert res.success is False
+    assert "disk full" in res.error
+
+
+def test_broker_for_path_peeks_xtb_content(tmp: Path):
+    """broker_for_path checks sheet name for .xlsx files, not just extension."""
+    from storage.context import ProjectContext
+
+    ctx = ProjectContext(name="peek_test", data_root=tmp)
+    ctx.ensure_directories()
+
+    # Create a valid XTB file
+    wb = openpyxl.Workbook()
+    ws = wb.create_sheet("Cash Operations")
+    ws.append(["Type", "Ticker", "Instrument", "Time", "Amount", "ID", "Comment"])
+    ws.append(["Deposit", "USD", "", "2026-01-10 10:00:00", 1000.0, 1, ""])
+    del wb["Sheet"]
+    xtb_path = tmp / "valid_xtb.xlsx"
+    wb.save(xtb_path)
+    wb.close()
+
+    # Create a non-XTB .xlsx file
+    wb2 = openpyxl.Workbook()
+    ws2 = wb2.create_sheet("Some Other Sheet")
+    ws2.append(["Col1", "Col2"])
+    ws2.append(["a", "b"])
+    del wb2["Sheet"]
+    other_path = tmp / "not_xtb.xlsx"
+    wb2.save(other_path)
+    wb2.close()
+
+    service = ImportService(context=ctx)
+    assert service.broker_for_path(xtb_path) == "xtb"
+    assert service.broker_for_path(other_path) is None
+
+
+def test_currency_for_returns_empty_for_none(tmp: Path):
+    """currency_for converts None from file_currency to empty string."""
+    from storage.context import ProjectContext
+
+    ctx = ProjectContext(name="ccy_test", data_root=tmp)
+    ctx.ensure_directories()
+    bossa_dir = ctx.imports_dir / "bossa"
+    bossa_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = bossa_dir / "test.csv"
+    csv_path.write_text(
+        "data;tytuł operacji;szczegóły;kwota;waluta\n"
+        "2026-02-01;Przelew do DM BOŚ;;3000.00;PLN\n",
+        encoding="utf-8",
+    )
+
+    service = ImportService(context=ctx)
+    # BOSSA returns None from file_currency
+    assert service.currency_for("bossa", csv_path) == ""

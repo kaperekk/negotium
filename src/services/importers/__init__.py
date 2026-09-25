@@ -7,7 +7,6 @@ from services.importers.base import (
     BaseBrokerImporter,
     ImportResult,
     ParseResult,
-    ValidationResult,
     ingest_transactions,
     summarize_warnings,
 )
@@ -17,7 +16,6 @@ from services.importers.xtb import XtbImporter
 
 __all__ = [
     "BaseBrokerImporter",
-    "ValidationResult",
     "ParseResult",
     "ImportResult",
     "ingest_transactions",

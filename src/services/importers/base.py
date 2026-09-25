@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from domain.models import LedgerEntry, Transaction
+from ledger_core import add_transaction, existing_entry_counts
 
 log = logging.getLogger(__name__)
 
@@ -24,15 +25,6 @@ def summarize_warnings(warnings: list[str], limit: int = MAX_REPORTED_WARNINGS) 
         return list(warnings)
     hidden = len(warnings) - limit
     return [*warnings[:limit], f"… and {hidden} more warning{'s' if hidden != 1 else ''}"]
-
-
-@dataclass(slots=True)
-class ValidationResult:
-    valid: bool
-    message: str = ""
-
-    def to_tuple(self) -> tuple[bool, str]:
-        return self.valid, self.message
 
 
 @dataclass(slots=True)
@@ -80,8 +72,6 @@ def ingest_transactions(transactions: list[Transaction | dict]) -> ImportResult:
     Takes a list of Transaction models (or transaction dicts), checks against existing
     entries in the active project ledger, and inserts non-duplicate transactions.
     """
-    from ledger_core import add_transaction, existing_entry_counts
-
     existing = existing_entry_counts()
     imported = 0
     skipped = 0
@@ -125,7 +115,7 @@ class BaseBrokerImporter(ABC):
     """Abstract interface for all broker transaction statement importers."""
 
     @abstractmethod
-    def validate(self, file_path: str | Path) -> ValidationResult:
+    def validate(self, file_path: str | Path) -> bool:
         """Validate if the given file matches this broker format."""
         raise NotImplementedError
 
@@ -133,7 +123,7 @@ class BaseBrokerImporter(ABC):
     def parse(
         self,
         file_path: str | Path,
-        currency: str,
+        currency: str | None = None,
         progress_cb: Callable[[float, str], None] | None = None,
     ) -> ParseResult:
         """Parse the broker file into Negotium ledger transaction dictionaries."""
@@ -143,18 +133,18 @@ class BaseBrokerImporter(ABC):
     def import_file(
         self,
         file_path: str | Path,
-        currency: str,
+        currency: str | None = None,
         progress_cb: Callable[[float, str], None] | None = None,
     ) -> ImportResult:
         """Parse and ingest the broker transactions into the active project ledger."""
         raise NotImplementedError
 
-    def file_currency(self, filename: str) -> str:
+    def file_currency(self, filename: str) -> str | None:
         """Resolve the statement's account currency from its filename.
 
-        The default is "unknown": importers whose statements carry a currency
-        per row (BOSSA) or not at all (custom JSON) override this to return an
-        empty string rather than guessing, so a guess can never leak into the
+        The default is None: importers whose statements carry a currency
+        per row (BOSSA) or not at all (custom JSON) override this to return
+        None rather than guessing, so a guess can never leak into the
         ledger as a fake cash ticker.
         """
-        return ""
+        return None
