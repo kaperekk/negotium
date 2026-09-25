@@ -1,8 +1,8 @@
 """
-bossa_import.py — BOSSA broker statement importer
+bossa_import.py — Structured BOSSA broker statement importer
 
 Parses "Historia finansowa" CSV exports from BOSSA (Polish broker) and
-converts rows into Negotium transaction format.
+converts rows into Negotium Transaction/LedgerEntry domain models.
 
 CSV format (semicolon-separated):
   data;tytuł operacji;szczegóły;kwota;waluta
@@ -13,8 +13,9 @@ Trade details format:
 Operation types:
   Rozliczenie transakcji kupna:     → buy  (kwota < 0)
   Rozliczenie transakcji sprzedaży: → sell (kwota > 0)
-  Wymiana waluty {src}/{tgt} {rate} → FX swap (two entries)
-  Przelew do DM BOŚ                 → deposit (account_operation)
+  Wymiana waluty {src}/{tgt} {rate} → FX swap (account_operation)
+  Przelew do DM BOŚ / zwrot         → deposit/withdrawal (account_operation)
+  Dywidenda                         → dividend cash credit
 """
 from __future__ import annotations
 
@@ -23,9 +24,10 @@ import io
 import logging
 import re
 from pathlib import Path
+from typing import Any, Callable
 
 import storage
-from ledger_core import existing_entry_counts, get_all_transactions
+from domain.models import LedgerEntry, Transaction
 from isin_resolve import resolve_isins_with_names
 
 log = logging.getLogger(__name__)
@@ -48,6 +50,7 @@ def _read_csv_text(file_path: str | Path) -> str:
 
 
 def validate_bossa_file(file_path: str | Path) -> tuple[bool, str]:
+    """Validate that the file can be opened and has required BOSSA CSV header columns."""
     try:
         text = _read_csv_text(file_path)
     except Exception as e:
@@ -68,7 +71,7 @@ def validate_bossa_file(file_path: str | Path) -> tuple[bool, str]:
     return True, "Valid BOSSA statement."
 
 
-def _parse_float(val: str) -> float | None:
+def _parse_float(val: str | None) -> float | None:
     if not val:
         return None
     val = val.strip().replace(",", ".")
@@ -78,7 +81,77 @@ def _parse_float(val: str) -> float | None:
         return None
 
 
-def parse_bossa_csv(file_path: str | Path, currency: str, progress_cb=None) -> list[dict]:
+def _parse_bossa_raw_transactions(
+    raw_rows: list[list[str]],
+    resolved_isins: dict[str, str],
+    currency: str,
+) -> list[Transaction]:
+    """Parse raw CSV rows into a list of structured Transaction objects."""
+    transactions: list[Transaction] = []
+
+    for row in raw_rows:
+        date_str = row[0].strip()
+        op_title = row[1].strip() if len(row) > 1 else ""
+        details = row[2].strip() if len(row) > 2 else ""
+        kwota_str = row[3].strip() if len(row) > 3 else ""
+        waluta = row[4].strip().upper() if len(row) > 4 else ""
+
+        kwota = _parse_float(kwota_str)
+        if kwota is None:
+            continue
+
+        entries: list[LedgerEntry] = []
+        op_title_lower = op_title.lower()
+        effective_currency = waluta or currency
+
+        if "kupna" in op_title_lower:
+            m = DETAILS_RE.match(details)
+            if not m:
+                continue
+            isin = m.group(2)
+            qty = _parse_float(m.group(3))
+            ticker = resolved_isins.get(isin)
+            if not ticker:
+                continue
+            if qty is not None:
+                entries.append(LedgerEntry(ticker=ticker, amount=round(qty, 8)))
+            entries.append(LedgerEntry(ticker=effective_currency, amount=round(kwota, 8)))
+
+        elif "sprzeda" in op_title_lower:
+            m = DETAILS_RE.match(details)
+            if not m:
+                continue
+            isin = m.group(2)
+            qty = _parse_float(m.group(3))
+            ticker = resolved_isins.get(isin)
+            if not ticker:
+                continue
+            if qty is not None:
+                entries.append(LedgerEntry(ticker=ticker, amount=round(-qty, 8)))
+            entries.append(LedgerEntry(ticker=effective_currency, amount=round(abs(kwota), 8)))
+
+        elif "wymiana waluty" in op_title_lower:
+            entries.append(LedgerEntry(ticker=effective_currency, amount=round(kwota, 8), account_operation=True))
+
+        elif "przelew" in op_title_lower or "zwrot" in op_title_lower:
+            entries.append(LedgerEntry(ticker=effective_currency, amount=round(kwota, 8), account_operation=True))
+
+        elif "dywidenda" in op_title_lower:
+            entries.append(LedgerEntry(ticker=effective_currency, amount=round(abs(kwota), 8)))
+
+        if entries:
+            transactions.append(Transaction(date=date_str, entries=entries))
+
+    transactions.sort(key=lambda t: t.date)
+    return transactions
+
+
+def parse_bossa_csv(
+    file_path: str | Path,
+    currency: str,
+    progress_cb: Callable[[float, str], None] | None = None,
+) -> tuple[list[dict], dict[str, str]]:
+    """Parse BOSSA CSV file and return merged daily transactions (as dicts) and unresolved ISINs."""
     currency = currency.upper()
     log.info("Parsing %s (currency=%s)", file_path, currency)
 
@@ -101,80 +174,33 @@ def parse_bossa_csv(file_path: str | Path, currency: str, progress_cb=None) -> l
             papier, isin = m.group(1).strip(), m.group(2)
             isin_to_papier[isin] = papier
 
-    resolved, still_unresolved = resolve_isins_with_names(isin_to_papier, progress_cb=progress_cb)
+    # Dynamic lookup via isin_resolve module (allows mock injection in tests)
+    import bossa_import
+    resolve_fn = getattr(bossa_import, "resolve_isins_with_names", resolve_isins_with_names)
+    resolved, still_unresolved = resolve_fn(isin_to_papier, progress_cb=progress_cb)
 
-    transactions: list[dict] = []
+    raw_txns = _parse_bossa_raw_transactions(raw_rows, resolved, currency)
 
-    for row in raw_rows:
-        date_str = row[0].strip()
-        op_title = row[1].strip() if len(row) > 1 else ""
-        details = row[2].strip() if len(row) > 2 else ""
-        kwota_str = row[3].strip() if len(row) > 3 else ""
-        waluta = row[4].strip().upper() if len(row) > 4 else ""
-
-        kwota = _parse_float(kwota_str)
-        if kwota is None:
-            continue
-
-        entries: list[dict] = []
-
-        if "kupna" in op_title.lower():
-            m = DETAILS_RE.match(details)
-            if not m:
-                continue
-            isin = m.group(2)
-            qty = _parse_float(m.group(3))
-            ticker = resolved.get(isin)
-            if not ticker:
-                continue
-            if qty is not None:
-                entries.append({"ticker": ticker, "amount": round(qty, 8)})
-            entries.append({"ticker": waluta or currency, "amount": round(kwota, 8)})
-
-        elif "sprzeda" in op_title.lower():
-            m = DETAILS_RE.match(details)
-            if not m:
-                continue
-            isin = m.group(2)
-            qty = _parse_float(m.group(3))
-            ticker = resolved.get(isin)
-            if not ticker:
-                continue
-            if qty is not None:
-                entries.append({"ticker": ticker, "amount": round(-qty, 8)})
-            entries.append({"ticker": waluta or currency, "amount": round(abs(kwota), 8)})
-
-        elif "wymiana waluty" in op_title.lower():
-            entries.append({"ticker": waluta or currency, "amount": round(kwota, 8),
-                            "account_operation": True})
-
-        elif "przelew" in op_title.lower() or "zwrot" in op_title.lower():
-            entries.append({"ticker": waluta or currency, "amount": round(kwota, 8),
-                            "account_operation": True})
-
-        elif "dywidenda" in op_title.lower():
-            # Dividend payment — credit cash, no stock leg
-            entries.append({"ticker": waluta or currency, "amount": round(abs(kwota), 8)})
-
-        if entries:
-            transactions.append({"date": date_str, "entries": entries})
-
-    transactions.sort(key=lambda r: r["date"])
-
-    merged: list[dict] = []
-    for rec in transactions:
-        if merged and merged[-1]["date"] == rec["date"]:
-            merged[-1]["entries"].extend(rec["entries"])
+    # Merge entries occurring on the same date
+    merged: list[Transaction] = []
+    for tx in raw_txns:
+        if merged and merged[-1].date == tx.date:
+            merged[-1].entries.extend(tx.entries)
         else:
-            merged.append({"date": rec["date"], "entries": list(rec["entries"])})
+            merged.append(Transaction(date=tx.date, entries=list(tx.entries)))
 
-    log.info("Parsed %d raw transactions, merged to %d daily records", len(transactions), len(merged))
+    log.info("Parsed %d raw transactions, merged to %d daily records", len(raw_txns), len(merged))
     log.info("Unresolved ISINs: %d", len(still_unresolved))
 
-    return merged, still_unresolved
+    return [t.to_dict() for t in merged], still_unresolved
 
 
-def import_bossa(file_path: str | Path, currency: str, progress_cb=None) -> dict:
+def import_bossa(
+    file_path: str | Path,
+    currency: str,
+    progress_cb: Callable[[float, str], None] | None = None,
+) -> dict[str, Any]:
+    """Validate, parse, deduplicate, and ingest BOSSA CSV transactions into the active ledger."""
     log.info("=== BOSSA import: %s (currency=%s) ===", file_path, currency)
     valid, msg = validate_bossa_file(file_path)
     if not valid:
@@ -183,28 +209,11 @@ def import_bossa(file_path: str | Path, currency: str, progress_cb=None) -> dict
 
     transactions, unresolved = parse_bossa_csv(file_path, currency, progress_cb=progress_cb)
 
-    existing = existing_entry_counts()
+    from services.importers.base import ingest_transactions
 
-    imported = 0
-    skipped = 0
-    for rec in transactions:
-        new_entries = []
-        for e in rec["entries"]:
-            key = (rec["date"], e["ticker"].upper(), round(float(e["amount"]), 8))
-            if existing.get(key, 0) > 0:
-                existing[key] -= 1
-            else:
-                new_entries.append(e)
-        if new_entries:
-            from ledger_core import add_transaction
-            add_transaction(rec["date"], new_entries)
-            imported += 1
-        else:
-            skipped += 1
-
-    log.info("Result: %d imported, %d skipped (duplicates)", imported, skipped)
-    result = {"success": True, "imported": imported, "skipped": skipped}
+    result = ingest_transactions(transactions)
+    res_dict = result.to_dict()
     if unresolved:
         lines = [f"  {isin} ({name})" for isin, name in sorted(unresolved.items())]
-        result["error"] = "Could not resolve ticker for:\n" + "\n".join(lines)
-    return result
+        res_dict["error"] = "Could not resolve ticker for:\n" + "\n".join(lines)
+    return res_dict
