@@ -6,71 +6,194 @@ Handles broker format detection, multi-file imports, and automatic cache invalid
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Callable
 
+import openpyxl
 import storage
-from services.importers.base import BaseBrokerImporter, ImportResult, ValidationResult
+from services.importers import (
+    BaseBrokerImporter,
+    BossaImporter,
+    ImportResult,
+    ManualImporter,
+    ParseResult,
+    XtbImporter,
+    summarize_warnings,
+)
 from storage.context import ProjectContext
 
 log = logging.getLogger(__name__)
 
-BROKERS = ["XTB", "BOSSA", "Custom"]
+BROKER_IMPORTERS: dict[str, tuple[str, BaseBrokerImporter]] = {
+    "xtb": ("*.xlsx", XtbImporter()),
+    "bossa": ("*.csv", BossaImporter()),
+    "custom": ("*.json", ManualImporter()),
+}
+
+BROKER_EXTENSIONS: dict[str, str] = {
+    broker: Path(pattern).suffix.lstrip(".").lower()
+    for broker, (pattern, _) in BROKER_IMPORTERS.items()
+}
+
+
+@dataclass(slots=True)
+class RefreshReport:
+    """Outcome of replaying every stored statement file."""
+
+    file_count: int = 0
+    imported: int = 0
+    skipped: int = 0
+    warnings: list[str] = field(default_factory=list)
 
 
 class ImportService:
     """Orchestration service for broker imports and ledger reconciliations."""
 
-    def __init__(self, context: ProjectContext | None = None):
+    def __init__(
+        self,
+        context: ProjectContext | None = None,
+        importers: dict[str, tuple[str, BaseBrokerImporter]] | None = None,
+    ):
         self.context = context or ProjectContext()
+        self.importers = importers or BROKER_IMPORTERS
+
+    def importer_for(self, broker: str) -> BaseBrokerImporter:
+        """Look up the registered importer for a broker key."""
+        try:
+            return self.importers[broker][1]
+        except KeyError:
+            raise ValueError(
+                f"Unknown broker {broker!r} (known: {', '.join(sorted(self.importers))})"
+            ) from None
+
+    def _is_xtb_file(self, file_path: Path) -> bool:
+        """Check if an .xlsx file is an XTB export by looking for 'Cash Operations' sheet."""
+        try:
+            wb = openpyxl.load_workbook(file_path, read_only=True)
+            try:
+                return "Cash Operations" in wb.sheetnames
+            finally:
+                wb.close()
+        except Exception:
+            return False
+
+    def broker_for_filename(self, filename: str) -> str | None:
+        """Map a statement filename to its broker key by extension and content.
+
+        For .xlsx files, peeks inside to check for XTB's "Cash Operations" sheet.
+        """
+        suffix = Path(filename).suffix.lower()
+        if suffix == ".xlsx":
+            # Need to check content to distinguish XTB from other .xlsx files
+            # We can't do that here without the full path, so defer to extension
+            # The caller should use a more specific method when path is available
+            return "xtb"
+        for broker, (pattern, _) in self.importers.items():
+            if Path(pattern).suffix.lower() == suffix:
+                return broker
+        return None
+
+    def broker_for_path(self, file_path: Path) -> str | None:
+        """Map a statement file path to its broker key by extension and content."""
+        suffix = file_path.suffix.lower()
+        if suffix == ".xlsx":
+            if self._is_xtb_file(file_path):
+                return "xtb"
+            return None
+        for broker, (pattern, _) in self.importers.items():
+            if Path(pattern).suffix.lower() == suffix:
+                return broker
+        return None
+
+    def validate_file(self, broker: str, file_path: str | Path) -> bool:
+        """Validate a statement against its broker's format rules."""
+        return self.importer_for(broker).validate(file_path)
+
+    def currency_for(self, broker: str, file_path: str | Path) -> str:
+        """Resolve the account currency for a file via its importer.
+
+        Importers that read the currency per row (BOSSA) return None,
+        so a filename that happens to start with letters can never
+        become a fake cash ticker.
+        """
+        ccy = self.importer_for(broker).file_currency(Path(file_path).name)
+        return ccy or ""
+
+    def parse_file(
+        self,
+        broker: str,
+        file_path: str | Path,
+        currency: str | None = None,
+        progress_cb: Callable[[float, str], None] | None = None,
+    ) -> ParseResult:
+        """Parse a single statement through the broker's registered importer."""
+        importer = self.importer_for(broker)
+        ccy = self.currency_for(broker, file_path) if currency is None else currency
+        return importer.parse(file_path, ccy, progress_cb=progress_cb)
+
+    def import_file(
+        self,
+        broker: str,
+        file_path: str | Path,
+        currency: str | None = None,
+        progress_cb: Callable[[float, str], None] | None = None,
+        run_post_import: bool = True,
+    ) -> ImportResult:
+        """Import one statement file and run the broker's post-import hook."""
+        importer = self.importer_for(broker)
+        ccy = self.currency_for(broker, file_path) if currency is None else currency
+        result = importer.import_file(file_path, ccy, progress_cb=progress_cb)
+        if result.success and run_post_import and hasattr(importer, "post_import"):
+            importer.post_import(file_path, ccy)
+        return result
+
+    def discover_files(self) -> list[tuple[str, Path]]:
+        """Every stored statement file, as (broker_key, path) pairs, in registry order."""
+        found: list[tuple[str, Path]] = []
+        for broker, (pattern, _) in self.importers.items():
+            bdir = self.context.imports_dir / broker
+            if not bdir.exists():
+                continue
+            found.extend((broker, fpath) for fpath in sorted(bdir.glob(pattern)))
+        return found
 
     def run_full_refresh(
         self,
         today: date,
         base_ccy: str,
-        detect_currency_fn: Callable[[str], str],
         progress_cb: Callable[[float, str], None] | None = None,
-    ) -> tuple[int, int]:
-        """Re-import all broker files in the project's imports directory."""
-        from bossa_import import import_bossa
-        from manual_import import import_manual
-        from xtb_import import fix_avg_prices_from_open_positions, import_xtb
+    ) -> RefreshReport:
+        """Re-import all broker files in the project's imports directory.
 
-        imports_dir = self.context.imports_dir
-        all_files: list[tuple[str, Path]] = []
+        Each importer resolves its own statement currency, so no filename
+        guessing leaks into the ledger.
+        """
+        all_files = self.discover_files()
+        report = RefreshReport(file_count=len(all_files))
 
-        for b in BROKERS:
-            bdir = imports_dir / b.lower()
-            if not bdir.exists():
-                continue
-            for fpath in sorted(bdir.glob("*.xlsx")):
-                all_files.append(("xtb", fpath))
-            for fpath in sorted(bdir.glob("*.csv")):
-                all_files.append(("bossa", fpath))
-            for fpath in sorted(bdir.glob("*.json")):
-                all_files.append(("custom", fpath))
+        for idx, (broker, fpath) in enumerate(all_files):
+            if progress_cb:
+                progress_cb(idx / len(all_files), f"Importing {fpath.name}…")
 
-        total_imported = 0
-        if all_files:
-            for idx, (kind, fpath) in enumerate(all_files):
-                ccy = detect_currency_fn(fpath.name)
-                if progress_cb:
-                    progress_cb(idx / len(all_files), f"Importing {fpath.name}…")
-                if kind == "bossa":
-                    res = import_bossa(str(fpath), ccy)
-                elif kind == "custom":
-                    res = import_manual(str(fpath))
-                else:
-                    res = import_xtb(str(fpath), ccy)
+            res = self.import_file(
+                broker, fpath, progress_cb=progress_cb, run_post_import=False
+            )
+            if res.success:
+                report.imported += res.imported
+                report.skipped += res.skipped
+                for w in summarize_warnings(res.warnings):
+                    report.warnings.append(f"{fpath.name}: {w}")
+            else:
+                report.warnings.append(f"{fpath.name}: import failed — {res.error}")
 
-                if res.get("success"):
-                    total_imported += res.get("imported", 0)
-
-            for kind, fpath in all_files:
-                if kind == "xtb":
-                    ccy = detect_currency_fn(fpath.name)
-                    fix_avg_prices_from_open_positions(str(fpath), ccy)
+        # Broker post-import hooks (e.g. XTB VWAP open-lot fixes) run after every
+        # file is in the ledger, since they read the whole position set.
+        for broker, fpath in all_files:
+            importer = self.importer_for(broker)
+            if hasattr(importer, "post_import"):
+                importer.post_import(fpath, self.currency_for(broker, fpath))
 
         storage.invalidate_portfolio_from((today - timedelta(days=1)).isoformat())
-        return len(all_files), total_imported
+        return report

@@ -25,6 +25,11 @@ the sidebar **🔄 Refresh**, which replays every stored file) is safe.
 | BOSSA | `.csv` (semicolon-separated) | per-transaction, from the file's `waluta` column | ISINs resolved via config mappings |
 | Custom | `.json` | — | your own format, see below |
 
+Rows that cannot be read (unparseable date or amount, a blank currency, an
+unrecognised operation title) are **skipped and reported** — the import result
+lists every one, so nothing disappears silently. Check the warnings after
+uploading, and in `data/{PROJECT}/import.log` after a **🔄 Refresh**.
+
 ## XTB
 
 ### How to export
@@ -66,7 +71,7 @@ silently.
 
 1. Log in to your DM BOŚ account at [bossa.pl](https://www.bossa.pl)
 2. Go to **Historia finansowa** (Financial history)
-3. Set the date range and make sure **Pokaż** lists individual transactions
+3. Set the date range and make sure **Pokaż Wszystko** is selected
 4. Click **Eksportuj do CSV**
 
 ### CSV format
@@ -83,14 +88,27 @@ Example:
 15.05.2026;Rozliczenie transakcji kupna:;iShares MSCI Global Semiconductors UCITS ETF (IE000I8KRLL9) 132 x 16.488 EUR nr Z00348421888;-;2 176.42;EUR
 ```
 
+The `data` column is accepted as `YYYY-MM-DD`, `DD.MM.YYYY` or `DD/MM/YYYY`
+(with an optional time suffix) and is always stored as ISO `YYYY-MM-DD`. The
+`waluta` column is authoritative — a row with a blank currency is skipped and
+reported rather than guessed at.
+
 ### Recognised operation types
 
 | Polish operation title | Meaning | Negotium action |
 |---|---|---|
 | `Rozliczenie transakcji kupna:` | Share purchase | Buy |
 | `Rozliczenie transakcji sprzedaży:` | Share sale | Sell |
-| `Wymiana waluty {SRC}/{TGT} {rate}` | Currency exchange | FX swap (two cash entries) |
+| `Wymiana waluty {SRC}/{TGT} {rate}` | Currency exchange | FX swap — two plain cash entries, one per CSV row |
 | `Przelew do DM BOŚ` | Cash deposit | Deposit marked `account_operation` |
+| `Zwrot …` (e.g. `Zwrot nadpłaty`) | Refund | Refund marked `account_operation` |
+| `Dywidenda` | Dividend | Cash entry |
+
+An FX swap is a conversion between two cash balances, not new money, so it is
+deliberately **not** marked `account_operation` — only real deposits and
+refunds move the invested-capital line (see
+[ARCHITECTURE.md](ARCHITECTURE.md#portfoliojsonl--computed-daily-snapshots-derived)).
+If one leg of a swap is missing from the export, the import warns you.
 
 ### ISIN resolution
 
@@ -100,15 +118,17 @@ mappings** (config → `isin_tickers`, see
 [CONFIG.md](CONFIG.md#isin-mappings)) and uses the mapped ticker:
 
 - Mapped ISIN → the transaction imports and prices with the mapped ticker.
-- Unmapped ISIN → reported as unresolved and skipped; add a mapping and
-  re-import (🔄 Refresh replays the stored file) to pick it up.
+- Unmapped ISIN → the trade is reported and skipped. The import result lists
+  the ISIN and the instrument name; add a mapping under **⚙️ Settings → ISIN
+  mappings** and re-import (🔄 Refresh replays the stored file) to pick it up.
 
 ### Uploading
 
 1. Sidebar → **📥 Import statement** → Broker: **BOSSA**
 2. Upload one or more `.csv` files — the currency is read per transaction from
    the file's `waluta` column
-3. Review the result; add any missing ISIN mappings and re-import if needed
+3. Review the result; any warning about unresolved ISINs or skipped rows is
+   listed right below it
 
 ## Custom import
 
@@ -152,7 +172,11 @@ transactions). Ticker symbols pass through your ticker rules at import time.
 | Symptom | Fix |
 |---|---|
 | `Unresolved ISIN …` reported | Add `ISIN=TICKER` under *Settings → ISIN mappings*, then **🔄 Refresh** |
-| Prices missing for an imported ticker | The symbol doesn't match Yahoo Finance — add a ticker rule (see [CONFIG.md](CONFIG.md#ticker-rules)) |
+| `unrecognised operation …` reported | The row's title isn't in the table above — the row is skipped, so add it via **➕ Add transaction** or extend the importer |
+| `cannot read trade details` reported | The `szczegóły` column didn't match `{Name} ({ISIN}) {qty} x {price} {ccy} nr {order}` — usually a new BOSSA layout |
+| `no currency` reported | The `waluta` column was blank; nothing is guessed for you |
+| `expected 2 legs, found 1` reported | One side of an FX swap falls outside the exported date range — widen the export and re-import |
+| `Prices missing for an imported ticker` | The symbol doesn't match Yahoo Finance — add a ticker rule (see [CONFIG.md](CONFIG.md#ticker-rules)) |
 | XTB file imported with the wrong currency | Rename the file with the correct prefix (e.g. `PLN_…xlsx`) and re-import |
 | `N skipped (duplicates)` | Normal — those rows were already imported |
 | Import changed history you didn't expect | Imports only append; check the ledger in `data/{PROJECT}/transactions.jsonl` |

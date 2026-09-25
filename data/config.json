@@ -41,5 +41,5 @@
     "PLBETF400025=ETFBM40TR.WA"
   ],
   "theme": "dark",
-  "log_scale": true
+  "log_scale": false
 }
