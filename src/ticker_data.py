@@ -561,7 +561,7 @@ def get_dividends(ticker: str) -> dict[str, float]:
     """
     if ticker.upper() in SUPPORTED_CURRENCIES:
         return {}
-    cached = load_dividends()
+    cached = load_dividends(ticker)
     if ticker in cached:
         return cached[ticker]
     try:
@@ -576,7 +576,7 @@ def get_dividends(ticker: str) -> dict[str, float]:
     except Exception:
         result = {}
     cached[ticker] = result
-    save_dividends(cached)
+    save_dividends(ticker, result)
     return result
 
 

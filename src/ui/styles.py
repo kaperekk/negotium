@@ -196,6 +196,16 @@ def build_app_styles(theme: dict[str, str]) -> str:
         [data-testid="stPlotlyChart"] {{
             background: {t["card_bg"]};
             border-radius: 1rem;
+            width: 100% !important;
+        }}
+        [data-testid="stPlotlyChart"] > div {{
+            width: 100% !important;
+        }}
+        [data-testid="stPlotlyChart"] .js-plotly-plot {{
+            width: 100% !important;
+        }}
+        [data-testid="stPlotlyChart"] .plot-container {{
+            width: 100% !important;
         }}
 
         [data-testid="stDataFrame"] {{
@@ -418,6 +428,13 @@ def build_late_theme_override(theme: dict[str, str]) -> str:
     [data-baseweb="tooltip"] div {{
         background-color: {t["panel_bg"]} !important;
         color: {t["text"]} !important;
+    }}
+    [data-baseweb="modal-backdrop"],
+    [data-testid="stModal"] [data-baseweb="modal-backdrop"],
+    div[data-baseweb="modal-backdrop"],
+    [data-testid="stDialog"] ~ [data-baseweb="modal-backdrop"],
+    div[aria-hidden="true"][data-baseweb="modal-backdrop"] {{
+        display: none !important;
     }}
     </style>
     """

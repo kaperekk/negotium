@@ -46,8 +46,7 @@ st.markdown(
     + build_late_theme_override(T)
     + build_metric_card_styles(T)
     + build_toggle_button_styles(T)
-    + build_holdings_styles(T)
-    + build_trade_dialog_styles(T),
+    + build_holdings_styles(T),
     unsafe_allow_html=True,
 )
 

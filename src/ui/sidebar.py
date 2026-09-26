@@ -107,7 +107,7 @@ def render_sidebar(cfg, storage, T, today, data_start_date):
         )
 
         if selected == "➕ New project":
-            @st.dialog("Create new project")
+            @st.dialog("Create new project", width="small")
             def _create_dialog():
                 name = st.text_input("Project name", placeholder="e.g. Retirement, Savings")
                 if st.button("Create", width='stretch'):
