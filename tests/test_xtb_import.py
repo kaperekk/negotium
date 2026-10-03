@@ -543,7 +543,8 @@ def test_closed_positions_parses_buy(tmp: Path):
     txns = parse_closed_positions(str(p), "USD")
     assert len(txns) == 1
     assert txns[0]["date"] == "2025-01-15"
-    assert txns[0]["entries"][0]["ticker"] == "AAPL.US"
+    # *.US= rule strips .US suffix
+    assert txns[0]["entries"][0]["ticker"] == "AAPL"
     assert txns[0]["entries"][0]["amount"] == 5.0
     assert txns[0]["entries"][1]["amount"] == -750.0
 
@@ -624,7 +625,8 @@ def test_open_positions_parses_buy(tmp: Path):
     )
     txns = parse_open_positions(str(p), "USD")
     assert len(txns) == 1
-    assert txns[0]["entries"][0]["ticker"] == "AAPL.US"
+    # *.US= rule strips .US suffix
+    assert txns[0]["entries"][0]["ticker"] == "AAPL"
     assert txns[0]["entries"][0]["amount"] == 10.0
     assert txns[0]["entries"][1]["amount"] == -1500.0
     assert txns[0]["date"] == "2025-01-15"
@@ -749,9 +751,10 @@ def test_import_xtb_skips_when_cash_ops_covers_position(tmp: Path):
     )
     import_xtb(str(p), "USD")
     txns = get_all_transactions()
+    # *.US= rule strips .US suffix, so ticker becomes "AAPL"
     aapl_buys = [
         t for t in txns
-        if any(e["ticker"] == "AAPL.US" and float(e["amount"]) > 0 for e in t["entries"])
+        if any(e["ticker"] == "AAPL" and float(e["amount"]) > 0 for e in t["entries"])
     ]
     assert len(aapl_buys) == 1
 
@@ -796,8 +799,9 @@ def test_fix_avg_prices_overrides_with_real_price(tmp: Path):
     from xtb_import import fix_avg_prices_from_open_positions
     import storage
 
+    # *.US= rule strips .US suffix, so balance key is "AAPL"
     storage.save_balance({
-        "AAPL.US": {"amount": 10.0, "avg_price": 200.0},
+        "AAPL": {"amount": 10.0, "avg_price": 200.0},
     })
 
     p = _positions_book(
@@ -812,7 +816,7 @@ def test_fix_avg_prices_overrides_with_real_price(tmp: Path):
     fix_avg_prices_from_open_positions(str(p), "USD")
     bal = storage.load_balance()
     # weighted avg: (5*150 + 5*160) / 10 = 155.0
-    assert abs(bal["AAPL.US"]["avg_price"] - 155.0) < 0.01
+    assert abs(bal["AAPL"]["avg_price"] - 155.0) < 0.01
 
 
 def test_fix_avg_prices_skips_tickers_not_in_balance(tmp: Path):
@@ -831,7 +835,7 @@ def test_fix_avg_prices_skips_tickers_not_in_balance(tmp: Path):
     )
     fix_avg_prices_from_open_positions(str(p), "USD")
     bal = storage.load_balance()
-    assert "AAPL.US" not in bal
+    assert "AAPL" not in bal
 
 
 def test_fix_avg_prices_empty_open_positions(tmp: Path):
@@ -840,13 +844,13 @@ def test_fix_avg_prices_empty_open_positions(tmp: Path):
     import storage
 
     storage.save_balance({
-        "AAPL.US": {"amount": 10.0, "avg_price": 200.0},
+        "AAPL": {"amount": 10.0, "avg_price": 200.0},
     })
 
     p = _positions_book(tmp, "fix_empty.xlsx")
     fix_avg_prices_from_open_positions(str(p), "USD")
     bal = storage.load_balance()
-    assert bal["AAPL.US"]["avg_price"] == 200.0
+    assert bal["AAPL"]["avg_price"] == 200.0
 
 
 def test_fix_avg_prices_translates_tickers(tmp: Path):
@@ -855,8 +859,9 @@ def test_fix_avg_prices_translates_tickers(tmp: Path):
     import storage
 
     # Use a ticker that exists in balance (US ticker, no translation needed)
+    # *.US= rule strips .US suffix
     storage.save_balance({
-        "NVDA.US": {"amount": 2.0, "avg_price": 100.0},
+        "NVDA": {"amount": 2.0, "avg_price": 100.0},
     })
 
     p = _positions_book(
@@ -868,5 +873,5 @@ def test_fix_avg_prices_translates_tickers(tmp: Path):
     )
     fix_avg_prices_from_open_positions(str(p), "USD")
     bal = storage.load_balance()
-    assert abs(bal["NVDA.US"]["avg_price"] - 232.08) < 0.01
+    assert abs(bal["NVDA"]["avg_price"] - 232.08) < 0.01
 

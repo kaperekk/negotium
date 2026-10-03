@@ -174,7 +174,7 @@ def get_last_refresh(name: str | None = None, user: str | None = None) -> str:
     return reg.get(name, {}).get("last_refresh", "")
 
 
-def set_last_refresh(date_str: str, name: str | None = None) -> None:
+def set_last_refresh(date_str: str, name: str | None = None, user: str | None = None) -> None:
     user = user or current_user()
     name = name or current_project()
     if name is None:
@@ -185,7 +185,7 @@ def set_last_refresh(date_str: str, name: str | None = None) -> None:
     _save_registry(reg, user)
 
 
-def get_watchlist(name: str | None = None) -> list[str]:
+def get_watchlist(name: str | None = None, user: str | None = None) -> list[str]:
     user = user or current_user()
     name = name or current_project()
     if name is None:
