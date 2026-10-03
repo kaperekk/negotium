@@ -16,6 +16,8 @@ from domain.currencies import (
     SUPPORTED_CURRENCIES,
     TRIANGULATE_VIA_USD,
 )
+# Re-export for backward compatibility
+from domain.currencies import SUPPORTED_CURRENCIES
 from storage.context import (
     DATA_ROOT,
     ROOT,
@@ -32,12 +34,8 @@ from storage.repositories import (
     BalanceRepository,
     SnapshotRepository,
     TransactionRepository,
-    append_jsonl,
-    iter_jsonl,
-    read_jsonl,
-    write_bytes_atomic,
-    write_jsonl,
 )
+from storage.backends import get_backend
 
 try:
     import orjson
@@ -51,16 +49,50 @@ except ImportError:
     _dumps = lambda obj: json.dumps(obj, ensure_ascii=False)
 
 
-PRICES_DIR = DATA_ROOT / "prices"
-ADJ_PRICES_DIR = DATA_ROOT / "prices_adj"
-PROJECTS_PATH = DATA_ROOT / "projects.json"
-USERS_PATH = DATA_ROOT / "users.json"
-TICKER_NAMES_PATH = DATA_ROOT / "ticker_names.json"
-TICKER_META_PATH = DATA_ROOT / "ticker_meta.json"
-ATH_PATH = DATA_ROOT / "ath.json"
-EARNINGS_PATH = DATA_ROOT / "earnings.json"
+USERS_KEY = "users.json"
+TICKER_NAMES_KEY = "ticker_names.json"
+TICKER_META_KEY = "ticker_meta.json"
+ATH_KEY = "ath.json"
+EARNINGS_KEY = "earnings.json"
+PRICES_PREFIX = "prices/"
+ADJ_PRICES_PREFIX = "prices_adj/"
+DIVIDENDS_PREFIX = "dividends/"
 
-_write_bytes_atomic = write_bytes_atomic
+
+def _backend():
+    return get_backend()
+
+
+def _read_json(key: str, default=None):
+    backend = _backend()
+    if not backend.exists(key):
+        return default if default is not None else {}
+    return _loads(backend.read_bytes(key))
+
+
+def _write_json(key: str, data: dict) -> None:
+    backend = _backend()
+    backend.write_bytes(key, _dumps(data).encode())
+
+
+def _read_bytes(key: str) -> bytes | None:
+    backend = _backend()
+    if not backend.exists(key):
+        return None
+    return backend.read_bytes(key)
+
+
+def _write_bytes(key: str, data: bytes) -> None:
+    backend = _backend()
+    backend.write_bytes(key, data)
+
+
+def _exists(key: str) -> bool:
+    return _backend().exists(key)
+
+
+def _list_keys(prefix: str) -> list[str]:
+    return _backend().list_files(prefix)
 
 
 def current_project() -> str | None:
@@ -71,69 +103,41 @@ def current_user() -> str:
     return get_current_user()
 
 
-def _project_dir(name: str | None = None, user: str | None = None) -> Path:
-    return ProjectContext(name, user).project_dir
+def _projects_key(user: str | None = None) -> str:
+    """Get projects registry key for a user."""
+    user = user or current_user()
+    return f"users/{user}/projects.json"
 
 
-def transactions_path() -> Path:
-    return ProjectContext().transactions_path
+def _load_registry(user: str | None = None) -> dict:
+    return _read_json(_projects_key(user))
 
 
-def portfolio_path() -> Path:
-    return ProjectContext().portfolio_path
-
-
-def balance_path() -> Path:
-    return ProjectContext().balance_path
-
-
-def imports_dir() -> Path:
-    return ProjectContext().imports_dir
-
-
-def benchmark_cache_path(base_ccy: str) -> Path:
-    return ProjectContext().benchmark_cache_path(base_ccy)
-
-
-def _load_registry() -> dict:
-    if not PROJECTS_PATH.exists():
-        return {}
-    return _loads(PROJECTS_PATH.read_bytes())
-
-
-def _save_registry(reg: dict) -> None:
-    _write_bytes_atomic(PROJECTS_PATH, _dumps(reg).encode())
+def _save_registry(reg: dict, user: str | None = None) -> None:
+    _write_json(_projects_key(user), reg)
 
 
 def _load_users() -> dict:
-    if not USERS_PATH.exists():
-        return {}
-    return _loads(USERS_PATH.read_bytes())
+    return _read_json(USERS_KEY)
 
 
 def _save_users(users: dict) -> None:
-    _write_bytes_atomic(USERS_PATH, _dumps(users).encode())
+    _write_json(USERS_KEY, users)
 
 
 def create_user(name: str) -> None:
     """Create a new user with their data directory."""
     users = _load_users()
-    # Check if user_name already exists
     for data in users.values():
         if data.get("user_name") == name:
             raise ValueError(f"User '{name}' already exists")
     user_key = str(uuid.uuid4())
     users[user_key] = {"user_name": name, "created": date.today().isoformat()}
     _save_users(users)
-    # Create user data directory
-    user_root = USERS_ROOT / name
-    user_root.mkdir(parents=True, exist_ok=True)
     set_current_user(name)
 
 
 def list_users() -> list[str]:
-    if not USERS_PATH.exists():
-        return [DEFAULT_USER]
     users = _load_users()
     return sorted(data.get("user_name", "") for data in users.values() if data.get("user_name"))
 
@@ -157,92 +161,98 @@ def set_current_user_by_key(user_key: str) -> None:
 
 def list_projects(user: str | None = None) -> list[str]:
     user = user or current_user()
-    if not PROJECTS_PATH.exists():
-        return []
-    reg = _load_registry()
+    reg = _load_registry(user)
     return sorted([name for name, data in reg.items() if data.get("user", DEFAULT_USER) == user])
 
 
 def get_last_refresh(name: str | None = None, user: str | None = None) -> str:
+    user = user or current_user()
     name = name or current_project()
     if name is None:
         return ""
-    reg = _load_registry()
+    reg = _load_registry(user)
     return reg.get(name, {}).get("last_refresh", "")
 
 
 def set_last_refresh(date_str: str, name: str | None = None) -> None:
+    user = user or current_user()
     name = name or current_project()
     if name is None:
         return
-    reg = _load_registry()
+    reg = _load_registry(user)
     entry = reg.setdefault(name, {})
     entry["last_refresh"] = date_str
-    _save_registry(reg)
+    _save_registry(reg, user)
 
 
 def get_watchlist(name: str | None = None) -> list[str]:
+    user = user or current_user()
     name = name or current_project()
     if name is None:
         return []
-    reg = _load_registry()
+    reg = _load_registry(user)
     return list(reg.get(name, {}).get("watchlist", []))
 
 
 def set_watchlist(tickers: list[str], name: str | None = None) -> None:
+    user = user or current_user()
     name = name or current_project()
     if name is None:
         return
-    reg = _load_registry()
+    reg = _load_registry(user)
     entry = reg.setdefault(name, {})
     entry["watchlist"] = list(tickers)
-    _save_registry(reg)
+    _save_registry(reg, user)
 
 
 def create_project(name: str, user: str | None = None) -> None:
     user = user or current_user()
-    reg = _load_registry()
-    # Check if project already exists for this user
+    reg = _load_registry(user)
     for proj_name, data in reg.items():
         if data.get("user", DEFAULT_USER) == user and proj_name == name:
             raise ValueError(f"Project '{name}' already exists")
     ctx = ProjectContext(name, user)
     ctx.ensure_directories()
     reg[name] = {"created_at": datetime.now().isoformat(), "user": user}
-    _save_registry(reg)
+    _save_registry(reg, user)
     set_current_project(name)
 
 
 def rename_project(old: str, new: str, user: str | None = None) -> None:
     user = user or current_user()
-    reg = _load_registry()
+    reg = _load_registry(user)
     if old not in reg:
         raise ValueError(f"Project '{old}' not found")
     if reg[old].get("user", DEFAULT_USER) != user:
         raise ValueError(f"Project '{old}' does not belong to user '{user}'")
     if new in reg:
         raise ValueError(f"Project '{new}' already exists")
-    old_dir = _project_dir(old, user)
-    new_dir = _project_dir(new, user)
-    old_dir.rename(new_dir)
+    old_prefix = f"users/{user}/{old}/"
+    new_prefix = f"users/{user}/{new}/"
+    backend = _backend()
+    for key in backend.list_files(old_prefix):
+        new_key = new_prefix + key[len(old_prefix):]
+        data = backend.read_bytes(key)
+        backend.write_bytes(new_key, data)
+        backend.delete(key)
     reg[new] = reg.pop(old)
-    _save_registry(reg)
+    _save_registry(reg, user)
     set_current_project(new)
 
 
 def delete_project(name: str, user: str | None = None) -> None:
-    import shutil
     user = user or current_user()
-    reg = _load_registry()
+    reg = _load_registry(user)
     if name not in reg:
         return
     if reg[name].get("user", DEFAULT_USER) != user:
         raise ValueError(f"Project '{name}' does not belong to user '{user}'")
-    d = _project_dir(name, user)
-    if d.exists():
-        shutil.rmtree(d)
+    prefix = f"users/{user}/{name}/"
+    backend = _backend()
+    for key in backend.list_files(prefix):
+        backend.delete(key)
     del reg[name]
-    _save_registry(reg)
+    _save_registry(reg, user)
     if current_project() == name:
         set_current_project(None)
 
@@ -267,9 +277,9 @@ def init_legacy_project() -> str | None:
     build_log = DATA_ROOT / "build.log"
     if build_log.exists():
         build_log.unlink()
-    reg = _load_registry()
+    reg = _load_registry(user)
     reg[name] = {"created_at": datetime.now().isoformat(), "user": user, "migrated_from": "legacy"}
-    _save_registry(reg)
+    _save_registry(reg, user)
     set_current_project(name)
     return name
 
@@ -282,25 +292,26 @@ def save_balance(balance: dict[str, dict]) -> None:
     BalanceRepository().save_balance(balance)
 
 
-def price_cache_path(ticker: str, year: int, adjusted: bool = False) -> Path:
-    base = ADJ_PRICES_DIR if adjusted else PRICES_DIR
-    return base / ticker.upper() / f"{year}.json"
+def _price_key(ticker: str, year: int, adjusted: bool) -> str:
+    base = ADJ_PRICES_PREFIX if adjusted else PRICES_PREFIX
+    return f"{base}{ticker.upper()}/{year}.json"
 
 
 def load_price_year(ticker: str, year: int, adjusted: bool = False) -> dict[str, float]:
-    p = price_cache_path(ticker, year, adjusted)
-    if not p.exists():
+    key = _price_key(ticker, year, adjusted)
+    data = _read_bytes(key)
+    if data is None:
         return {}
-    return _loads(p.read_bytes())
+    return _loads(data)
 
 
 def save_price_year(ticker: str, year: int, prices: dict[str, float], adjusted: bool = False) -> None:
-    p = price_cache_path(ticker, year, adjusted)
-    _write_bytes_atomic(p, _dumps(prices).encode())
+    key = _price_key(ticker, year, adjusted)
+    _write_bytes(key, _dumps(prices).encode())
 
 
 def has_price_year(ticker: str, year: int, adjusted: bool = False) -> bool:
-    return price_cache_path(ticker, year, adjusted).exists()
+    return _exists(_price_key(ticker, year, adjusted))
 
 
 def load_prices_range(ticker: str, start: date, end: date, adjusted: bool = False) -> dict[str, float]:
@@ -338,11 +349,12 @@ def load_ticker_names() -> dict[str, str]:
     global _ticker_names_cache
     if _ticker_names_cache is not None:
         return _ticker_names_cache
-    if not TICKER_NAMES_PATH.exists():
+    data = _read_bytes(TICKER_NAMES_KEY)
+    if data is None:
         _ticker_names_cache = {}
         return _ticker_names_cache
     with _cache_lock:
-        _ticker_names_cache = _loads(TICKER_NAMES_PATH.read_bytes())
+        _ticker_names_cache = _loads(data)
     return _ticker_names_cache
 
 
@@ -350,7 +362,7 @@ def save_ticker_names(names: dict[str, str]) -> None:
     global _ticker_names_cache
     _ticker_names_cache = names
     with _cache_lock:
-        _write_bytes_atomic(TICKER_NAMES_PATH, _dumps(names).encode())
+        _write_bytes(TICKER_NAMES_KEY, _dumps(names).encode())
 
 
 _ticker_meta_cache: dict | None = None
@@ -360,11 +372,12 @@ def load_ticker_meta() -> dict:
     global _ticker_meta_cache
     if _ticker_meta_cache is not None:
         return _ticker_meta_cache
-    if not TICKER_META_PATH.exists():
+    data = _read_bytes(TICKER_META_KEY)
+    if data is None:
         _ticker_meta_cache = {}
         return _ticker_meta_cache
     with _cache_lock:
-        _ticker_meta_cache = _loads(TICKER_META_PATH.read_bytes())
+        _ticker_meta_cache = _loads(data)
     return _ticker_meta_cache
 
 
@@ -372,7 +385,7 @@ def save_ticker_meta(meta: dict) -> None:
     global _ticker_meta_cache
     _ticker_meta_cache = meta
     with _cache_lock:
-        _write_bytes_atomic(TICKER_META_PATH, _dumps(meta).encode())
+        _write_bytes(TICKER_META_KEY, _dumps(meta).encode())
 
 
 _ath_disk_cache: dict | None = None
@@ -382,11 +395,12 @@ def load_ath() -> dict:
     global _ath_disk_cache
     if _ath_disk_cache is not None:
         return _ath_disk_cache
-    if not ATH_PATH.exists():
+    data = _read_bytes(ATH_KEY)
+    if data is None:
         _ath_disk_cache = {}
         return _ath_disk_cache
     with _cache_lock:
-        _ath_disk_cache = _loads(ATH_PATH.read_bytes())
+        _ath_disk_cache = _loads(data)
     return _ath_disk_cache
 
 
@@ -394,7 +408,7 @@ def save_ath(data: dict) -> None:
     global _ath_disk_cache
     _ath_disk_cache = data
     with _cache_lock:
-        _write_bytes_atomic(ATH_PATH, _dumps(data).encode())
+        _write_bytes(ATH_KEY, _dumps(data).encode())
 
 
 _earnings_disk_cache: dict | None = None
@@ -404,11 +418,12 @@ def load_earnings() -> dict:
     global _earnings_disk_cache
     if _earnings_disk_cache is not None:
         return _earnings_disk_cache
-    if not EARNINGS_PATH.exists():
+    data = _read_bytes(EARNINGS_KEY)
+    if data is None:
         _earnings_disk_cache = {}
         return _earnings_disk_cache
     with _cache_lock:
-        _earnings_disk_cache = _loads(EARNINGS_PATH.read_bytes())
+        _earnings_disk_cache = _loads(data)
     return _earnings_disk_cache
 
 
@@ -416,20 +431,80 @@ def save_earnings(data: dict) -> None:
     global _earnings_disk_cache
     _earnings_disk_cache = data
     with _cache_lock:
-        _write_bytes_atomic(EARNINGS_PATH, _dumps(data).encode())
+        _write_bytes(EARNINGS_KEY, _dumps(data).encode())
 
 
-def dividend_cache_path(ticker: str) -> Path:
-    return DATA_ROOT / "dividends" / f"{ticker.upper()}.json"
+def _dividend_key(ticker: str) -> str:
+    return f"{DIVIDENDS_PREFIX}{ticker.upper()}.json"
 
 
 def load_dividends(ticker: str) -> dict[str, float]:
-    p = dividend_cache_path(ticker)
-    if not p.exists():
+    key = _dividend_key(ticker)
+    data = _read_bytes(key)
+    if data is None:
         return {}
-    return _loads(p.read_bytes())
+    return _loads(data)
 
 
 def save_dividends(ticker: str, data: dict[str, float]) -> None:
-    p = dividend_cache_path(ticker)
-    _write_bytes_atomic(p, _dumps(data).encode())
+    key = _dividend_key(ticker)
+    _write_bytes(key, _dumps(data).encode())
+
+
+# Backward compatibility functions for code that still uses Path-based access
+def transactions_path() -> Path:
+    """Get the transactions file path for the current project (local filesystem)."""
+    return ProjectContext().transactions_path
+
+
+def portfolio_path() -> Path:
+    """Get the portfolio file path for the current project (local filesystem)."""
+    return ProjectContext().portfolio_path
+
+
+def balance_path() -> Path:
+    """Get the balance file path for the current project (local filesystem)."""
+    return ProjectContext().balance_path
+
+
+def imports_dir() -> Path:
+    """Get the imports directory for the current project (local filesystem)."""
+    return ProjectContext().imports_dir
+
+
+def benchmark_cache_path(base_ccy: str) -> Path:
+    """Get the benchmark cache file path for the current project (local filesystem)."""
+    return ProjectContext().benchmark_cache_path(base_ccy)
+
+
+# Backward compatibility: Path-based read/write for JSONL
+def read_jsonl(path: Path) -> list[dict]:
+    """Read JSONL from a local file path (for backward compatibility)."""
+    if not path.exists():
+        return []
+    with path.open("rb") as f:
+        return [_loads(line) for line in f if line.strip()]
+
+
+def write_jsonl(path: Path, records: list[dict]) -> None:
+    """Write JSONL to a local file path (for backward compatibility)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    with tmp.open("wb") as f:
+        for rec in records:
+            f.write(_dumps(rec).encode())
+            f.write(b"\n")
+    tmp.replace(path)
+
+
+def append_jsonl(path: Path, record: dict) -> None:
+    """Append a record to a JSONL file (for backward compatibility)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("ab") as f:
+        f.write(_dumps(record).encode())
+        f.write(b"\n")
+
+
+def _project_dir(name: str | None = None, user: str | None = None) -> Path:
+    """Get the project directory for the given project/user (local filesystem)."""
+    return ProjectContext(name, user).project_dir

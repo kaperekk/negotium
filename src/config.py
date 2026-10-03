@@ -1,8 +1,8 @@
 """
 config.py — configuration with global defaults and per-user overrides.
 
-Global defaults:  data/config.json
-User config:      data/users/<username>/config.json
+Global defaults:  data/config.json (committed to git)
+User config:      data/users/<username>/config.json (in storage/R2)
 """
 from __future__ import annotations
 
@@ -10,11 +10,11 @@ import json
 import logging
 from pathlib import Path
 
-from storage.context import get_user_root
+from storage.context import get_current_user
+from storage.backends import get_backend
 
 ROOT = Path(__file__).parent.parent
-
-GLOBAL_CONFIG_PATH = ROOT / "data" / "config.json"
+LOCAL_GLOBAL_CONFIG = ROOT / "data" / "config.json"
 
 DEFAULTS: dict = {
     "default_currency": "PLN",
@@ -24,42 +24,57 @@ DEFAULTS: dict = {
     "log_scale": False,
 }
 
+GLOBAL_CONFIG_KEY = "config.json"
+
 
 def _load_global() -> dict:
-    """Load global default config."""
-    if not GLOBAL_CONFIG_PATH.exists():
-        _save_file(GLOBAL_CONFIG_PATH, DEFAULTS.copy())
-        return DEFAULTS.copy()
-    try:
-        with GLOBAL_CONFIG_PATH.open("r", encoding="utf-8") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError) as exc:
-        backup = GLOBAL_CONFIG_PATH.with_suffix(".json.corrupt")
-        logging.getLogger(__name__).warning(
-            "config.json unreadable (%s) — backed up to %s, using defaults",
-            exc, backup.name,
-        )
+    """Load global default config from local file (git) or storage."""
+    # Try local file first (committed defaults)
+    if LOCAL_GLOBAL_CONFIG.exists():
         try:
-            GLOBAL_CONFIG_PATH.replace(backup)
-        except OSError:
-            pass
-        _save_file(GLOBAL_CONFIG_PATH, DEFAULTS.copy())
-        return DEFAULTS.copy()
+            with LOCAL_GLOBAL_CONFIG.open("r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError) as exc:
+            logging.getLogger(__name__).warning(
+                "Local config.json unreadable (%s)", exc
+            )
+
+    # Fallback to storage (R2 or local backend)
+    backend = get_backend()
+    if backend.exists(GLOBAL_CONFIG_KEY):
+        try:
+            data = backend.read_bytes(GLOBAL_CONFIG_KEY)
+            return json.loads(data)
+        except (json.JSONDecodeError, OSError) as exc:
+            logging.getLogger(__name__).warning(
+                "Remote config.json unreadable (%s)", exc
+            )
+
+    # Final fallback to DEFAULTS
+    return DEFAULTS.copy()
 
 
-def _user_config_path(user: str | None = None) -> Path:
-    """Get the config path for a specific user."""
-    return get_user_root(user) / "config.json"
+def _save_global(data: dict) -> None:
+    """Save global config to storage (not local file)."""
+    backend = get_backend()
+    backend.write_bytes(GLOBAL_CONFIG_KEY, json.dumps(data, indent=2, ensure_ascii=False).encode())
+
+
+def _user_config_key(user: str | None = None) -> str:
+    """Get the config storage key for a specific user."""
+    user = user or get_current_user()
+    return f"users/{user}/config.json"
 
 
 def _load_user(user: str | None = None) -> dict:
-    """Load user-specific config."""
-    path = _user_config_path(user)
-    if not path.exists():
+    """Load user-specific config from storage."""
+    key = _user_config_key(user)
+    backend = get_backend()
+    if not backend.exists(key):
         return {}
     try:
-        with path.open("r", encoding="utf-8") as f:
-            return json.load(f)
+        data = backend.read_bytes(key)
+        return json.loads(data)
     except (json.JSONDecodeError, OSError) as exc:
         logging.getLogger(__name__).warning(
             "User config unreadable (%s) — using defaults", exc
@@ -67,13 +82,23 @@ def _load_user(user: str | None = None) -> dict:
         return {}
 
 
-def _save_file(path: Path, data: dict) -> None:
-    """Atomically persist JSON config (temp file + rename)."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-    tmp.replace(path)
+def _save_user(user: str | None, data: dict) -> None:
+    """Save user config to storage."""
+    key = _user_config_key(user)
+    backend = get_backend()
+    backend.write_bytes(key, json.dumps(data, indent=2, ensure_ascii=False).encode())
+
+
+def _ensure_user_config(user: str | None = None) -> dict:
+    """Ensure user config exists, creating from global if needed."""
+    user_cfg = _load_user(user)
+    if user_cfg:
+        return user_cfg
+
+    # Create user config from global
+    global_cfg = _load_global()
+    _save_user(user, global_cfg.copy())
+    return global_cfg.copy()
 
 
 _config_cache: dict | None = None
@@ -84,18 +109,19 @@ def load(user: str | None = None) -> dict:
     """Return config merged from global defaults and user overrides."""
     global _config_cache, _config_user
 
-    # Resolve user if not provided
     if user is None:
-        from storage.context import get_current_user
         user = get_current_user()
 
     if _config_cache is not None and _config_user == user:
         return _config_cache
 
-    # Start with global defaults
+    # Load global config (from local file or storage)
     cfg = _load_global()
-    # Apply user overrides
-    user_cfg = _load_user(user)
+
+    # Ensure user config exists (create from global if not)
+    user_cfg = _ensure_user_config(user)
+
+    # Merge: global + user overrides
     cfg = {**cfg, **user_cfg}
 
     # Fill missing keys from DEFAULTS
@@ -104,10 +130,6 @@ def load(user: str | None = None) -> dict:
         if k not in cfg:
             cfg[k] = v
             changed = True
-    if changed:
-        # Save merged config back to user config if it's missing keys
-        if user_cfg:
-            _save_file(_user_config_path(user), cfg)
 
     _config_cache = cfg
     _config_user = user
@@ -122,8 +144,8 @@ def invalidate_config_cache() -> None:
 
 
 def save(cfg: dict, user: str | None = None) -> None:
-    """Save config to user-specific config file."""
-    _save_file(_user_config_path(user), cfg)
+    """Save config to user-specific config file in storage."""
+    _save_user(user, cfg)
     invalidate_config_cache()
 
 

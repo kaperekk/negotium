@@ -31,11 +31,13 @@ def tmp(tmp_path: Path):
     import storage
     import ticker_data
 
+    # Patch root first so patched paths are used when modules reload
+    fx.patch_root(tmp_path)
+
     # Reload so module-level globals (paths, caches, registries) re-init,
     # then point them at the temp root.
     for mod in (storage, config, ledger_core, portfolio_core, ticker_data):
         importlib.reload(mod)
-    fx.patch_root(tmp_path)
 
     # Cache hygiene across tests sharing the reloaded modules.
     cache_fn = getattr(ledger_core.get_all_transactions, "_cache", None)
