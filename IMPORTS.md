@@ -180,4 +180,3 @@ transactions). Ticker symbols pass through your ticker rules at import time.
 | XTB file imported with the wrong currency | Rename the file with the correct prefix (e.g. `PLN_…xlsx`) and re-import |
 | `N skipped (duplicates)` | Normal — those rows were already imported |
 | Import changed history you didn't expect | Imports only append; check the ledger in `data/{PROJECT}/transactions.jsonl` |
-
