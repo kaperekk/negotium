@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 import storage
+from storage.context import DATA_ROOT
 
 
 def ensure_project_context() -> tuple[str | None, list[str]]:
@@ -39,7 +41,10 @@ def ensure_project_context() -> tuple[str | None, list[str]]:
 
 def configure_import_logging() -> logging.Logger:
     """Attach file-based logging for import-related modules to the active project."""
-    _log_dir = storage._project_dir()
+    # Use local filesystem for logs (they don't need to persist across pods)
+    project = storage.current_project() or "default"
+    user = storage.current_user()
+    _log_dir = DATA_ROOT / "users" / user / project
     _log_dir.mkdir(parents=True, exist_ok=True)
     _log_file = _log_dir / "import.log"
 

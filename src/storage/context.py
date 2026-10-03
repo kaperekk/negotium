@@ -29,7 +29,7 @@ def get_current_project() -> str | None:
         if val:
             return str(val)
     except Exception:
-        pass  # no Streamlit runtime (tests, plain scripts) -> process fallback
+        pass
     return _current_project
 
 
@@ -67,19 +67,30 @@ def set_current_user(name: str | None) -> None:
         import streamlit as st
         if name is not None:
             st.session_state[_SESSION_USER_KEY] = name
-            # Ensure user directory exists
-            USERS_ROOT = Path(__file__).parent.parent.parent / "data" / "users"
-            user_dir = USERS_ROOT / name
-            user_dir.mkdir(parents=True, exist_ok=True)
+            _ensure_user_dir(name)
         else:
             st.session_state.pop(_SESSION_USER_KEY, None)
     except Exception:
         pass
 
 
+def _ensure_user_dir(name: str) -> None:
+    """Ensure user directory exists (for local backend)."""
+    from storage.backends import get_backend
+    backend = get_backend()
+    user_prefix = f"users/{name}/"
+    if not backend.exists(user_prefix):
+        backend.mkdir(user_prefix)
+
+
 def get_user_root(user: str | None = None) -> Path:
-    """Get the root directory for a specific user."""
+    """Get the root directory for a specific user (local path for backward compat)."""
     return USERS_ROOT / (user or get_current_user())
+
+
+def get_user_prefix(user: str | None = None) -> str:
+    """Get the storage prefix for a specific user."""
+    return f"users/{user or get_current_user()}/"
 
 
 class ProjectContext:
@@ -111,8 +122,31 @@ class ProjectContext:
         return n
 
     @property
+    def project_prefix(self) -> str:
+        return f"{get_user_prefix(self.user)}{self.name}/"
+
+    @property
     def project_dir(self) -> Path:
         return get_user_root(self.user) / self.name
+
+    def _key(self, filename: str) -> str:
+        return f"{self.project_prefix}{filename}"
+
+    @property
+    def transactions_key(self) -> str:
+        return self._key("transactions.jsonl")
+
+    @property
+    def portfolio_key(self) -> str:
+        return self._key("portfolio.jsonl")
+
+    @property
+    def balance_key(self) -> str:
+        return self._key("balance.json")
+
+    @property
+    def imports_prefix(self) -> str:
+        return f"{self.project_prefix}imports/"
 
     @property
     def transactions_path(self) -> Path:
@@ -130,9 +164,14 @@ class ProjectContext:
     def imports_dir(self) -> Path:
         return self.project_dir / "imports"
 
+    def benchmark_cache_key(self, base_ccy: str) -> str:
+        return self._key(f"benchmarks_{base_ccy.upper()}.json")
+
     def benchmark_cache_path(self, base_ccy: str) -> Path:
         return self.project_dir / f"benchmarks_{base_ccy.upper()}.json"
 
     def ensure_directories(self) -> None:
-        self.project_dir.mkdir(parents=True, exist_ok=True)
-        self.imports_dir.mkdir(parents=True, exist_ok=True)
+        from storage.backends import get_backend
+        backend = get_backend()
+        backend.mkdir(self.project_prefix)
+        backend.mkdir(self.imports_prefix)

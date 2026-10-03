@@ -1,26 +1,27 @@
 #!/usr/bin/env python3
-"""Create a new user entry in users.json with a UUID key."""
+"""Create a new user entry in users.json with a UUID key.
+
+Uses storage backend (local or R2 via COS_* env vars).
+"""
 from __future__ import annotations
 
-import json
+import os
 import sys
 import uuid
 from datetime import date
 from pathlib import Path
 
+# Load .env if present
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent.parent / ".env")
+except ImportError:
+    pass
 
-USERS_PATH = Path(__file__).parent.parent / "data" / "users.json"
+# Add src to path
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-
-def create_user_entry(username: str) -> dict:
-    """Create a new user entry with UUID key."""
-    user_key = str(uuid.uuid4())
-    return {
-        user_key: {
-            "user_name": username,
-            "created": date.today().isoformat(),
-        }
-    }
+import storage
 
 
 def main() -> int:
@@ -33,30 +34,21 @@ def main() -> int:
         print("Error: Username cannot be empty")
         return 1
 
-    # Load existing users
-    if USERS_PATH.exists():
-        with USERS_PATH.open("r", encoding="utf-8") as f:
-            users = json.load(f)
-    else:
-        users = {}
-
-    # Check if user already exists (by user_name)
-    for data in users.values():
+    # Check if user already exists
+    for user_key, data in storage._load_users().items():
         if data.get("user_name") == username:
             print(f"Error: User '{username}' already exists")
             return 1
 
-    # Create and add new user
-    new_user = create_user_entry(username)
-    users.update(new_user)
+    # Create and add new user via storage (uses R2 if COS_* env vars set)
+    user_key = str(uuid.uuid4())
+    storage._save_users({
+        **storage._load_users(),
+        user_key: {"user_name": username, "created": date.today().isoformat()},
+    })
 
-    # Write back
-    USERS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with USERS_PATH.open("w", encoding="utf-8") as f:
-        json.dump(users, f, indent=2, ensure_ascii=False)
-
-    user_key = list(new_user.keys())[0]
     print(f"Created user '{username}' with key: {user_key}")
+    print(f"Stored in: {'R2' if os.getenv('COS_BUCKET') else 'local filesystem'}")
     return 0
 
 

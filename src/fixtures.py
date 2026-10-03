@@ -46,6 +46,10 @@ def patch_root(tmp: Path):
     ctx_module.DATA_ROOT  = tmp / "data"
     ctx_module.USERS_ROOT = tmp / "data" / "users"
 
+    # Reset the storage backend to use the temp directory
+    from storage.backends import LocalBackend, set_backend
+    set_backend(LocalBackend(tmp / "data"))
+
     # Create default user in users.json
     users_data = {
         "a1b2c3d4-e5f6-7890-abcd-ef1234567890": {

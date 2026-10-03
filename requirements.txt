@@ -7,6 +7,8 @@ pandas
 orjson
 openpyxl
 python-calamine
+boto3
+python-dotenv
 
 # Test suite
 pytest

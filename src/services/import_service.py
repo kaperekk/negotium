@@ -6,6 +6,7 @@ Handles broker format detection, multi-file imports, and automatic cache invalid
 from __future__ import annotations
 
 import logging
+import tempfile
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
@@ -23,6 +24,7 @@ from services.importers import (
     summarize_warnings,
 )
 from storage.context import ProjectContext
+from storage.backends import get_backend
 
 log = logging.getLogger(__name__)
 
@@ -58,6 +60,7 @@ class ImportService:
     ):
         self.context = context or ProjectContext()
         self.importers = importers or BROKER_IMPORTERS
+        self._backend = get_backend()
 
     def importer_for(self, broker: str) -> BaseBrokerImporter:
         """Look up the registered importer for a broker key."""
@@ -86,9 +89,6 @@ class ImportService:
         """
         suffix = Path(filename).suffix.lower()
         if suffix == ".xlsx":
-            # Need to check content to distinguish XTB from other .xlsx files
-            # We can't do that here without the full path, so defer to extension
-            # The caller should use a more specific method when path is available
             return "xtb"
         for broker, (pattern, _) in self.importers.items():
             if Path(pattern).suffix.lower() == suffix:
@@ -149,14 +149,76 @@ class ImportService:
             importer.post_import(file_path, ccy)
         return result
 
-    def discover_files(self) -> list[tuple[str, Path]]:
-        """Every stored statement file, as (broker_key, path) pairs, in registry order."""
-        found: list[tuple[str, Path]] = []
+    def _imports_prefix(self) -> str:
+        return self.context.imports_prefix
+
+    def _broker_prefix(self, broker: str) -> str:
+        return f"{self._imports_prefix()}{broker}/"
+
+    def store_import_file(self, broker: str, filename: str, data: bytes) -> str:
+        """Store an imported file and return its storage key."""
+        key = f"{self._broker_prefix(broker)}{filename}"
+        self._backend.write_bytes(key, data)
+        return key
+
+    def get_import_file(self, broker: str, filename: str) -> bytes | None:
+        """Retrieve an imported file as bytes."""
+        key = f"{self._broker_prefix(broker)}{filename}"
+        if not self._backend.exists(key):
+            return None
+        return self._backend.read_bytes(key)
+
+    def list_import_files(self, broker: str) -> list[str]:
+        """List all stored import files for a broker."""
+        prefix = self._broker_prefix(broker)
+        keys = self._backend.list_files(prefix)
+        return [k[len(prefix):] for k in keys if k.startswith(prefix)]
+
+    def delete_import_file(self, broker: str, filename: str) -> None:
+        """Delete an imported file."""
+        key = f"{self._broker_prefix(broker)}{filename}"
+        self._backend.delete(key)
+
+    def _with_temp_file(self, data: bytes, suffix: str, func: Callable[[Path], any]) -> any:
+        """Create a temp file with data, call func, and clean up."""
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp.write(data)
+            tmp_path = Path(tmp.name)
+        try:
+            return func(tmp_path)
+        finally:
+            try:
+                tmp_path.unlink()
+            except Exception:
+                pass
+
+    def import_stored_file(
+        self,
+        broker: str,
+        filename: str,
+        currency: str | None = None,
+        progress_cb: Callable[[float, str], None] | None = None,
+        run_post_import: bool = True,
+    ) -> ImportResult:
+        """Import a previously stored file by broker and filename."""
+        data = self.get_import_file(broker, filename)
+        if data is None:
+            return ImportResult(success=False, error=f"File not found: {filename}")
+
+        pattern, _ = self.importers[broker]
+        suffix = Path(pattern).suffix
+
+        def do_import(path: Path) -> ImportResult:
+            return self.import_file(broker, path, currency, progress_cb, run_post_import)
+
+        return self._with_temp_file(data, suffix, do_import)
+
+    def discover_files(self) -> list[tuple[str, str]]:
+        """Every stored statement file, as (broker_key, filename) pairs, in registry order."""
+        found: list[tuple[str, str]] = []
         for broker, (pattern, _) in self.importers.items():
-            bdir = self.context.imports_dir / broker
-            if not bdir.exists():
-                continue
-            found.extend((broker, fpath) for fpath in sorted(bdir.glob(pattern)))
+            files = self.list_import_files(broker)
+            found.extend((broker, f) for f in sorted(files))
         return found
 
     def run_full_refresh(
@@ -173,27 +235,30 @@ class ImportService:
         all_files = self.discover_files()
         report = RefreshReport(file_count=len(all_files))
 
-        for idx, (broker, fpath) in enumerate(all_files):
+        for idx, (broker, filename) in enumerate(all_files):
             if progress_cb:
-                progress_cb(idx / len(all_files), f"Importing {fpath.name}…")
+                progress_cb(idx / len(all_files), f"Importing {filename}…")
 
-            res = self.import_file(
-                broker, fpath, progress_cb=progress_cb, run_post_import=False
+            res = self.import_stored_file(
+                broker, filename, progress_cb=progress_cb, run_post_import=False
             )
             if res.success:
                 report.imported += res.imported
                 report.skipped += res.skipped
                 for w in summarize_warnings(res.warnings):
-                    report.warnings.append(f"{fpath.name}: {w}")
+                    report.warnings.append(f"{filename}: {w}")
             else:
-                report.warnings.append(f"{fpath.name}: import failed — {res.error}")
+                report.warnings.append(f"{filename}: import failed — {res.error}")
 
-        # Broker post-import hooks (e.g. XTB VWAP open-lot fixes) run after every
-        # file is in the ledger, since they read the whole position set.
-        for broker, fpath in all_files:
+        for broker, filename in all_files:
             importer = self.importer_for(broker)
             if hasattr(importer, "post_import"):
-                importer.post_import(fpath, self.currency_for(broker, fpath))
+                ccy = self.currency_for(broker, filename)
+                data = self.get_import_file(broker, filename)
+                if data is not None:
+                    pattern, _ = self.importers[broker]
+                    suffix = Path(pattern).suffix
+                    self._with_temp_file(data, suffix, lambda p: importer.post_import(p, ccy))
 
         storage.invalidate_portfolio_from((today - timedelta(days=1)).isoformat())
         return report
