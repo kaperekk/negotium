@@ -9,6 +9,8 @@ import storage
 
 def ensure_project_context() -> tuple[str | None, list[str]]:
     """Initialise the project registry and return current project and project list."""
+    from storage.context import DATA_ROOT
+    DATA_ROOT.mkdir(parents=True, exist_ok=True)
     storage.init_legacy_project()
     projects = storage.list_projects()
 
