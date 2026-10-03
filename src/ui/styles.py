@@ -637,15 +637,16 @@ def build_toggle_button_styles(theme: dict[str, str]) -> str:
 
 
 
-def render_project_banner(project_name: str, theme: dict[str, str]) -> str:
+def render_project_banner(project_name: str, theme: dict[str, str], user_name: str = "") -> str:
     t = theme
+    user_part = f"👤 {html.escape(user_name)} / " if user_name else ""
     return f"""
     <div style="
         padding:0.8rem 1.2rem; border-radius:0.75rem; text-align:center;
         background:{t["card_bg"]}; border:1px solid {t["border"]};
         margin-top:-1rem; margin-bottom:0.5rem;
     ">
-        <div style="font-size:{BANNER_TITLE_FONT_REM}rem; font-weight:700; color:{t["text"]};">📈 {project_name}</div>
+        <div style="font-size:{BANNER_TITLE_FONT_REM}rem; font-weight:700; color:{t["text"]};">{user_part}📈 {project_name}</div>
     </div>
     """
 
