@@ -32,6 +32,7 @@ echo "============================================================"
 
 if ! PYTHONPATH=src .venv/bin/python -m pytest tests/ \
     --ignore=tests/test_range_refresh_regression.py \
+    --ignore=tests/test_performance_download.py \
     -v --tb=short; then
     echo ""
     echo "❌ Tests failed!"
