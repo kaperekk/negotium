@@ -1,7 +1,7 @@
 """
-config.py — single global config shared by all projects
+config.py — user-scoped config (theme, currency, ticker rules, ISIN mappings).
 
-Global config:  data/config.json
+Config stored per-user in data/users/<user_id>/config.json
 """
 from __future__ import annotations
 
@@ -9,9 +9,7 @@ import json
 import logging
 from pathlib import Path
 
-ROOT = Path(__file__).parent.parent
-
-GLOBAL_CONFIG_PATH = ROOT / "data" / "config.json"
+import storage
 
 DEFAULTS: dict = {
     "default_currency": "PLN",
@@ -20,29 +18,6 @@ DEFAULTS: dict = {
     "theme": "dark",
     "log_scale": False,
 }
-
-
-def _load_global() -> dict:
-    if not GLOBAL_CONFIG_PATH.exists():
-        _save_file(GLOBAL_CONFIG_PATH, DEFAULTS.copy())
-        return DEFAULTS.copy()
-    try:
-        with GLOBAL_CONFIG_PATH.open("r", encoding="utf-8") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError) as exc:
-        # Corrupt/unreadable config: keep the broken file for inspection
-        # and start from defaults instead of crashing every launch.
-        backup = GLOBAL_CONFIG_PATH.with_suffix(".json.corrupt")
-        logging.getLogger(__name__).warning(
-            "config.json unreadable (%s) — backed up to %s, using defaults",
-            exc, backup.name,
-        )
-        try:
-            GLOBAL_CONFIG_PATH.replace(backup)
-        except OSError:
-            pass
-        _save_file(GLOBAL_CONFIG_PATH, DEFAULTS.copy())
-        return DEFAULTS.copy()
 
 
 def _save_file(path: Path, data: dict) -> None:
@@ -54,16 +29,25 @@ def _save_file(path: Path, data: dict) -> None:
     tmp.replace(path)
 
 
-_config_cache: dict | None = None
+_config_cache: dict[str, dict] = {}  # user_id -> config
+
+
+def _get_user_id() -> str:
+    """Get current user_id, raise if not authenticated."""
+    from storage.context import get_current_user
+    user_id = get_current_user()
+    if not user_id:
+        raise RuntimeError("No authenticated user")
+    return user_id
 
 
 def load() -> dict:
-    """Return the single global config shared by all projects."""
-    global _config_cache
-    if _config_cache is not None:
-        return _config_cache
+    """Return the current user's config."""
+    user_id = _get_user_id()
+    if user_id in _config_cache:
+        return _config_cache[user_id]
 
-    cfg = _load_global()
+    cfg = storage.load_config()
     # Fill missing keys from defaults
     changed = False
     for k, v in DEFAULTS.items():
@@ -71,20 +55,22 @@ def load() -> dict:
             cfg[k] = v
             changed = True
     if changed:
-        _save_file(GLOBAL_CONFIG_PATH, cfg)
-    _config_cache = cfg
+        storage.save_config(cfg)
+    _config_cache[user_id] = cfg
     return cfg
 
 
-def invalidate_config_cache() -> None:
-    """Clear the in-memory config cache (call after save)."""
-    global _config_cache
-    _config_cache = None
+def invalidate_config_cache(user_id: str | None = None) -> None:
+    """Clear the in-memory config cache for a user (or all if None)."""
+    if user_id is None:
+        _config_cache.clear()
+    else:
+        _config_cache.pop(user_id, None)
 
 
 def save(cfg: dict) -> None:
-    """Save config to the single global config file."""
-    _save_file(GLOBAL_CONFIG_PATH, cfg)
+    """Save config to current user's config file."""
+    storage.save_config(cfg)
     invalidate_config_cache()
 
 

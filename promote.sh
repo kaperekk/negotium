@@ -1,8 +1,9 @@
 #!/bin/bash
-# Promote main -> release (fast-forward only)
+# Promote main -> release (fast-forward only) with test verification
 
 set -e
 
+echo "🔍 Fetching latest..."
 git fetch origin
 
 # Check if release can be fast-forwarded to main
@@ -12,7 +13,16 @@ if ! git merge-base --is-ancestor origin/release origin/main; then
     exit 1
 fi
 
+echo "🧪 Running tests (skipping slow/network tests)..."
+if ! python3.11 -m pytest tests/ -q --tb=short -m "not slow"; then
+    echo "❌ Tests failed — promotion aborted"
+    exit 1
+fi
+
+echo "✅ Tests passed"
+
 # Fast-forward release to main
+echo "🚀 Promoting main → release..."
 git push origin origin/main:release --no-force
 
 echo "✅ release fast-forwarded to main"

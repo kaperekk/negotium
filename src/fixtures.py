@@ -30,21 +30,40 @@ def patch_root(tmp: Path):
     """
     import storage
     import config as cfg_module
+    from storage.context import DATA_ROOT, COMMON_ROOT, USERS_ROOT, set_current_user, set_current_project
 
-    storage.ROOT               = tmp
-    storage.DATA_ROOT          = tmp / "data"
-    storage.PRICES_DIR         = tmp / "data" / "prices"
-    storage.ADJ_PRICES_DIR     = tmp / "data" / "prices_adj"
-    storage.PROJECTS_PATH      = tmp / "data" / "projects.json"
+    # Patch storage constants
+    storage.ROOT = tmp
+    storage.DATA_ROOT = tmp / "data"
+    storage.PRICES_DIR = tmp / "data" / "common" / "prices"
+    storage.ADJ_PRICES_DIR = tmp / "data" / "common" / "prices_adj"
+    storage.TICKER_NAMES_PATH = tmp / "data" / "common" / "ticker_names.json"
+    storage.TICKER_META_PATH = tmp / "data" / "common" / "ticker_meta.json"
+    storage.ATH_PATH = tmp / "data" / "common" / "ath.json"
+    storage.EARNINGS_PATH = tmp / "data" / "common" / "earnings.json"
+    storage.DIVIDENDS_DIR = tmp / "data" / "common" / "dividends"
 
-    # Set up a default test project
-    test_project = tmp / "data" / "test_project"
-    test_project.mkdir(parents=True, exist_ok=True)
-    (test_project / "imports").mkdir(exist_ok=True)
-    storage.set_current_project("test_project")
+    # Patch context constants
+    import storage.context as ctx_module
+    ctx_module.ROOT = tmp
+    ctx_module.DATA_ROOT = tmp / "data"
+    ctx_module.COMMON_ROOT = tmp / "data" / "common"
+    ctx_module.USERS_ROOT = tmp / "data" / "users"
 
-    cfg_module.ROOT                = tmp
-    cfg_module.GLOBAL_CONFIG_PATH  = tmp / "data" / "config.json"
+    # Set up a default test user and project
+    test_user = "test_user"
+    test_project = "test_project"
+    set_current_user(test_user)
+    set_current_project(test_project)
+
+    # Create user directory structure
+    user_root = tmp / "data" / "users" / test_user
+    (user_root / "projects" / test_project / "imports").mkdir(parents=True, exist_ok=True)
+    (user_root / "config.json").write_text('{"default_currency": "PLN", "theme": "dark"}')
+
+    # Patch config
+    cfg_module.ROOT = tmp
+    # Config now uses storage.load_config/save_config which use user-specific paths
 
 
 SAMPLE_CONFIG = {
@@ -112,7 +131,7 @@ def inject_fake_prices(tmp: Path):
     import json
 
     def write(ticker: str, year: int, prices: dict):
-        p = tmp / "data" / "prices" / ticker / f"{year}.json"
+        p = tmp / "data" / "common" / "prices" / ticker / f"{year}.json"
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps(prices))
 

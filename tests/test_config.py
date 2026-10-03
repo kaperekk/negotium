@@ -1,4 +1,4 @@
-"""Global config — pytest suite (split from the original monolithic runner)."""
+"""User config — pytest suite."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ def test_config_defaults(tmp: Path):
     import config
     cfg = config.load()
     assert cfg["default_currency"] == "PLN"
-    assert (tmp / "data" / "config.json").exists(), "config.json should be created"
+    assert (tmp / "data" / "users" / "test_user" / "config.json").exists(), "config.json should be created"
 
 
 def test_config_save_and_reload(tmp: Path):
@@ -32,21 +32,39 @@ def test_config_save_and_reload(tmp: Path):
     assert loaded["log_scale"] is True
 
 
-def test_config_is_global(tmp: Path):
-    """All projects share one global config file (no per-project config)."""
+def test_config_is_per_user(tmp: Path):
+    """Each user has their own config file (no cross-user config sharing)."""
     import storage, config
+    from storage.context import set_current_user
 
+    # User 1
+    set_current_user("user_1")
     storage.create_project("proj_a")
     storage.set_current_project("proj_a")
     cfg = config.load()
-    cfg["name"] = "Global Portfolio"
+    cfg["name"] = "User 1 Portfolio"
     config.save(cfg)
 
+    # User 2
+    set_current_user("user_2")
     storage.create_project("proj_b")
     storage.set_current_project("proj_b")
-    assert config.load()["name"] == "Global Portfolio"
+    cfg2 = config.load()
+    cfg2["name"] = "User 2 Portfolio"
+    config.save(cfg2)
 
-    # No per-project config files should be created
-    assert not (tmp / "data" / "proj_a" / "config.json").exists()
-    assert not (tmp / "data" / "proj_b" / "config.json").exists()
-    assert (tmp / "data" / "config.json").exists()
+    # User 1's config unchanged
+    set_current_user("user_1")
+    storage.set_current_project("proj_a")
+    assert config.load()["name"] == "User 1 Portfolio"
+
+    # User 2's config unchanged
+    set_current_user("user_2")
+    storage.set_current_project("proj_b")
+    assert config.load()["name"] == "User 2 Portfolio"
+
+    # Config files are per-user
+    assert (tmp / "data" / "users" / "user_1" / "config.json").exists()
+    assert (tmp / "data" / "users" / "user_2" / "config.json").exists()
+    # No global config
+    assert not (tmp / "data" / "config.json").exists()

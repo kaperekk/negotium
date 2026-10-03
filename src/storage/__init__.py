@@ -1,5 +1,5 @@
 """
-storage package — low-level file I/O helpers and repositories with multi-project support.
+storage package — low-level file I/O helpers and repositories with multi-project, multi-user support.
 """
 from __future__ import annotations
 
@@ -16,10 +16,13 @@ from domain.currencies import (
     TRIANGULATE_VIA_USD,
 )
 from storage.context import (
+    COMMON_ROOT,
     DATA_ROOT,
     ROOT,
     ProjectContext,
     get_current_project,
+    get_current_user,
+    get_user_data_root,
     set_current_project,
 )
 from storage.repositories import (
@@ -45,15 +48,26 @@ except ImportError:
     _dumps = lambda obj: json.dumps(obj, ensure_ascii=False)
 
 
-PRICES_DIR = DATA_ROOT / "prices"
-ADJ_PRICES_DIR = DATA_ROOT / "prices_adj"
-PROJECTS_PATH = DATA_ROOT / "projects.json"
-TICKER_NAMES_PATH = DATA_ROOT / "ticker_names.json"
-TICKER_META_PATH = DATA_ROOT / "ticker_meta.json"
-ATH_PATH = DATA_ROOT / "ath.json"
-EARNINGS_PATH = DATA_ROOT / "earnings.json"
+# Common (shared) data paths
+PRICES_DIR = COMMON_ROOT / "prices"
+ADJ_PRICES_DIR = COMMON_ROOT / "prices_adj"
+TICKER_NAMES_PATH = COMMON_ROOT / "ticker_names.json"
+TICKER_META_PATH = COMMON_ROOT / "ticker_meta.json"
+ATH_PATH = COMMON_ROOT / "ath.json"
+EARNINGS_PATH = COMMON_ROOT / "earnings.json"
+DIVIDENDS_DIR = COMMON_ROOT / "dividends"
 
 _write_bytes_atomic = write_bytes_atomic
+
+
+def _get_user_paths() -> tuple[Path, Path]:
+    """Return (user_data_root, projects_json_path) for current user."""
+    user_id = get_current_user()
+    if not user_id:
+        # Fallback for tests/scripts without auth
+        return DATA_ROOT, DATA_ROOT / "projects.json"
+    user_root = get_user_data_root(user_id)
+    return user_root, user_root / "projects.json"
 
 
 def current_project() -> str | None:
@@ -84,18 +98,23 @@ def benchmark_cache_path(base_ccy: str) -> Path:
     return ProjectContext().benchmark_cache_path(base_ccy)
 
 
+def _projects_path() -> Path:
+    return _get_user_paths()[1]
+
+
 def _load_registry() -> dict:
-    if not PROJECTS_PATH.exists():
+    path = _projects_path()
+    if not path.exists():
         return {}
-    return _loads(PROJECTS_PATH.read_bytes())
+    return _loads(path.read_bytes())
 
 
 def _save_registry(reg: dict) -> None:
-    _write_bytes_atomic(PROJECTS_PATH, _dumps(reg).encode())
+    _write_bytes_atomic(_projects_path(), _dumps(reg).encode())
 
 
 def list_projects() -> list[str]:
-    if not PROJECTS_PATH.exists():
+    if not _projects_path().exists():
         return []
     return sorted(_load_registry().keys())
 
@@ -176,6 +195,7 @@ def delete_project(name: str) -> None:
 
 
 def init_legacy_project() -> str | None:
+    """Migrate legacy single-project data to current user's default project."""
     legacy_tx = DATA_ROOT / "transactions.jsonl"
     if not legacy_tx.exists():
         return None
@@ -199,6 +219,25 @@ def init_legacy_project() -> str | None:
     _save_registry(reg)
     set_current_project(name)
     return name
+
+
+# User config (theme, currency, ticker rules, ISIN mappings)
+def _config_path() -> Path:
+    user_id = get_current_user()
+    if not user_id:
+        return DATA_ROOT / "config.json"
+    return get_user_data_root(user_id) / "config.json"
+
+
+def load_config() -> dict:
+    path = _config_path()
+    if not path.exists():
+        return {}
+    return _loads(path.read_bytes())
+
+
+def save_config(cfg: dict) -> None:
+    _write_bytes_atomic(_config_path(), _dumps(cfg).encode())
 
 
 def load_balance() -> dict[str, dict]:
@@ -347,7 +386,7 @@ def save_earnings(data: dict) -> None:
 
 
 def dividend_cache_path(ticker: str) -> Path:
-    return DATA_ROOT / "dividends" / f"{ticker.upper()}.json"
+    return DIVIDENDS_DIR / f"{ticker.upper()}.json"
 
 
 def load_dividends(ticker: str) -> dict[str, float]:

@@ -14,6 +14,8 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).parent))
 
 import ledger_core
+from ui.auth import require_auth
+from ui.bootstrap import ensure_project_context
 from ui.dashboard import render_dashboard
 from ui.runtime import init_runtime
 from ui.sidebar import render_sidebar
@@ -33,6 +35,12 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# Authenticate user before any other initialization
+require_auth()
+
+# Ensure project context (requires authenticated user)
+ensure_project_context()
 
 cfg, storage, _theme_name, T, today = init_runtime()
 
