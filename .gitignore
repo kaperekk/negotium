@@ -1,6 +1,7 @@
-# Ignore all data files except config
+# Ignore all data files except config and users
 data/*
 !data/config.json
+!data/users.json
 
 # Python
 __pycache__/

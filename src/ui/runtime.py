@@ -12,10 +12,16 @@ from ui.bootstrap import configure_import_logging, ensure_project_context
 from ui.colors import get_theme
 
 
+DEFAULT_USER_KEY = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+
+
 def init_runtime() -> tuple[dict, dict, str, str, date]:
     """Prepare project state, config, theme and logger for the UI."""
     ensure_project_context()
     configure_import_logging()
+
+    # Always set default user
+    storage.set_current_user_by_key(DEFAULT_USER_KEY)
 
     cfg = cfg_module.load()
     if "theme" not in st.session_state:

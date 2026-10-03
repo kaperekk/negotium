@@ -8,6 +8,7 @@ from datetime import date, datetime, timedelta
 import streamlit as st
 
 import config as cfg_module
+import storage
 from ledger_core import remap_tickers
 from services.import_service import BROKER_EXTENSIONS, ImportService
 from services.importers import summarize_warnings
@@ -87,10 +88,12 @@ def _add_transaction_to_ledger(tx_date, entries, storage, data_start_date, base_
 
 def render_sidebar(cfg, storage, T, today, data_start_date):
     _import_service = ImportService()
+    current_user = storage.current_user()
     with st.sidebar:
         project_name = html.escape(storage.get_current_project())
         st.markdown(render_project_banner(project_name, T), unsafe_allow_html=True)
 
+        # Project selection
         projects = storage.list_projects()
         current = storage.get_current_project()
 
@@ -227,7 +230,7 @@ def render_sidebar(cfg, storage, T, today, data_start_date):
             new_theme = "light" if light_on else "dark"
             if new_theme != current_theme:
                 st.session_state["theme"] = new_theme
-                cfg_module.save_theme(new_theme)
+                cfg_module.save_theme(new_theme, current_user)
                 # Tell app.py to cover the next rerun with the theme veil so
                 # the switch repaints in one visible step.
                 st.session_state["theme_fade"] = time.time()
@@ -241,7 +244,7 @@ def render_sidebar(cfg, storage, T, today, data_start_date):
             )
             if log_scale_on != current_log_scale:
                 st.session_state["log_scale"] = log_scale_on
-                cfg_module.save_log_scale(log_scale_on)
+                cfg_module.save_log_scale(log_scale_on, current_user)
                 st.rerun()
 
             st.subheader("Ticker rules")
@@ -256,7 +259,7 @@ def render_sidebar(cfg, storage, T, today, data_start_date):
             if st.button("Save ticker rules"):
                 new_rules = [line.strip() for line in rules_text.strip().splitlines() if line.strip()]
                 cfg["ticker_rules"] = new_rules
-                cfg_module.save(cfg)
+                cfg_module.save(cfg, current_user)
                 changed = remap_tickers()
                 if changed:
                     st.success(f"Rules saved! Remapped {changed} entr{'y' if changed == 1 else 'ies'} in ledger.")
@@ -281,7 +284,7 @@ def render_sidebar(cfg, storage, T, today, data_start_date):
                     st.error("Each line must look like `ISIN=TICKER` — invalid: " + ", ".join(bad[:3]))
                 else:
                     cfg["isin_tickers"] = raw_lines
-                    cfg_module.save(cfg)
+                    cfg_module.save(cfg, current_user)
                     st.success(
                         f"Saved {len(raw_lines)} mapping(s). Re-import your BOSSA statement "
                         "(🔄 Refresh replays the stored file) to pick them up."

@@ -10,6 +10,13 @@ import storage
 def ensure_project_context() -> tuple[str | None, list[str]]:
     """Initialise the project registry and return current project and project list."""
     storage.init_legacy_project()
+    
+    # Ensure user context is set
+    if storage.current_user() is None:
+        users = storage.list_users()
+        if users:
+            storage.set_current_user(users[0])
+    
     projects = storage.list_projects()
 
     if not projects:

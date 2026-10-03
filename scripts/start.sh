@@ -122,7 +122,7 @@ echo -e "${BOLD}Starting app → http://localhost:${PORT}${RESET_C}"
 echo -e "  Press ${BOLD}Ctrl+C${RESET_C} to stop."
 echo ""
 
-exec "$PYTHON" -m streamlit run src/app.py \
+exec "$PYTHON" -m streamlit run src/app_local.py \
   --server.port "$PORT" \
   --server.headless true \
   --server.runOnSave true \

@@ -12,9 +12,13 @@ from typing import Iterator
 
 ROOT = Path(__file__).parent.parent.parent
 DATA_ROOT = ROOT / "data"
+USERS_ROOT = DATA_ROOT / "users"
+DEFAULT_USER = "default_user"
 
 _SESSION_PROJECT_KEY = "negotium_current_project"
+_SESSION_USER_KEY = "negotium_current_user"
 _current_project: str | None = None
+_current_user: str | None = None
 
 
 def get_current_project() -> str | None:
@@ -43,12 +47,52 @@ def set_current_project(name: str | None) -> None:
         pass
 
 
+def get_current_user() -> str:
+    """Return the active user: session-scoped first, then process fallback, then default."""
+    try:
+        import streamlit as st
+        val = st.session_state.get(_SESSION_USER_KEY)
+        if val:
+            return str(val)
+    except Exception:
+        pass
+    return _current_user or DEFAULT_USER
+
+
+def set_current_user(name: str | None) -> None:
+    """Set the active user for this session (and the process fallback)."""
+    global _current_user
+    _current_user = name
+    try:
+        import streamlit as st
+        if name is not None:
+            st.session_state[_SESSION_USER_KEY] = name
+            # Ensure user directory exists
+            USERS_ROOT = Path(__file__).parent.parent.parent / "data" / "users"
+            user_dir = USERS_ROOT / name
+            user_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            st.session_state.pop(_SESSION_USER_KEY, None)
+    except Exception:
+        pass
+
+
+def get_user_root(user: str | None = None) -> Path:
+    """Get the root directory for a specific user."""
+    return USERS_ROOT / (user or get_current_user())
+
+
 class ProjectContext:
     """Encapsulates file paths and directory layout for a given project."""
 
-    def __init__(self, name: str | None = None, data_root: Path | None = None):
+    def __init__(self, name: str | None = None, user: str | None = None, data_root: Path | None = None):
         self._name = name
+        self._user = user
         self._data_root = data_root
+
+    @property
+    def user(self) -> str:
+        return self._user or get_current_user()
 
     @property
     def data_root(self) -> Path:
@@ -68,7 +112,7 @@ class ProjectContext:
 
     @property
     def project_dir(self) -> Path:
-        return self.data_root / self.name
+        return get_user_root(self.user) / self.name
 
     @property
     def transactions_path(self) -> Path:

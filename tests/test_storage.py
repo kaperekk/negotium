@@ -174,3 +174,117 @@ def test_benchmark_load_returns_none_when_missing(tmp: Path):
     """load_benchmarks returns None when no cache file exists."""
     import storage
     assert storage.load_benchmarks("USD") is None
+
+
+def test_list_users_default(tmp: Path):
+    """list_users returns default_user when no users.json exists."""
+    import storage
+    users = storage.list_users()
+    assert "default_user" in users
+
+
+def test_create_user(tmp: Path):
+    """create_user adds user to users.json and creates directory."""
+    import storage
+    import os
+
+    storage.create_user("testuser")
+    users = storage.list_users()
+    assert "testuser" in users
+    assert "default_user" in users
+
+    # Check directory was created
+    user_dir = storage.USERS_ROOT / "testuser"
+    assert user_dir.exists()
+    assert user_dir.is_dir()
+
+
+def test_create_user_duplicate_raises(tmp: Path):
+    """Creating duplicate user raises ValueError."""
+    import storage
+
+    storage.create_user("testuser")
+    try:
+        storage.create_user("testuser")
+        assert False, "Expected ValueError"
+    except ValueError as e:
+        assert "already exists" in str(e)
+
+
+def test_get_user_by_key(tmp: Path):
+    """get_user_by_key returns user_name for valid key, None for invalid."""
+    import storage
+    import json
+
+    # Check default user key
+    user_name = storage.get_user_by_key("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+    assert user_name == "default_user"
+
+    # Invalid key returns None
+    assert storage.get_user_by_key("invalid-key") is None
+
+
+def test_set_current_user_by_key(tmp: Path):
+    """set_current_user_by_key sets current user correctly."""
+    import storage
+
+    storage.set_current_user_by_key("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+    assert storage.current_user() == "default_user"
+
+    # Invalid key falls back to default
+    storage.set_current_user_by_key("invalid-key")
+    assert storage.current_user() == "default_user"
+
+
+def test_project_isolation_per_user(tmp: Path):
+    """Projects are isolated per user - different users can have same project name."""
+    import storage
+
+    # Create two users
+    storage.create_user("user1")
+    storage.create_user("user2")
+
+    # Create same project name for both users
+    storage.set_current_user("user1")
+    storage.create_project("my_portfolio")
+    storage.save_balance({"AAPL": {"amount": 10.0, "avg_price": 150.0}})
+
+    storage.set_current_user("user2")
+    storage.create_project("my_portfolio")
+    storage.save_balance({"MSFT": {"amount": 5.0, "avg_price": 300.0}})
+
+    # Verify isolation
+    storage.set_current_user("user1")
+    storage.set_current_project("my_portfolio")
+    bal1 = storage.load_balance()
+    assert bal1["AAPL"]["amount"] == 10.0
+    assert "MSFT" not in bal1
+
+    storage.set_current_user("user2")
+    storage.set_current_project("my_portfolio")
+    bal2 = storage.load_balance()
+    assert bal2["MSFT"]["amount"] == 5.0
+    assert "AAPL" not in bal2
+
+
+def test_list_projects_per_user(tmp: Path):
+    """list_projects returns only projects for current user."""
+    import storage
+
+    storage.create_user("user1")
+    storage.create_user("user2")
+
+    storage.set_current_user("user1")
+    storage.create_project("project_a")
+    storage.create_project("project_b")
+
+    storage.set_current_user("user2")
+    storage.create_project("project_c")
+
+    storage.set_current_user("user1")
+    projects = storage.list_projects()
+    assert set(projects) == {"project_a", "project_b"}
+
+    storage.set_current_user("user2")
+    projects = storage.list_projects()
+    assert projects == ["project_c"]

@@ -29,18 +29,38 @@ def patch_root(tmp: Path):
     tmp. Must run after the modules under test are (re)loaded.
     """
     import storage
+    import storage.context as ctx_module
     import config as cfg_module
+    import json
 
     storage.ROOT               = tmp
     storage.DATA_ROOT          = tmp / "data"
+    storage.USERS_ROOT         = tmp / "data" / "users"
     storage.PRICES_DIR         = tmp / "data" / "prices"
     storage.ADJ_PRICES_DIR     = tmp / "data" / "prices_adj"
     storage.PROJECTS_PATH      = tmp / "data" / "projects.json"
+    storage.USERS_PATH         = tmp / "data" / "users.json"
+
+    # Also patch the context module's module-level constants
+    ctx_module.ROOT       = tmp
+    ctx_module.DATA_ROOT  = tmp / "data"
+    ctx_module.USERS_ROOT = tmp / "data" / "users"
+
+    # Create default user in users.json
+    users_data = {
+        "a1b2c3d4-e5f6-7890-abcd-ef1234567890": {
+            "user_name": "default_user",
+            "created": date.today().isoformat(),
+        }
+    }
+    storage.USERS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    storage.USERS_PATH.write_text(json.dumps(users_data))
 
     # Set up a default test project
-    test_project = tmp / "data" / "test_project"
+    test_project = tmp / "data" / "users" / "default_user" / "test_project"
     test_project.mkdir(parents=True, exist_ok=True)
     (test_project / "imports").mkdir(exist_ok=True)
+    storage.set_current_user("default_user")
     storage.set_current_project("test_project")
 
     cfg_module.ROOT                = tmp

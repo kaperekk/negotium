@@ -4,6 +4,7 @@ storage package — low-level file I/O helpers and repositories with multi-proje
 from __future__ import annotations
 
 import threading
+import uuid
 from datetime import date, datetime
 from pathlib import Path
 from typing import Iterator
@@ -18,9 +19,14 @@ from domain.currencies import (
 from storage.context import (
     DATA_ROOT,
     ROOT,
+    USERS_ROOT,
+    DEFAULT_USER,
     ProjectContext,
     get_current_project,
     set_current_project,
+    get_current_user,
+    set_current_user,
+    get_user_root,
 )
 from storage.repositories import (
     BalanceRepository,
@@ -48,6 +54,7 @@ except ImportError:
 PRICES_DIR = DATA_ROOT / "prices"
 ADJ_PRICES_DIR = DATA_ROOT / "prices_adj"
 PROJECTS_PATH = DATA_ROOT / "projects.json"
+USERS_PATH = DATA_ROOT / "users.json"
 TICKER_NAMES_PATH = DATA_ROOT / "ticker_names.json"
 TICKER_META_PATH = DATA_ROOT / "ticker_meta.json"
 ATH_PATH = DATA_ROOT / "ath.json"
@@ -60,8 +67,12 @@ def current_project() -> str | None:
     return get_current_project()
 
 
-def _project_dir(name: str | None = None) -> Path:
-    return ProjectContext(name).project_dir
+def current_user() -> str:
+    return get_current_user()
+
+
+def _project_dir(name: str | None = None, user: str | None = None) -> Path:
+    return ProjectContext(name, user).project_dir
 
 
 def transactions_path() -> Path:
@@ -94,13 +105,65 @@ def _save_registry(reg: dict) -> None:
     _write_bytes_atomic(PROJECTS_PATH, _dumps(reg).encode())
 
 
-def list_projects() -> list[str]:
+def _load_users() -> dict:
+    if not USERS_PATH.exists():
+        return {}
+    return _loads(USERS_PATH.read_bytes())
+
+
+def _save_users(users: dict) -> None:
+    _write_bytes_atomic(USERS_PATH, _dumps(users).encode())
+
+
+def create_user(name: str) -> None:
+    """Create a new user with their data directory."""
+    users = _load_users()
+    # Check if user_name already exists
+    for data in users.values():
+        if data.get("user_name") == name:
+            raise ValueError(f"User '{name}' already exists")
+    user_key = str(uuid.uuid4())
+    users[user_key] = {"user_name": name, "created": date.today().isoformat()}
+    _save_users(users)
+    # Create user data directory
+    user_root = USERS_ROOT / name
+    user_root.mkdir(parents=True, exist_ok=True)
+    set_current_user(name)
+
+
+def list_users() -> list[str]:
+    if not USERS_PATH.exists():
+        return [DEFAULT_USER]
+    users = _load_users()
+    return sorted(data.get("user_name", "") for data in users.values() if data.get("user_name"))
+
+
+def get_user_by_key(user_key: str) -> str | None:
+    """Get user_name by user_key."""
+    users = _load_users()
+    if user_key in users:
+        return users[user_key].get("user_name")
+    return None
+
+
+def set_current_user_by_key(user_key: str) -> None:
+    """Set current user by their UUID key."""
+    user_name = get_user_by_key(user_key)
+    if user_name:
+        set_current_user(user_name)
+    else:
+        set_current_user(DEFAULT_USER)
+
+
+def list_projects(user: str | None = None) -> list[str]:
+    user = user or current_user()
     if not PROJECTS_PATH.exists():
         return []
-    return sorted(_load_registry().keys())
+    reg = _load_registry()
+    return sorted([name for name, data in reg.items() if data.get("user", DEFAULT_USER) == user])
 
 
-def get_last_refresh(name: str | None = None) -> str:
+def get_last_refresh(name: str | None = None, user: str | None = None) -> str:
     name = name or current_project()
     if name is None:
         return ""
@@ -136,37 +199,46 @@ def set_watchlist(tickers: list[str], name: str | None = None) -> None:
     _save_registry(reg)
 
 
-def create_project(name: str) -> None:
+def create_project(name: str, user: str | None = None) -> None:
+    user = user or current_user()
     reg = _load_registry()
-    if name in reg:
-        raise ValueError(f"Project '{name}' already exists")
-    ctx = ProjectContext(name)
+    # Check if project already exists for this user
+    for proj_name, data in reg.items():
+        if data.get("user", DEFAULT_USER) == user and proj_name == name:
+            raise ValueError(f"Project '{name}' already exists")
+    ctx = ProjectContext(name, user)
     ctx.ensure_directories()
-    reg[name] = {"created_at": datetime.now().isoformat()}
+    reg[name] = {"created_at": datetime.now().isoformat(), "user": user}
     _save_registry(reg)
     set_current_project(name)
 
 
-def rename_project(old: str, new: str) -> None:
+def rename_project(old: str, new: str, user: str | None = None) -> None:
+    user = user or current_user()
     reg = _load_registry()
     if old not in reg:
         raise ValueError(f"Project '{old}' not found")
+    if reg[old].get("user", DEFAULT_USER) != user:
+        raise ValueError(f"Project '{old}' does not belong to user '{user}'")
     if new in reg:
         raise ValueError(f"Project '{new}' already exists")
-    old_dir = _project_dir(old)
-    new_dir = _project_dir(new)
+    old_dir = _project_dir(old, user)
+    new_dir = _project_dir(new, user)
     old_dir.rename(new_dir)
     reg[new] = reg.pop(old)
     _save_registry(reg)
     set_current_project(new)
 
 
-def delete_project(name: str) -> None:
+def delete_project(name: str, user: str | None = None) -> None:
     import shutil
+    user = user or current_user()
     reg = _load_registry()
     if name not in reg:
         return
-    d = _project_dir(name)
+    if reg[name].get("user", DEFAULT_USER) != user:
+        raise ValueError(f"Project '{name}' does not belong to user '{user}'")
+    d = _project_dir(name, user)
     if d.exists():
         shutil.rmtree(d)
     del reg[name]
@@ -180,7 +252,8 @@ def init_legacy_project() -> str | None:
     if not legacy_tx.exists():
         return None
     name = "default"
-    ctx = ProjectContext(name)
+    user = current_user()
+    ctx = ProjectContext(name, user)
     ctx.ensure_directories()
     for fname in ["transactions.jsonl", "portfolio.jsonl", "balance.json"]:
         src = DATA_ROOT / fname
@@ -195,7 +268,7 @@ def init_legacy_project() -> str | None:
     if build_log.exists():
         build_log.unlink()
     reg = _load_registry()
-    reg[name] = {"created_at": datetime.now().isoformat(), "migrated_from": "legacy"}
+    reg[name] = {"created_at": datetime.now().isoformat(), "user": user, "migrated_from": "legacy"}
     _save_registry(reg)
     set_current_project(name)
     return name
