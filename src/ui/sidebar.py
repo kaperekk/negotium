@@ -103,7 +103,6 @@ def render_sidebar(cfg, storage, T, today, data_start_date):
             "Project",
             options=projects + ["➕ New project"],
             index=idx,
-            key="project_select",
         )
 
         if selected == "➕ New project":
@@ -119,7 +118,6 @@ def render_sidebar(cfg, storage, T, today, data_start_date):
                                 if (k.startswith("snapshots_") or k.startswith("benchmarks_")
                                         or k == "broker_select" or "_upload" in k):
                                     st.session_state.pop(k)
-                            st.session_state["project_select"] = name.strip()
                             st.rerun()
                         except ValueError as e:
                             st.error(str(e))
