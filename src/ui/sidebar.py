@@ -106,6 +106,7 @@ def render_sidebar(cfg, storage, T, today, data_start_date):
             "Project",
             options=projects + ["➕ New project"],
             index=idx,
+            key="project_select",
         )
 
         if selected == "➕ New project":
@@ -119,7 +120,7 @@ def render_sidebar(cfg, storage, T, today, data_start_date):
                             cfg_module.invalidate_config_cache()
                             for k in list(st.session_state.keys()):
                                 if (k.startswith("snapshots_") or k.startswith("benchmarks_")
-                                        or k == "broker_select" or "_upload" in k):
+                                        or k == "broker_select" or k == "project_select" or "_upload" in k):
                                     st.session_state.pop(k)
                             st.rerun()
                         except ValueError as e:
@@ -133,7 +134,7 @@ def render_sidebar(cfg, storage, T, today, data_start_date):
             cfg_module.invalidate_config_cache()
             for k in list(st.session_state.keys()):
                 if (k.startswith("snapshots_") or k.startswith("benchmarks_")
-                        or k == "broker_select" or "_upload" in k):
+                        or k == "broker_select" or k == "project_select" or "_upload" in k):
                     st.session_state.pop(k)
             st.rerun()
 
