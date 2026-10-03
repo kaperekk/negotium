@@ -28,7 +28,12 @@ from ui.styles import (
     build_toggle_button_styles,
     build_trade_dialog_styles,
 )
-from storage.context import set_current_user, set_current_project
+from storage.context import (
+    _SESSION_PROJECT_KEY,
+    _SESSION_USER_KEY,
+    set_current_user,
+    set_current_project,
+)
 
 st.set_page_config(
     page_title="Negotium (Local)",
@@ -41,7 +46,15 @@ st.set_page_config(
 LOCAL_USER = "local"
 LOCAL_PROJECT = "default"
 
-# Set user/project in context (bypasses auth gate)
+# Set session state directly (after set_page_config, session state is ready)
+if "user_id" not in st.session_state:
+    st.session_state["user_id"] = LOCAL_USER
+if _SESSION_USER_KEY not in st.session_state:
+    st.session_state[_SESSION_USER_KEY] = LOCAL_USER
+if _SESSION_PROJECT_KEY not in st.session_state:
+    st.session_state[_SESSION_PROJECT_KEY] = LOCAL_PROJECT
+
+# Also set the global fallbacks for any non-Streamlit code paths
 set_current_user(LOCAL_USER)
 set_current_project(LOCAL_PROJECT)
 
