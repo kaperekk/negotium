@@ -99,6 +99,9 @@ def render_sidebar(cfg, storage, T, today, data_start_date):
         else:
             idx = 0
 
+        # Debug
+        st.sidebar.caption(f"Current: {current} | Idx: {idx}")
+
         selected = st.selectbox(
             "Project",
             options=projects + ["➕ New project"],
@@ -125,6 +128,7 @@ def render_sidebar(cfg, storage, T, today, data_start_date):
                         st.error("Enter a name.")
             _create_dialog()
         elif selected != current:
+            st.sidebar.caption(f"Switching to: {selected}")
             storage.set_current_project(selected)
             cfg_module.invalidate_config_cache()
             for k in list(st.session_state.keys()):
