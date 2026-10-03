@@ -79,14 +79,21 @@ def tmp(tmp_path: Path):
     make_temp_root + setup_env + cleanup cycle)."""
     import fixtures as fx
 
-    # First patch the roots, then reload modules so they pick up the patched paths.
-    fx.patch_root(tmp_path)
+    # First reload modules to get fresh module objects, then patch roots.
     _reload_all()
+    fx.patch_root(tmp_path)
 
     # Cache hygiene across tests sharing the reloaded modules.
     import ledger_core
     cache_fn = getattr(ledger_core.get_all_transactions, "_cache", None)
     if isinstance(cache_fn, dict):
         cache_fn.clear()
+
+    # Clear config cache
+    try:
+        import config
+        config.invalidate_config_cache()
+    except Exception:
+        pass
 
     yield tmp_path

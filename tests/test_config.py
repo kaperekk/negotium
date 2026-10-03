@@ -37,8 +37,8 @@ def test_config_is_per_user(tmp: Path):
     import storage, config
     from storage.context import set_current_user
 
-    # User 1
-    set_current_user("user_1")
+    # User 1 (test_user from fixture)
+    set_current_user("test_user")
     storage.create_project("proj_a")
     storage.set_current_project("proj_a")
     cfg = config.load()
@@ -54,7 +54,7 @@ def test_config_is_per_user(tmp: Path):
     config.save(cfg2)
 
     # User 1's config unchanged
-    set_current_user("user_1")
+    set_current_user("test_user")
     storage.set_current_project("proj_a")
     assert config.load()["name"] == "User 1 Portfolio"
 
@@ -64,7 +64,7 @@ def test_config_is_per_user(tmp: Path):
     assert config.load()["name"] == "User 2 Portfolio"
 
     # Config files are per-user
-    assert (tmp / "data" / "users" / "user_1" / "config.json").exists()
+    assert (tmp / "data" / "users" / "test_user" / "config.json").exists()
     assert (tmp / "data" / "users" / "user_2" / "config.json").exists()
     # No global config
     assert not (tmp / "data" / "config.json").exists()

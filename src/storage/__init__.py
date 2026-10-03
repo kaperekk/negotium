@@ -22,9 +22,9 @@ from storage.context import (
     ProjectContext,
     get_current_project,
     get_current_user,
-    get_user_data_root,
     set_current_project,
 )
+import storage.context as _storage_context
 from storage.repositories import (
     BalanceRepository,
     SnapshotRepository,
@@ -66,7 +66,7 @@ def _get_user_paths() -> tuple[Path, Path]:
     if not user_id:
         # Fallback for tests/scripts without auth
         return DATA_ROOT, DATA_ROOT / "projects.json"
-    user_root = get_user_data_root(user_id)
+    user_root = _storage_context.get_user_data_root(user_id)
     return user_root, user_root / "projects.json"
 
 
@@ -226,7 +226,8 @@ def _config_path() -> Path:
     user_id = get_current_user()
     if not user_id:
         return DATA_ROOT / "config.json"
-    return get_user_data_root(user_id) / "config.json"
+    path = _storage_context.get_user_data_root(user_id) / "config.json"
+    return path
 
 
 def load_config() -> dict:
