@@ -5,16 +5,10 @@ from __future__ import annotations
 import logging
 
 import storage
-from storage.context import get_current_user, set_current_user
 
 
 def ensure_project_context() -> tuple[str | None, list[str]]:
     """Initialise the project registry and return current project and project list."""
-    # Ensure user is authenticated (sets st.session_state.user_id)
-    user_id = get_current_user()
-    if not user_id:
-        raise RuntimeError("User not authenticated. Call require_auth() first.")
-
     storage.init_legacy_project()
     projects = storage.list_projects()
 
@@ -65,9 +59,3 @@ def configure_import_logging() -> logging.Logger:
                 child_logger.propagate = False
 
     return logger
-
-
-def require_auth() -> str:
-    """Ensure user is authenticated. Returns user_id."""
-    from ui.auth import require_auth as _require_auth
-    return _require_auth()

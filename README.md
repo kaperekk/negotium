@@ -149,4 +149,3 @@ negative amounts sell (or spend cash):
 - everything else in `data/` is derived from this ledger and can be rebuilt
 
 Full format details: [CONFIG.md](CONFIG.md#data-files).
-# Test commit

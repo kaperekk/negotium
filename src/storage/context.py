@@ -12,13 +12,9 @@ from typing import Iterator
 
 ROOT = Path(__file__).parent.parent.parent
 DATA_ROOT = ROOT / "data"
-COMMON_ROOT = DATA_ROOT / "common"
-USERS_ROOT = DATA_ROOT / "users"
 
 _SESSION_PROJECT_KEY = "negotium_current_project"
-_SESSION_USER_KEY = "negotium_user_id"
 _current_project: str | None = None
-_current_user: str | None = None
 
 
 def get_current_project() -> str | None:
@@ -47,52 +43,6 @@ def set_current_project(name: str | None) -> None:
         pass
 
 
-def get_current_user() -> str | None:
-    """Return the authenticated user_id from session."""
-    try:
-        import streamlit as st
-        val = st.session_state.get(_SESSION_USER_KEY)
-        if val:
-            return str(val)
-    except Exception:
-        pass
-    return _current_user
-
-
-def set_current_user(user_id: str | None) -> None:
-    """Set the authenticated user for this session."""
-    global _current_user
-    _current_user = user_id
-    try:
-        import streamlit as st
-        if user_id is not None:
-            st.session_state[_SESSION_USER_KEY] = user_id
-        else:
-            st.session_state.pop(_SESSION_USER_KEY, None)
-    except Exception:
-        pass
-
-
-def get_user_data_root(user_id: str | None = None) -> Path:
-    """Get the data root for a specific user (creates if needed)."""
-    uid = user_id or get_current_user()
-    if not uid:
-        raise RuntimeError("No authenticated user. Call set_current_user() first.")
-    user_dir = USERS_ROOT / uid
-    user_dir.mkdir(parents=True, exist_ok=True)
-    (user_dir / "projects").mkdir(parents=True, exist_ok=True)
-    return user_dir
-
-
-def get_common_root() -> Path:
-    """Get the shared common data root (prices, metadata)."""
-    COMMON_ROOT.mkdir(parents=True, exist_ok=True)
-    (COMMON_ROOT / "prices").mkdir(parents=True, exist_ok=True)
-    (COMMON_ROOT / "prices_adj").mkdir(parents=True, exist_ok=True)
-    (COMMON_ROOT / "dividends").mkdir(parents=True, exist_ok=True)
-    return COMMON_ROOT
-
-
 class ProjectContext:
     """Encapsulates file paths and directory layout for a given project."""
 
@@ -103,13 +53,7 @@ class ProjectContext:
     @property
     def data_root(self) -> Path:
         import storage
-        if self._data_root:
-            return self._data_root
-        # Use user-specific data root if authenticated, else fall back to global
-        try:
-            return get_user_data_root()
-        except RuntimeError:
-            return getattr(storage, "DATA_ROOT", DATA_ROOT)
+        return getattr(storage, "DATA_ROOT", self._data_root or DATA_ROOT)
 
     @data_root.setter
     def data_root(self, val: Path) -> None:

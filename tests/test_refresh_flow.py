@@ -48,8 +48,7 @@ def _make_xtb_xlsx(
 
 def _count_price_files(tmp: Path, ticker: str) -> int:
     """How many year-cache files exist for a ticker."""
-    import storage
-    d = storage.PRICES_DIR / ticker
+    d = tmp / "data" / "prices" / ticker
     if not d.exists():
         return 0
     return len(list(d.glob("*.json")))
@@ -58,8 +57,7 @@ def _count_price_files(tmp: Path, ticker: str) -> int:
 def _inject_prices(tmp: Path, data: list[tuple[str, int, dict[str, float]]]) -> None:
     """Write fake price JSON files into the temp data directory."""
     import json
-    import storage
-    prices_dir = storage.PRICES_DIR
+    prices_dir = tmp / "data" / "prices"
     for ticker, year, prices in data:
         p = prices_dir / ticker / f"{year}.json"
         p.parent.mkdir(parents=True, exist_ok=True)

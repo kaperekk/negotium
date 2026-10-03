@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────
 #   Negotium - Investment Tracker — launcher
-#   Usage:  ./start.sh                 start local UI (no auth)
-#          ./start.sh --auth           start with auth (production mode)
+#   Usage:  ./start.sh                 start UI (skip tests)
 #          ./start.sh --run-tests      run tests then start UI
 #          ./start.sh --tests-only     run tests only
 #          ./start.sh --port 8502     custom port (default 8501)
@@ -17,15 +16,13 @@ RUN_TESTS=false
 TESTS_ONLY=false
 RESET=false
 PORT=8501
-AUTH_MODE=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --auth)        AUTH_MODE=true    ; shift ;;
-    --run-tests)   RUN_TESTS=true    ; shift ;;
-    --tests-only)  TESTS_ONLY=true   ; shift ;;
-    --reset)       RESET=true        ; shift ;;
-    --port)        PORT="$2"         ; shift 2 ;;
+    --run-tests)   RUN_TESTS=true   ; shift ;;
+    --tests-only)  TESTS_ONLY=true  ; shift ;;
+    --reset)       RESET=true       ; shift ;;
+    --port)        PORT="$2"        ; shift 2 ;;
     -h|--help)     grep '^#  ' "$0" | sed 's/#  //'; exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
@@ -121,17 +118,11 @@ fi
 [[ "$TESTS_ONLY" == "true" ]] && { echo "Tests complete."; exit 0; }
 
 # ── Launch ────────────────────────────────────────────────────
-APP_FILE="src/app_local.py"
-[[ "$AUTH_MODE" == "true" ]] && APP_FILE="src/app.py"
-
-MODE="local (no auth)"
-[[ "$AUTH_MODE" == "true" ]] && MODE="production (with auth)"
-
-echo -e "${BOLD}Starting app ($MODE) → http://localhost:${PORT}${RESET_C}"
+echo -e "${BOLD}Starting app → http://localhost:${PORT}${RESET_C}"
 echo -e "  Press ${BOLD}Ctrl+C${RESET_C} to stop."
 echo ""
 
-exec "$PYTHON" -m streamlit run "$APP_FILE" \
+exec "$PYTHON" -m streamlit run src/app.py \
   --server.port "$PORT" \
   --server.headless true \
   --server.runOnSave true \
