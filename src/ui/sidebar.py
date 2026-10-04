@@ -86,6 +86,78 @@ def _add_transaction_to_ledger(tx_date, entries, storage, data_start_date, base_
     st.rerun()
 
 
+def _render_import_manager_dialog(import_service: ImportService, storage, T, data_start_date, base_ccy) -> None:
+    """Dialog for managing imported files across all brokers."""
+    @st.dialog("Import Manager", width="large")
+    def _show():
+        st.subheader("📁 Manage Imported Files")
+
+        brokers = list(import_service.importers.keys())
+        tabs = st.tabs([b.capitalize() for b in brokers])
+
+        for idx, broker in enumerate(brokers):
+            with tabs[idx]:
+                files = import_service.list_import_files(broker)
+                if not files:
+                    st.info(f"No {broker} files imported yet.")
+                    continue
+
+                for filename in sorted(files):
+                    col1, col2, col3 = st.columns([3, 1, 1])
+                    with col1:
+                        st.caption(f"📄 {filename}")
+                    with col2:
+                        if st.button("🔄 Re-import", key=f"reimport_{broker}_{filename}", width="stretch"):
+                            with st.spinner(f"Re-importing {filename}..."):
+                                result = import_service.import_stored_file(broker, filename)
+                            if result.success:
+                                msg = f"**{filename}** — {result.imported} imported"
+                                if result.skipped:
+                                    msg += f", {result.skipped} skipped"
+                                st.success(msg)
+                                _render_import_warnings(filename, result.warnings)
+                            else:
+                                st.error(f"**{filename}** — {result.error}")
+                            storage.invalidate_portfolio_from(data_start_date.isoformat())
+                            st.session_state["force_refresh"] = True
+                            st.rerun()
+                    with col3:
+                        if st.button("🗑️ Delete", key=f"delete_{broker}_{filename}", width="stretch", type="secondary"):
+                            import_service.delete_import_file(broker, filename)
+                            st.success(f"Deleted {filename}")
+                            storage.invalidate_portfolio_from(data_start_date.isoformat())
+                            st.session_state["force_refresh"] = True
+                            st.rerun()
+
+                st.divider()
+                broker_key = broker
+                file_types = [BROKER_EXTENSIONS.get(broker_key, "csv")]
+                uploaded_files = st.file_uploader(
+                    f"Add {broker} files",
+                    type=file_types,
+                    accept_multiple_files=True,
+                    key=f"import_mgr_{broker}_upload",
+                    label_visibility="collapsed",
+                )
+                if uploaded_files:
+                    for uf in uploaded_files:
+                        result = import_service.import_file(broker_key, uf)
+                        if result.success:
+                            import_service.store_import_file(broker_key, uf.name, uf.getvalue())
+                            msg = f"**{uf.name}** — {result.imported} imported"
+                            if result.skipped:
+                                msg += f", {result.skipped} skipped"
+                            st.success(msg)
+                            _render_import_warnings(uf.name, result.warnings)
+                        else:
+                            st.error(f"**{uf.name}** — {result.error}")
+                    storage.invalidate_portfolio_from(data_start_date.isoformat())
+                    st.session_state["force_refresh"] = True
+                    st.rerun()
+
+    _show()
+
+
 def render_sidebar(cfg, storage, T, today, data_start_date):
     _import_service = ImportService()
     current_user = storage.current_user()
@@ -449,6 +521,10 @@ def render_sidebar(cfg, storage, T, today, data_start_date):
                     st.caption(f"📄 {fpath.name}")
             else:
                 st.caption("No files uploaded yet.")
+
+            st.divider()
+            if st.button("📋 Manage all imports", width="stretch", key="open_import_manager"):
+                _render_import_manager_dialog(_import_service, storage, T, data_start_date, ccy_options[st.session_state["base_ccy_idx"]])
 
         if st.button("📈  Refresh data", width="stretch"):
             file_count, total_imported = _run_refresh(

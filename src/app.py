@@ -70,26 +70,30 @@ def render_login_page() -> None:
             unsafe_allow_html=True,
         )
 
-        user_key = st.text_input(
-            "User Key (UUID)",
-            placeholder="Enter your user UUID key to access your portfolio",
-            key="login_user_key",
-            label_visibility="collapsed",
-        )
+        with st.form("login_form"):
+            user_key = st.text_input(
+                "User Key (UUID)",
+                placeholder="Enter your user UUID key to access your portfolio",
+                key="login_user_key",
+                label_visibility="collapsed",
+                type="password",
+            )
 
-        if st.button("Login", key="login_button", width="stretch", type="primary"):
-            if user_key and user_key.strip():
-                user_name = storage.get_user_by_key(user_key.strip())
-                if user_name:
-                    storage.set_current_user_by_key(user_key.strip())
-                    st.session_state[SESSION_LOGGED_IN] = True
-                    st.session_state[SESSION_USER_KEY] = user_key.strip()
-                    st.success(f"Welcome, {user_name}!")
-                    st.rerun()
+            submitted = st.form_submit_button("Login", width="stretch", type="primary")
+
+            if submitted:
+                if user_key and user_key.strip():
+                    user_name = storage.get_user_by_key(user_key.strip())
+                    if user_name:
+                        storage.set_current_user_by_key(user_key.strip())
+                        st.session_state[SESSION_LOGGED_IN] = True
+                        st.session_state[SESSION_USER_KEY] = user_key.strip()
+                        st.success(f"Welcome, {user_name}!")
+                        st.rerun()
+                    else:
+                        st.error("Invalid user key. Please check and try again.")
                 else:
-                    st.error("Invalid user key. Please check and try again.")
-            else:
-                st.error("Please enter your user key.")
+                    st.error("Please enter your user key.")
 
         st.markdown('</div>', unsafe_allow_html=True)
 
