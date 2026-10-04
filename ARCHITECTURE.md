@@ -9,20 +9,16 @@
 
 ---
 
-## Using the Launcher Script (`scripts/start.sh`)
+## Using the Launcher Scripts
 
-The `scripts/start.sh` script is the recommended way to run Negotium. It handles:
+Negotium provides two launcher scripts for different deployment modes:
 
-- **Python detection** — Finds Python 3.10+ (prefers 3.14, falls back to 3.13/3.12/3.11)
-- **Virtualenv management** — Creates `.venv/` on first run, reuses it thereafter
-- **Dependency installation** — Installs/updates packages from `requirements.txt`
-- **Optional test runner** — Runs pytest before starting the app
-- **Data reset** — `--reset` wipes all data and starts fresh
+### `scripts/start.sh` — Local Mode (Recommended for Development)
 
-### Usage
+Runs `src/app_local.py` with local-only storage (no COS sync).
 
 ```bash
-./start.sh                 # Start UI (skip tests, uses local-only app_local.py)
+./start.sh                 # Start UI (skip tests)
 ./start.sh --run-tests     # Run tests, then start UI
 ./start.sh --tests-only    # Run tests only, don't start UI
 ./start.sh --port 8502     # Custom port (default 8501)
@@ -30,15 +26,32 @@ The `scripts/start.sh` script is the recommended way to run Negotium. It handles
 ./start.sh -h              # Show help
 ```
 
-### What it does
-
-1. Detects Python ≥ 3.10
+**What it does:**
+1. Detects Python ≥ 3.10 (prefers 3.14, falls back to 3.13/3.12/3.11)
 2. Creates/uses `.venv/` virtualenv in project root
 3. Installs/updates dependencies from `requirements.txt`
 4. Runs tests if `--run-tests` or `--tests-only` flag provided
 5. Launches `src/app_local.py` via Streamlit on specified port
 
-> **Note**: The launcher always starts `app_local.py` (local-only mode). For multi-user with COS sync, run `streamlit run src/app.py` manually with `.env` configured.
+### `scripts/start_cloud.sh` — Cloud Mode (Multi-user with COS Sync)
+
+Runs `src/app.py` with full multi-user support and COS/R2 sync. Requires `.env` with COS credentials.
+
+```bash
+./start_cloud.sh                 # Start UI with COS sync
+./start_cloud.sh --run-tests     # Run tests, then start UI
+./start_cloud.sh --tests-only    # Run tests only
+./start_cloud.sh --port 8502     # Custom port
+./start_cloud.sh --reset         # Wipe all data and start fresh
+./start_cloud.sh -h              # Show help
+```
+
+**Additional features:**
+- Checks for `.env` file and warns if missing (COS sync won't work without it)
+- Installs additional dependencies: `python-dotenv`, `boto3`
+- Launches `src/app.py` (login + COS sync enabled)
+
+> **Note**: For `start_cloud.sh` to sync data, create `.env` with COS credentials. See [Running app.py](#running-appy-with-login--cos-sync) below.
 
 ---
 
