@@ -52,10 +52,6 @@ def render_login_page() -> None:
             margin-bottom: 1.5rem;
             color: #1a1a2e;
         }
-        .login-button {
-            width: 100%;
-            margin-top: 1rem;
-        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -70,6 +66,7 @@ def render_login_page() -> None:
             unsafe_allow_html=True,
         )
 
+        # Native Streamlit form - fast, no page reload
         with st.form("login_form"):
             user_key = st.text_input(
                 "User Key (UUID)",
@@ -94,6 +91,26 @@ def render_login_page() -> None:
                         st.error("Invalid user key. Please check and try again.")
                 else:
                     st.error("Please enter your user key.")
+
+        # Inject autocomplete attributes for password managers
+        st.html("""
+        <script>
+            // Run after Streamlit renders
+            setTimeout(function() {
+                const form = document.querySelector('form[data-testid="stForm"]');
+                if (form) {
+                    const input = form.querySelector('input[type="password"]');
+                    if (input) {
+                        input.setAttribute('autocomplete', 'current-password');
+                        input.setAttribute('name', 'password');
+                    }
+                    // Ensure form has proper attributes for password managers
+                    form.setAttribute('method', 'post');
+                    form.setAttribute('action', '');
+                }
+            }, 100);
+        </script>
+        """)
 
         st.markdown('</div>', unsafe_allow_html=True)
 
