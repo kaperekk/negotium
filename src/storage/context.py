@@ -6,14 +6,12 @@ without leaking global state into computation engines.
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
-from typing import Iterator
 
 ROOT = Path(__file__).parent.parent.parent
 DATA_ROOT = ROOT / "data"
 USERS_ROOT = DATA_ROOT / "users"
-DEFAULT_USER = "default_user"
+LOCAL_USER = "local_user"
 
 _SESSION_PROJECT_KEY = "negotium_current_project"
 _SESSION_USER_KEY = "negotium_current_user"
@@ -56,7 +54,7 @@ def get_current_user() -> str:
             return str(val)
     except Exception:
         pass
-    return _current_user or DEFAULT_USER
+    return _current_user or LOCAL_USER
 
 
 def set_current_user(name: str | None) -> None:

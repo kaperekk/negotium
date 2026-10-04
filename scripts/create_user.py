@@ -1,22 +1,14 @@
 #!/usr/bin/env python3
 """Create a new user entry in users.json with a UUID key.
 
-Uses storage backend (local or R2 via COS_* env vars).
+Always uses local filesystem storage (users.json stays local).
 """
 from __future__ import annotations
 
-import os
 import sys
 import uuid
 from datetime import date
 from pathlib import Path
-
-# Load .env if present
-try:
-    from dotenv import load_dotenv
-    load_dotenv(Path(__file__).parent.parent / ".env")
-except ImportError:
-    pass
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -40,7 +32,7 @@ def main() -> int:
             print(f"Error: User '{username}' already exists")
             return 1
 
-    # Create and add new user via storage (uses R2 if COS_* env vars set)
+    # Create and add new user (always local filesystem)
     user_key = str(uuid.uuid4())
     storage._save_users({
         **storage._load_users(),
@@ -48,7 +40,7 @@ def main() -> int:
     })
 
     print(f"Created user '{username}' with key: {user_key}")
-    print(f"Stored in: {'R2' if os.getenv('COS_BUCKET') else 'local filesystem'}")
+    print("Stored in local filesystem (users.json)")
     return 0
 
 

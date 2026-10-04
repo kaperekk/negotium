@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────
-#   Negotium - Investment Tracker — launcher
-#   Usage:  ./start.sh                 start UI (skip tests)
-#          ./start.sh --run-tests      run tests then start UI
-#          ./start.sh --tests-only     run tests only
-#          ./start.sh --port 8502     custom port (default 8501)
-#          ./start.sh --reset         wipe all data and start fresh
+#   Negotium - Investment Tracker — Cloud launcher (with COS sync)
+#   Usage:  ./start_cloud.sh                 start UI with COS sync
+#          ./start_cloud.sh --run-tests      run tests then start UI
+#          ./start_cloud.sh --tests-only     run tests only
+#          ./start_cloud.sh --port 8502     custom port (default 8501)
+#          ./start_cloud.sh --reset         wipe all data and start fresh
 # ─────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -31,12 +31,15 @@ done
 
 BOLD='\033[1m'; GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[0;33m'; RESET_C='\033[0m'
 
-# ── Find Python ───────────────────────────────────────────────
-# NOTE: Python 3.14 is preferred but is a very new release; some versions of
-# the Streamlit/yfinance stack print a noisy-but-harmless shutdown message on
-# Ctrl+C ("I/O operation on closed file." / "lost sys.stderr"). Drop
-# `python3.14` from the list below to fall back to the more conservative
-# python3.13 runtime instead.
+# ── Check .env for COS config ───────────────────────────────────
+if [[ ! -f "$ROOT_DIR/.env" ]]; then
+  echo -e "${YELLOW}⚠ No .env file found. COS sync will not work.${RESET_C}"
+  echo -e "  Create .env with COS_BUCKET, COS_ACCESS_KEY, COS_SECRET_KEY"
+  echo -e "  See ARCHITECTURE.md for details."
+  echo ""
+fi
+
+# ── Find Python ─────────────────────────────────────────────────
 PYTHON=""
 for cmd in python3.14 python3.13 python3.12 python3.11 python3 python; do
   if command -v "$cmd" &>/dev/null; then
@@ -55,10 +58,10 @@ fi
 
 echo ""
 echo -e "${BOLD}═══════════════════════════════════════════════${RESET_C}"
-echo -e "${BOLD}  📈  Negotium - Investment Tracker${RESET_C}"
+echo -e "${BOLD}  ☁️  Negotium - Investment Tracker (Cloud/COS)${RESET_C}"
 echo -e "${BOLD}═══════════════════════════════════════════════${RESET_C}"
 
-# ── Optional reset ────────────────────────────────────────────
+# ── Optional reset ──────────────────────────────────────────────
 if [[ "$RESET" == "true" ]]; then
   echo ""
   echo -e "${YELLOW}  --reset: removing all data files…${RESET_C}"
@@ -66,12 +69,10 @@ if [[ "$RESET" == "true" ]]; then
   echo -e "${GREEN}  ✓ Data cleared. Starting fresh.${RESET_C}"
 fi
 
-# ── Ensure required directories exist ────────────────────────
+# ── Ensure required directories exist ───────────────────────────
 mkdir -p data
 
-# ── Virtualenv ────────────────────────────────────────────────
-# Prefer the project venv; create it on first run. This avoids pip-installing
-# into the system interpreter (no more --break-system-packages).
+# ── Virtualenv ──────────────────────────────────────────────────
 VENV_DIR="$ROOT_DIR/.venv"
 if [[ -x "$VENV_DIR/bin/python" ]]; then
   PYTHON="$VENV_DIR/bin/python"
@@ -90,9 +91,9 @@ echo ""
 echo -e "  Python:  $($PYTHON --version)"
 echo -e "  Dir:     $ROOT_DIR"
 
-# ── Check dependencies (existing venvs may predate a new requirements.txt) ───
+# ── Check dependencies ──────────────────────────────────────────
 MISSING=()
-for pkg in streamlit yfinance plotly pandas orjson openpyxl python_calamine pytest; do
+for pkg in streamlit yfinance plotly pandas orjson openpyxl python_calamine pytest python-dotenv boto3; do
   if ! "$PYTHON" -c "import $pkg" &>/dev/null 2>&1; then
     MISSING+=("$pkg")
   fi
@@ -103,7 +104,7 @@ if [[ ${#MISSING[@]} -gt 0 ]]; then
 fi
 echo ""
 
-# ── Run tests ─────────────────────────────────────────────────
+# ── Run tests ───────────────────────────────────────────────────
 if [[ "$RUN_TESTS" == "true" || "$TESTS_ONLY" == "true" ]]; then
   echo -e "${BOLD}Running tests…${RESET_C}"
   echo ""
@@ -118,12 +119,12 @@ fi
 
 [[ "$TESTS_ONLY" == "true" ]] && { echo "Tests complete."; exit 0; }
 
-# ── Launch ────────────────────────────────────────────────────
-echo -e "${BOLD}Starting app → http://localhost:${PORT}${RESET_C}"
+# ── Launch ──────────────────────────────────────────────────────
+echo -e "${BOLD}Starting app with COS sync → http://localhost:${PORT}${RESET_C}"
 echo -e "  Press ${BOLD}Ctrl+C${RESET_C} to stop."
 echo ""
 
-exec "$PYTHON" -m streamlit run src/app_local.py \
+exec "$PYTHON" -m streamlit run src/app.py \
   --server.port "$PORT" \
   --server.headless true \
   --server.runOnSave true \

@@ -7,8 +7,7 @@ import os
 import threading
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import BinaryIO, Iterator, Optional
-from urllib.parse import urlparse
+from typing import BinaryIO, Optional
 
 try:
     import boto3
@@ -64,6 +63,10 @@ class StorageBackend(ABC):
         """Open file for writing."""
         pass
 
+    def sync_to_cos(self) -> None:
+        """Sync local data to COS (no-op for backends that don't support it)."""
+        pass
+
 
 class LocalBackend(StorageBackend):
     """Local filesystem storage backend."""
@@ -115,6 +118,9 @@ class LocalBackend(StorageBackend):
         full = self._full_path(path)
         full.parent.mkdir(parents=True, exist_ok=True)
         return full.open("wb")
+
+    def sync_to_cos(self) -> None:
+        pass
 
 
 class S3Backend(StorageBackend):
@@ -256,17 +262,137 @@ def set_backend(backend: StorageBackend) -> None:
         _backend = backend
 
 
+class SyncBackend(StorageBackend):
+    """Local-first backend with COS sync on startup and after imports."""
+
+    CACHE_PATHS = {
+        "prices/",
+        "prices_adj/",
+        "dividends/",
+        "dividends.json",
+        "ticker_names.json",
+        "ticker_meta.json",
+        "earnings.json",
+        "ath.json",
+    }
+
+    SYNC_PATHS = {
+        "users/<user>/imports/",
+        "users/<user>/*/imports/",
+        "users/<user>/config.json",
+        "users/<user>/projects.json",
+    }
+
+    def __init__(
+        self,
+        local_root: Path,
+        bucket: str,
+        endpoint_url: Optional[str] = None,
+        region_name: str = "auto",
+        access_key_id: Optional[str] = None,
+        secret_access_key: Optional[str] = None,
+        prefix: str = "",
+    ):
+        from storage.context import DATA_ROOT
+        self.local = LocalBackend(local_root or DATA_ROOT)
+        self.cos = S3Backend(
+            bucket=bucket,
+            endpoint_url=endpoint_url,
+            region_name=region_name,
+            access_key_id=access_key_id,
+            secret_access_key=secret_access_key,
+            prefix=prefix,
+        )
+        self._synced = False
+        self._sync_from_cos()
+
+    def _is_cache(self, path: str) -> bool:
+        return any(path.startswith(c) or path == c.rstrip("/") for c in self.CACHE_PATHS)
+
+    def _is_sync(self, path: str, user: str | None = None) -> bool:
+        # Expand <user> placeholder to actual current user
+        from storage.context import get_current_user
+        current_user = user or get_current_user()
+        sync_paths = [p.replace("<user>", current_user) for p in self.SYNC_PATHS]
+        
+        for p in sync_paths:
+            if "/*/" in p:
+                # Handle wildcard for project-level imports: users/<user>/*/imports/
+                parts = p.split("/*/")
+                prefix = parts[0]
+                suffix = parts[1] if len(parts) > 1 else ""
+                if path.startswith(prefix) and path[len(prefix):].startswith(suffix.rstrip("/").split("/")[0] + "/"):
+                    # Verify it matches the pattern: users/<user>/<project>/imports/
+                    remaining = path[len(prefix):]
+                    if "/" in remaining:
+                        project_part = remaining.split("/")[0]
+                        if project_part and remaining.startswith(project_part + "/" + suffix):
+                            return True
+            elif path == p.rstrip("/") or path.startswith(p):
+                return True
+        return False
+
+    def _sync_from_cos(self) -> None:
+        if self._synced:
+            return
+        try:
+            files = self.cos.list_files("")
+            for key in files:
+                if not self._is_cache(key):
+                    data = self.cos.read_bytes(key)
+                    self.local.write_bytes(key, data)
+            self._synced = True
+        except Exception:
+            pass
+
+    def sync_to_cos(self) -> None:
+        """Push local data to COS, only syncing configured paths."""
+        from storage.context import get_current_user
+        current_user = get_current_user()
+        files = self.local.list_files("")
+        for key in files:
+            if self._is_sync(key, current_user):
+                data = self.local.read_bytes(key)
+                self.cos.write_bytes(key, data)
+
+    def exists(self, path: str) -> bool:
+        return self.local.exists(path)
+
+    def read_bytes(self, path: str) -> bytes:
+        return self.local.read_bytes(path)
+
+    def write_bytes(self, path: str, data: bytes) -> None:
+        self.local.write_bytes(path, data)
+
+    def delete(self, path: str) -> None:
+        self.local.delete(path)
+
+    def list_files(self, prefix: str) -> list[str]:
+        return self.local.list_files(prefix)
+
+    def mkdir(self, path: str) -> None:
+        self.local.mkdir(path)
+
+    def open_read(self, path: str) -> BinaryIO:
+        return self.local.open_read(path)
+
+    def open_write(self, path: str) -> BinaryIO:
+        return self.local.open_write(path)
+
+
 def _create_backend_from_env() -> StorageBackend:
     """Create backend from environment variables / Streamlit secrets."""
     import streamlit as st
 
-    # Check for S3-compatible config in Streamlit secrets
+    if os.getenv("NEGOTIUM_LOCAL_ONLY") == "true":
+        from storage.context import DATA_ROOT
+        return LocalBackend(DATA_ROOT)
+
     try:
         cos_config = st.secrets.get("cos", {})
     except Exception:
         cos_config = {}
 
-    # Also check environment variables as fallback
     bucket = cos_config.get("bucket") or os.getenv("COS_BUCKET")
     endpoint = cos_config.get("endpoint") or os.getenv("COS_ENDPOINT")
     region = cos_config.get("region") or os.getenv("COS_REGION", "auto")
@@ -274,8 +400,11 @@ def _create_backend_from_env() -> StorageBackend:
     secret_key = cos_config.get("secret_key") or os.getenv("COS_SECRET_KEY")
     prefix = cos_config.get("prefix") or os.getenv("COS_PREFIX", "")
 
+    from storage.context import DATA_ROOT
+
     if bucket and access_key and secret_key:
-        return S3Backend(
+        return SyncBackend(
+            local_root=DATA_ROOT,
             bucket=bucket,
             endpoint_url=endpoint,
             region_name=region,
@@ -284,6 +413,4 @@ def _create_backend_from_env() -> StorageBackend:
             prefix=prefix,
         )
 
-    # Default to local filesystem
-    from storage.context import DATA_ROOT
     return LocalBackend(DATA_ROOT)

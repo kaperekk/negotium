@@ -10,9 +10,7 @@ import config as cfg_module
 import storage
 from ui.bootstrap import configure_import_logging, ensure_project_context
 from ui.colors import get_theme
-
-
-DEFAULT_USER_KEY = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+from storage.context import LOCAL_USER
 
 
 def init_runtime() -> tuple[dict, dict, str, str, date]:
@@ -21,7 +19,7 @@ def init_runtime() -> tuple[dict, dict, str, str, date]:
     configure_import_logging()
 
     # Always set default user
-    storage.set_current_user_by_key(DEFAULT_USER_KEY)
+    storage.set_current_user(LOCAL_USER)
 
     cfg = cfg_module.load()
     if "theme" not in st.session_state:

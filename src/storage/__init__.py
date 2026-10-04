@@ -7,33 +7,26 @@ import threading
 import uuid
 from datetime import date, datetime
 from pathlib import Path
-from typing import Iterator
 
 from domain.currencies import (
     CURRENCY_SUFFIXES,
-    CURRENCY_SYMBOLS,
     SUFFIX_CURRENCY,
     SUPPORTED_CURRENCIES,
     TRIANGULATE_VIA_USD,
 )
 # Re-export for backward compatibility
-from domain.currencies import SUPPORTED_CURRENCIES
 from storage.context import (
     DATA_ROOT,
-    ROOT,
-    USERS_ROOT,
-    DEFAULT_USER,
+    LOCAL_USER,
     ProjectContext,
     get_current_project,
     set_current_project,
     get_current_user,
     set_current_user,
-    get_user_root,
 )
 from storage.repositories import (
     BalanceRepository,
     SnapshotRepository,
-    TransactionRepository,
 )
 from storage.backends import get_backend
 
@@ -156,13 +149,13 @@ def set_current_user_by_key(user_key: str) -> None:
     if user_name:
         set_current_user(user_name)
     else:
-        set_current_user(DEFAULT_USER)
+        set_current_user(LOCAL_USER)
 
 
 def list_projects(user: str | None = None) -> list[str]:
     user = user or current_user()
     reg = _load_registry(user)
-    return sorted([name for name, data in reg.items() if data.get("user", DEFAULT_USER) == user])
+    return sorted([name for name, data in reg.items() if data.get("user", LOCAL_USER) == user])
 
 
 def get_last_refresh(name: str | None = None, user: str | None = None) -> str:
@@ -209,7 +202,7 @@ def create_project(name: str, user: str | None = None) -> None:
     user = user or current_user()
     reg = _load_registry(user)
     for proj_name, data in reg.items():
-        if data.get("user", DEFAULT_USER) == user and proj_name == name:
+        if data.get("user", LOCAL_USER) == user and proj_name == name:
             raise ValueError(f"Project '{name}' already exists")
     ctx = ProjectContext(name, user)
     ctx.ensure_directories()
@@ -223,7 +216,7 @@ def rename_project(old: str, new: str, user: str | None = None) -> None:
     reg = _load_registry(user)
     if old not in reg:
         raise ValueError(f"Project '{old}' not found")
-    if reg[old].get("user", DEFAULT_USER) != user:
+    if reg[old].get("user", LOCAL_USER) != user:
         raise ValueError(f"Project '{old}' does not belong to user '{user}'")
     if new in reg:
         raise ValueError(f"Project '{new}' already exists")
@@ -245,7 +238,7 @@ def delete_project(name: str, user: str | None = None) -> None:
     reg = _load_registry(user)
     if name not in reg:
         return
-    if reg[name].get("user", DEFAULT_USER) != user:
+    if reg[name].get("user", LOCAL_USER) != user:
         raise ValueError(f"Project '{name}' does not belong to user '{user}'")
     prefix = f"users/{user}/{name}/"
     backend = _backend()

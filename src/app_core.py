@@ -14,7 +14,6 @@ import config as cfg_module
 import ledger_core
 import storage
 from ui.dashboard import render_dashboard
-from ui.runtime import DEFAULT_USER_KEY
 from ui.sidebar import render_sidebar
 from ui.styles import (
     build_app_styles,
@@ -23,10 +22,10 @@ from ui.styles import (
     build_metric_card_styles,
     build_theme_veil,
     build_toggle_button_styles,
-    build_trade_dialog_styles,
 )
 from ui.colors import get_theme
 from ui.bootstrap import configure_import_logging, ensure_project_context
+from storage.context import LOCAL_USER
 
 
 def init_runtime_with_user(user_key: str | None = None) -> tuple[dict, object, str, str, date]:
@@ -34,9 +33,10 @@ def init_runtime_with_user(user_key: str | None = None) -> tuple[dict, object, s
     ensure_project_context()
     configure_import_logging()
 
-    # Use the provided user key or default
-    key = user_key or DEFAULT_USER_KEY
-    storage.set_current_user_by_key(key)
+    if user_key:
+        storage.set_current_user_by_key(user_key)
+    else:
+        storage.set_current_user(LOCAL_USER)
 
     current_user = storage.current_user()
     cfg = cfg_module.load(current_user)

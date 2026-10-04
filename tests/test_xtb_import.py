@@ -19,7 +19,11 @@ def test_xtb_parse_shares(tmp: Path):
 
 
 def test_xtb_transfer_creates_source_entry(tmp: Path):
-    """Transfer import creates the source currency entry (each file has its own side)."""
+    """Transfer import creates the source currency entry (each file has its own side).
+
+    Transfer is an internal transfer / currency conversion — NOT an account_operation
+    (doesn't count toward invested capital).
+    """
     from xtb_import import parse_xtb_excel
     import openpyxl
 
@@ -52,7 +56,8 @@ def test_xtb_transfer_creates_source_entry(tmp: Path):
     eur_entry = entries[0]
     assert eur_entry["ticker"] == "EUR"
     assert eur_entry["amount"] == -956
-    assert eur_entry.get("account_operation") is True
+    # Transfer is NOT an account_operation (it's a currency conversion)
+    assert eur_entry.get("account_operation") is None or eur_entry.get("account_operation") is False
 
 
 def test_xtb_deposit_creates_account_operation(tmp: Path):
@@ -339,7 +344,10 @@ def test_xtb_parse_deposit(tmp: Path):
 
 
 def test_xtb_parse_transfer(tmp: Path):
-    """parse_xtb_excel: transfer creates account_operation entry."""
+    """parse_xtb_excel: transfer creates a currency entry (NOT account_operation).
+
+    Transfer is an internal transfer / currency conversion — NOT a deposit/withdrawal.
+    """
     from xtb_import import parse_xtb_excel
     import openpyxl
 
@@ -354,7 +362,9 @@ def test_xtb_parse_transfer(tmp: Path):
 
     txns = parse_xtb_excel(p, "USD")
     assert len(txns) == 1
-    assert txns[0]["entries"][0].get("account_operation") is True
+    # Transfer is NOT an account_operation (it's a currency conversion)
+    assert txns[0]["entries"][0].get("account_operation") is None or txns[0]["entries"][0].get("account_operation") is False
+    assert txns[0]["entries"][0]["amount"] == 2000.0
 
 
 def _single_row_book(tmp: Path, name: str, row: list) -> Path:

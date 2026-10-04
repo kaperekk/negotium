@@ -9,10 +9,9 @@ from __future__ import annotations
 import logging
 import re
 import warnings
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Generator
+from typing import Any
 
 import openpyxl
 import pandas as pd
@@ -213,8 +212,13 @@ def _parse_cash_operations_raw(file_path: str | Path, currency: str) -> list[Tra
                 entries.append(LedgerEntry(ticker=translate_ticker(str(ticker), rules), amount=round(-shares, 8)))
                 entries.append(LedgerEntry(ticker=currency, amount=round(amount, 8)))
 
-        elif op_type_str in ("Deposit", "Withdrawal", "IKE deposit", "IKE withdrawal", "Transfer"):
+        elif op_type_str in ("Deposit", "Withdrawal", "IKE deposit", "IKE withdrawal"):
             entries.append(LedgerEntry(ticker=currency, amount=round(amount, 8), account_operation=True))
+
+        elif op_type_str == "Transfer":
+            # Transfer is typically internal account transfer or currency conversion (FX swap)
+            # Not a deposit/withdrawal — doesn't count toward invested capital
+            entries.append(LedgerEntry(ticker=currency, amount=round(amount, 8)))
 
         elif op_type_str in ("Dividend", "Dividend from foreign company on PL market"):
             entries.append(LedgerEntry(ticker=currency, amount=round(amount, 8)))

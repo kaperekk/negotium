@@ -6,6 +6,8 @@ returning HTML <style> blocks are injected via st.markdown(unsafe_allow_html=Tru
 
 from __future__ import annotations
 
+import html
+
 from ui.colors import NEGATIVE, POSITIVE, STAT_CARD_ACCENTS, STAT_CARD_TINT_ALPHA
 from ui.sizes import (
     ROOT_FONT_PX, SIDEBAR_WIDTH_PX,

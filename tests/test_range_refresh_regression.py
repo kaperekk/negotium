@@ -30,12 +30,8 @@ import streamlit as st
 import storage
 import config as cfg_module
 
-storage.ROOT = TMP
-storage.DATA_ROOT = TMP / "data"
-storage.PRICES_DIR = TMP / "data" / "prices"
-storage.PROJECTS_PATH = TMP / "data" / "projects.json"
-cfg_module.ROOT = TMP
-cfg_module.GLOBAL_CONFIG_PATH = TMP / "data" / "config.json"
+# Use the already-patched storage from the tmp fixture
+# Don't override any globals - the fixture has already set them up
 
 import ledger_core
 from ui.dashboard import render_dashboard
@@ -62,12 +58,15 @@ render_dashboard(cfg, storage, T, today, data_start_date, base_ccy)
 '''
 
 
-def _build_temp_app(tmp_path: Path) -> Path:
-    """Create an isolated data root with a 2-year ledger + broker file to re-import."""
-    data = tmp_path / "data"
-    (data / "t" / "imports" / "custom").mkdir(parents=True)
-    (data / "prices" / "AAPL").mkdir(parents=True)
-    (data / "prices" / "USDPLN").mkdir(parents=True)
+def _build_temp_app(tmp: Path) -> Path:
+    """Create test data in the fixture's test_project."""
+    # The tmp fixture creates: tmp/data/users/local_user/test_project/
+    project_dir = tmp / "data" / "users" / "local_user" / "test_project"
+    prices_dir = tmp / "data" / "prices"
+    
+    (project_dir / "imports" / "custom").mkdir(parents=True, exist_ok=True)
+    (prices_dir / "AAPL").mkdir(parents=True, exist_ok=True)
+    (prices_dir / "USDPLN").mkdir(parents=True, exist_ok=True)
 
     today = date.today()
     yr = today.year
@@ -77,36 +76,37 @@ def _build_temp_app(tmp_path: Path) -> Path:
     usdpln = {f"{y}-{m:02d}-{d:02d}": 3.9 for y in (yr - 2, yr - 1, yr)
               for m in range(1, 13) for d in (5, 12, 19, 26)}
     for y in (yr - 2, yr - 1, yr):
-        (data / "prices" / "AAPL" / f"{y}.json").write_text(
+        (prices_dir / "AAPL" / f"{y}.json").write_text(
             json.dumps({k: v for k, v in aapl.items() if k.startswith(str(y))}))
-        (data / "prices" / "USDPLN" / f"{y}.json").write_text(
+        (prices_dir / "USDPLN" / f"{y}.json").write_text(
             json.dumps({k: v for k, v in usdpln.items() if k.startswith(str(y))}))
 
-    (data / "config.json").write_text(json.dumps({"default_currency": "PLN", "theme": "dark"}))
-    (data / "projects.json").write_text(
-        json.dumps({"t": {"created_at": "2026-01-01T00:00:00", "last_refresh": "2026-09-01"}}))
+    (tmp / "data" / "config.json").write_text(json.dumps({"default_currency": "PLN", "theme": "dark"}))
+    # projects.json is managed by the fixture, don't overwrite
 
     txs = [
         {"date": f"{yr - 2}-03-15", "entries": [{"ticker": "AAPL", "amount": 10.0}, {"ticker": "USD", "amount": -2000.0}]},
         {"date": f"{yr - 1}-04-15", "entries": [{"ticker": "AAPL", "amount": 8.0}, {"ticker": "USD", "amount": -1600.0}]},
         {"date": f"{yr}-02-15", "entries": [{"ticker": "AAPL", "amount": 7.0}, {"ticker": "USD", "amount": -1400.0}]},
     ]
-    with (data / "t" / "transactions.jsonl").open("w") as f:
+    with (project_dir / "transactions.jsonl").open("w") as f:
         for r in txs:
             f.write(json.dumps(r) + "\n")
 
     # A broker file so "Refresh data" actually re-imports something
-    (data / "t" / "imports" / "custom" / "regression.json").write_text(json.dumps([
+    (project_dir / "imports" / "custom" / "regression.json").write_text(json.dumps([
         {"date": f"{yr}-06-01", "entries": [{"ticker": "AAPL", "amount": 3.0}, {"ticker": "USD", "amount": -600.0}]},
     ]))
 
-    wrapper = tmp_path / "app_wrapper.py"
-    wrapper.write_text(WRAPPER_APP.format(repo=str(REPO), tmp=str(tmp_path)))
+    wrapper = tmp / "app_wrapper.py"
+    wrapper.write_text(WRAPPER_APP.format(repo=str(REPO), tmp=str(tmp)))
     return wrapper
-def test_range_survives_refresh_and_all_charts_respect_range(tmp_path: Path):
+
+
+def test_range_survives_refresh_and_all_charts_respect_range(tmp: Path):
     from streamlit.testing.v1 import AppTest
 
-    wrapper = _build_temp_app(tmp_path)
+    wrapper = _build_temp_app(tmp)
     at = AppTest.from_file(str(wrapper), default_timeout=120)
     at.run()
     assert not at.exception, f"app crashed on first run: {[e.message for e in at.exception]}"
@@ -155,7 +155,7 @@ def test_range_survives_refresh_and_all_charts_respect_range(tmp_path: Path):
     assert checked >= 3, f"expected >=3 filtered traces, got {checked}"
 
 
-def test_no_duplicate_plotly_element_ids(tmp_path: Path):
+def test_no_duplicate_plotly_element_ids(tmp: Path):
     """Allocation donuts + drawdown must not collide on auto-generated IDs.
 
     Regression guard for StreamlitDuplicateElementId: two bare
@@ -164,7 +164,7 @@ def test_no_duplicate_plotly_element_ids(tmp_path: Path):
     """
     from streamlit.testing.v1 import AppTest
 
-    wrapper = _build_temp_app(tmp_path)
+    wrapper = _build_temp_app(tmp)
     at = AppTest.from_file(str(wrapper), default_timeout=120)
     at.run()
     assert not at.exception, (

@@ -91,7 +91,7 @@ def render_sidebar(cfg, storage, T, today, data_start_date):
     current_user = storage.current_user()
     with st.sidebar:
         project_name = html.escape(storage.get_current_project())
-        st.markdown(render_project_banner(project_name, T), unsafe_allow_html=True)
+        st.markdown(render_project_banner(project_name, T, current_user), unsafe_allow_html=True)
 
         # Project selection
         projects = storage.list_projects()
@@ -147,6 +147,15 @@ def render_sidebar(cfg, storage, T, today, data_start_date):
         ccy_default = ccy_options.index(cfg.get("default_currency", "PLN"))
         if "base_ccy_idx" not in st.session_state:
             st.session_state["base_ccy_idx"] = ccy_default
+
+        # Auto-refresh check (runs before currency buttons to avoid double rerun on currency change)
+        if _should_auto_refresh(storage, storage.get_current_project(), today):
+            file_count, imported = _run_refresh(
+                storage, today, ccy_options[st.session_state["base_ccy_idx"]], service=_import_service
+            )
+            storage.set_last_refresh(today.isoformat())
+            st.rerun()
+
         ccy_cols = st.columns(3)
         base_ccy = None
         for i, ccy in enumerate(ccy_options):
@@ -163,13 +172,6 @@ def render_sidebar(cfg, storage, T, today, data_start_date):
                     st.rerun()
         if base_ccy is None:
             base_ccy = ccy_options[st.session_state["base_ccy_idx"]]
-
-        if _should_auto_refresh(storage, storage.get_current_project(), today):
-            file_count, imported = _run_refresh(
-                storage, today, base_ccy, service=_import_service
-            )
-            storage.set_last_refresh(today.isoformat())
-            st.rerun()
 
         _range_opts = ["All time", "This year", "Previous year", "Last 3 months",
                        "Last 12 months", "Last 2 years", "Custom"]
@@ -301,6 +303,17 @@ def render_sidebar(cfg, storage, T, today, data_start_date):
                         st.rerun()
                     except ValueError as e:
                         st.error(str(e))
+
+            st.subheader("Cloud Sync")
+            from storage.backends import get_backend, SyncBackend
+            backend = get_backend()
+            if isinstance(backend, SyncBackend):
+                if st.button("📤 Sync data to COS", key="sync_cos_btn"):
+                    with st.spinner("Syncing to COS..."):
+                        backend.sync_to_cos()
+                    st.success("Data synced to COS")
+            else:
+                st.caption("COS not configured — using local storage only")
 
         with st.expander("➕ Add transaction"):
             # Dynamic row count managed via session state

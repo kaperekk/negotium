@@ -4,13 +4,15 @@ app_local.py — Negotium - Investment Tracker UI (Streamlit) Direct Access
 Run: streamlit run src/app_local.py
 
 This version directly uses the default user without login.
+Uses local-only storage backend (no COS sync).
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
-import streamlit as st
+os.environ["NEGOTIUM_LOCAL_ONLY"] = "true"
 
 sys.path.insert(0, str(Path(__file__).parent))
 

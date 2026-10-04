@@ -4,11 +4,19 @@ app.py — Negotium - Investment Tracker UI (Streamlit) with Login
 Run: streamlit run src/app.py
 
 This version includes a login page where users enter their UUID key.
+Loads .env for COS configuration.
 """
 from __future__ import annotations
 
 import sys
 from pathlib import Path
+
+# Load .env for COS configuration
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent.parent / ".env")
+except ImportError:
+    pass
 
 import streamlit as st
 

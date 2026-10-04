@@ -6,10 +6,7 @@ touch real data files.
 """
 from __future__ import annotations
 
-import os
-import sys
 import tempfile
-import shutil
 from datetime import date
 from pathlib import Path
 
@@ -53,7 +50,7 @@ def patch_root(tmp: Path):
     # Create default user in users.json
     users_data = {
         "a1b2c3d4-e5f6-7890-abcd-ef1234567890": {
-            "user_name": "default_user",
+            "user_name": "local_user",
             "created": date.today().isoformat(),
         }
     }
@@ -61,10 +58,10 @@ def patch_root(tmp: Path):
     storage.USERS_PATH.write_text(json.dumps(users_data))
 
     # Set up a default test project
-    test_project = tmp / "data" / "users" / "default_user" / "test_project"
+    test_project = tmp / "data" / "users" / "local_user" / "test_project"
     test_project.mkdir(parents=True, exist_ok=True)
     (test_project / "imports").mkdir(exist_ok=True)
-    storage.set_current_user("default_user")
+    storage.set_current_user("local_user")
     storage.set_current_project("test_project")
 
     cfg_module.ROOT                = tmp

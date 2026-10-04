@@ -27,7 +27,7 @@ endpoint = "https://your-account-id.r2.cloudflarestorage.com"  # For R2
 region = "auto"  # For R2, use "auto"
 access_key = "your-access-key-id"
 secret_key = "your-secret-access-key"
-prefix = "negotiun/"  # Optional: prefix for all keys (trailing slash added automatically)
+prefix = "negotium/"  # Optional: prefix for all keys (trailing slash added automatically)
 ```
 
 ### Provider-Specific Examples
@@ -35,33 +35,33 @@ prefix = "negotiun/"  # Optional: prefix for all keys (trailing slash added auto
 #### Cloudflare R2
 ```toml
 [cos]
-bucket = "negotiun-data"
+bucket = "negotium-data"
 endpoint = "https://<account-id>.r2.cloudflarestorage.com"
 region = "auto"
 access_key = "<your-access-key>"
 secret_key = "<your-secret-key>"
-prefix = "negotiun/"
+prefix = "negotium/"
 ```
 
 #### AWS S3
 ```toml
 [cos]
-bucket = "negotiun-data"
+bucket = "negotium-data"
 region = "us-east-1"
 access_key = "<your-access-key>"
 secret_key = "<your-secret-key>"
-prefix = "negotiun/"
+prefix = "negotium/"
 ```
 
 #### MinIO (local development)
 ```toml
 [cos]
-bucket = "negotiun"
+bucket = "negotium"
 endpoint = "http://localhost:9000"
 region = "us-east-1"
 access_key = "minioadmin"
 secret_key = "minioadmin"
-prefix = "negotiun/"
+prefix = "negotium/"
 ```
 
 ## How It Works
@@ -117,7 +117,7 @@ To test with COS locally, you can:
    export COS_ENDPOINT=https://your-endpoint
    export COS_ACCESS_KEY=your-key
    export COS_SECRET_KEY=your-secret
-   export COS_PREFIX=negotiun/
+   export COS_PREFIX=negotium/
    ```
 2. Or create `.streamlit/secrets.toml` in your project root (gitignored)
 

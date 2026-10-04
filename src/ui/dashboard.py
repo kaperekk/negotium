@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import tempfile
 import time
 from datetime import date
+from pathlib import Path
 
-import pandas as pd
 import streamlit as st
 
 import storage
@@ -22,11 +23,9 @@ from ticker_data import (
     get_ticker_meta,
 )
 from ledger_core import (
-    add_transaction,
     annualize_twr,
     compute_irr,
     compute_twr,
-    delete_transaction,
     get_all_tickers,
     get_all_transactions,
     rebuild_balance,
@@ -143,10 +142,23 @@ def render_dashboard(cfg, storage, T, today, data_start_date, base_ccy: str | No
         from services.import_service import ImportService
 
         service = ImportService()
-        for broker, fpath in service.discover_files():
+        for broker, filename in service.discover_files():
             importer = service.importer_for(broker)
             if hasattr(importer, "post_import"):
-                importer.post_import(fpath, service.currency_for(broker, fpath))
+                data = service.get_import_file(broker, filename)
+                if data is not None:
+                    pattern, _ = service.importers[broker]
+                    suffix = Path(pattern).suffix
+                    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                        tmp.write(data)
+                        tmp_path = Path(tmp.name)
+                    try:
+                        importer.post_import(tmp_path, service.currency_for(broker, filename))
+                    finally:
+                        try:
+                            tmp_path.unlink()
+                        except Exception:
+                            pass
 
     # Warn if we have stock tickers but zero price files at all
     stock_tickers = [t for t in tickers_needed

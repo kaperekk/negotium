@@ -177,10 +177,10 @@ def test_benchmark_load_returns_none_when_missing(tmp: Path):
 
 
 def test_list_users_default(tmp: Path):
-    """list_users returns default_user when no users.json exists."""
+    """list_users returns local_user when no users.json exists."""
     import storage
     users = storage.list_users()
-    assert "default_user" in users
+    assert "local_user" in users
 
 
 def test_create_user(tmp: Path):
@@ -191,7 +191,7 @@ def test_create_user(tmp: Path):
     storage.create_user("testuser")
     users = storage.list_users()
     assert "testuser" in users
-    assert "default_user" in users
+    assert "local_user" in users
 
     # Check directory was created
     user_dir = storage.USERS_ROOT / "testuser"
@@ -218,7 +218,7 @@ def test_get_user_by_key(tmp: Path):
 
     # Check default user key
     user_name = storage.get_user_by_key("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
-    assert user_name == "default_user"
+    assert user_name == "local_user"
 
     # Invalid key returns None
     assert storage.get_user_by_key("invalid-key") is None
@@ -229,11 +229,11 @@ def test_set_current_user_by_key(tmp: Path):
     import storage
 
     storage.set_current_user_by_key("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
-    assert storage.current_user() == "default_user"
+    assert storage.current_user() == "local_user"
 
     # Invalid key falls back to default
     storage.set_current_user_by_key("invalid-key")
-    assert storage.current_user() == "default_user"
+    assert storage.current_user() == "local_user"
 
 
 def test_project_isolation_per_user(tmp: Path):
