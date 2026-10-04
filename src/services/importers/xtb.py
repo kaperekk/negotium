@@ -58,6 +58,6 @@ class XtbImporter(BaseBrokerImporter):
         xtb_import.fix_avg_prices_from_open_positions(file_path, currency)
 
     def file_currency(self, filename: str) -> str | None:
-        """XTB exports one account per file, named after its currency (e.g. `EUR_history.xlsx`)."""
+        """XTB exports one account per file, named after its currency (e.g. `PLN_history.xlsx`)."""
         prefix = Path(filename).name.strip()[:3].upper()
-        return prefix if prefix in SUPPORTED_CURRENCIES else "EUR"
+        return prefix if prefix in SUPPORTED_CURRENCIES else None

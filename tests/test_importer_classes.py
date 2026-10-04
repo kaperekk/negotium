@@ -103,12 +103,69 @@ def test_xtb_importer_class(tmp: Path):
 
 
 def test_xtb_file_currency_from_prefix(tmp: Path):
-    """XTB resolves the account currency from the filename prefix, defaulting to EUR."""
+    """XTB resolves the account currency from the filename prefix, returns None if not recognized."""
     importer = XtbImporter()
     assert importer.file_currency("EUR_history.xlsx") == "EUR"
     assert importer.file_currency("PLN_history.xlsx") == "PLN"
-    assert importer.file_currency("2026-09-25_historia.xlsx") == "EUR"
-    assert importer.file_currency("random.xlsx") == "EUR"
+    assert importer.file_currency("USD_history.xlsx") == "USD"
+    assert importer.file_currency("2026-09-25_historia.xlsx") is None
+    assert importer.file_currency("random.xlsx") is None
+
+
+def test_xtb_import_uses_file_currency_for_pln(tmp: Path):
+    """XTB import uses PLN currency entries when filename has PLN prefix."""
+    from src.services.importers.xtb import XtbImporter
+    import openpyxl
+
+    importer = XtbImporter()
+
+    # Create a test XLSX file with PLN prefix
+    wb = openpyxl.Workbook()
+    ws = wb.create_sheet("Cash Operations")
+    ws.append(["Type", "Ticker", "Instrument", "Time", "Amount", "ID", "Comment"])
+    ws.append(["Deposit", "", "", "2026-01-10 10:00:00", 5000.0, 1, "eWallet deposit"])
+    del wb["Sheet"]
+    xlsx_path = tmp / "PLN_history.xlsx"
+    wb.save(xlsx_path)
+    wb.close()
+
+    # Parse with currency resolved from filename
+    ccy = importer.file_currency("PLN_history.xlsx")
+    parsed = importer.parse(xlsx_path, ccy)
+    assert len(parsed.transactions) == 1
+    entries = parsed.transactions[0]["entries"]
+    assert len(entries) == 1
+    assert entries[0]["ticker"] == "PLN"
+    assert entries[0]["amount"] == 5000.0
+    assert entries[0].get("account_operation") is True
+
+
+def test_xtb_import_uses_file_currency_for_eur(tmp: Path):
+    """XTB import uses EUR currency entries when filename has EUR prefix."""
+    from src.services.importers.xtb import XtbImporter
+    import openpyxl
+
+    importer = XtbImporter()
+
+    # Create a test XLSX file with EUR prefix
+    wb = openpyxl.Workbook()
+    ws = wb.create_sheet("Cash Operations")
+    ws.append(["Type", "Ticker", "Instrument", "Time", "Amount", "ID", "Comment"])
+    ws.append(["Deposit", "", "", "2026-01-10 10:00:00", 1000.0, 1, "eWallet deposit"])
+    del wb["Sheet"]
+    xlsx_path = tmp / "EUR_history.xlsx"
+    wb.save(xlsx_path)
+    wb.close()
+
+    # Parse with currency resolved from filename
+    ccy = importer.file_currency("EUR_history.xlsx")
+    parsed = importer.parse(xlsx_path, ccy)
+    assert len(parsed.transactions) == 1
+    entries = parsed.transactions[0]["entries"]
+    assert len(entries) == 1
+    assert entries[0]["ticker"] == "EUR"
+    assert entries[0]["amount"] == 1000.0
+    assert entries[0].get("account_operation") is True
 
 
 def test_bossa_file_currency_is_never_guessed(tmp: Path):

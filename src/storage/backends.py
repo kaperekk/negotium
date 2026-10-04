@@ -274,6 +274,7 @@ class SyncBackend(StorageBackend):
         "ticker_meta.json",
         "earnings.json",
         "ath.json",
+        "portfolio.jsonl",
     }
 
     SYNC_PATHS = {

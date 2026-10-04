@@ -239,8 +239,9 @@ class ImportService:
             if progress_cb:
                 progress_cb(idx / len(all_files), f"Importing {filename}…")
 
+            ccy = self.currency_for(broker, filename)
             res = self.import_stored_file(
-                broker, filename, progress_cb=progress_cb, run_post_import=False
+                broker, filename, currency=ccy, progress_cb=progress_cb, run_post_import=False
             )
             if res.success:
                 report.imported += res.imported
