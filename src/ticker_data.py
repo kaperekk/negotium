@@ -192,36 +192,44 @@ def get_ticker_meta(ticker: str) -> dict:
     """Return {sector, country, asset_class} for a ticker, cached to disk.
 
     Currency tickers (USD/EUR/PLN) are treated as Cash. Other tickers are
-    resolved via Yahoo Finance `info`; failures fall back to Unknown/Equity.
+    resolved via Yahoo Finance `info` with retries; failures are NOT cached
+    so they can be retried on subsequent runs.
     """
     if ticker.upper() in SUPPORTED_CURRENCIES:
         return {"sector": "Cash", "country": ticker.upper(), "asset_class": "Cash"}
 
     meta = load_ticker_meta()
     if ticker in meta:
-        return meta[ticker]
+        cached = meta[ticker]
+        if cached.get("sector") != "Unknown":
+            return cached
 
     entry = {"sector": "Unknown", "country": "Unknown", "asset_class": "Equity"}
-    try:
-        with _suppress_output():
-            info = yf.Ticker(_yahoo_symbol(ticker)).info
-        sector = info.get("sector") or "Unknown"
-        if sector == "N/A":
-            sector = "Unknown"
-        country = info.get("country") or "Unknown"
-        if country == "N/A":
-            country = "Unknown"
-        name = info.get("shortName") or info.get("longName") or ticker
-        entry = {
-            "sector": sector,
-            "country": country,
-            "asset_class": _classify_asset_class(info.get("quoteType"), sector, name),
-        }
-    except Exception:
-        pass
+    for attempt in range(3):
+        try:
+            with _suppress_output():
+                info = yf.Ticker(_yahoo_symbol(ticker)).info
+            sector = info.get("sector") or "Unknown"
+            if sector == "N/A":
+                sector = "Unknown"
+            country = info.get("country") or "Unknown"
+            if country == "N/A":
+                country = "Unknown"
+            name = info.get("shortName") or info.get("longName") or ticker
+            entry = {
+                "sector": sector,
+                "country": country,
+                "asset_class": _classify_asset_class(info.get("quoteType"), sector, name),
+            }
+            break
+        except Exception:
+            if attempt < 2:
+                time.sleep(0.5 * (attempt + 1))
+            continue
 
-    meta[ticker] = entry
-    save_ticker_meta(meta)
+    if entry.get("sector") != "Unknown":
+        meta[ticker] = entry
+        save_ticker_meta(meta)
     return entry
 
 

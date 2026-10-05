@@ -1,4 +1,4 @@
-# Ignore all data files except global config (committed as defaults)
+# Ignore all data files except global config and metadata (committed as defaults)
 data/*
 !data/config.json
 
