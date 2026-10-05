@@ -720,6 +720,98 @@ def test_open_positions_empty_sheet(tmp: Path):
 # ── Volume-based dedup tests ──────────────────────────────────────────────
 
 
+def test_import_xtb_timezone_mismatch_cet_vs_utc(tmp: Path):
+    """import_xtb: Cash Ops (CET) at 00:30 and Open Positions (UTC) at 23:30 prev day reconcile.
+
+    XTB Cash Operations uses local time (Poland CET/CEST), while Open/Closed Positions
+    use UTC. A trade at 00:30 CET on 2025-01-16 is 23:30 UTC on 2025-01-15.
+    Both should map to the same date for reconciliation to avoid duplicate entries.
+    """
+    from xtb_import import import_xtb
+    from ledger_core import get_all_transactions
+
+    # Cash Operations: 00:30 CET on 2025-01-16 (Poland winter time = UTC+1)
+    # Open Positions: 23:30 UTC on 2025-01-15 (same moment)
+    p = _positions_book(
+        tmp, "timezone_mismatch.xlsx",
+        cash_rows=[
+            ["Stock purchase", "AAPL.US", -500.0, "2025-01-16 00:30:00",
+             "OPEN BUY 5 @ 100.00"],
+        ],
+        open_rows=[[
+            "My Trades", "1234567", "AAPL.US", "STOCK", "BUY",
+            5.0, 500.0, 100.0, 120.0,
+            "2025-01-15 23:30:00",  # UTC = same moment as 2025-01-16 00:30 CET
+        ]],
+    )
+    import_xtb(str(p), "USD")
+    txns = get_all_transactions()
+    # *.US= rule strips .US suffix, so ticker becomes "AAPL"
+    aapl_buys = [
+        t for t in txns
+        if any(e["ticker"] == "AAPL" and float(e["amount"]) > 0 for e in t["entries"])
+    ]
+    # Should only have ONE buy transaction (reconciled), not two
+    assert len(aapl_buys) == 1, f"Expected 1 AAPL buy, got {len(aapl_buys)}"
+
+
+def test_import_xtb_spinoff_with_timezone_mismatch(tmp: Path):
+    """import_xtb: spinoff (S2B) from parent with timezone mismatch handled correctly.
+
+    Parent company bought at 00:30 CET (2025-01-16) → Cash Ops date = 2025-01-16.
+    Spinoff S2B appears in Open Positions at 23:30 UTC (2025-01-15) → date = 2025-01-15.
+    After timezone conversion, both map to 2025-01-16.
+    The spinoff should be added as zero-cost acquisition since no S2B buy in Cash Ops.
+    """
+    from xtb_import import import_xtb
+    from ledger_core import get_all_transactions
+
+    p = _positions_book(
+        tmp, "spinoff_timezone.xlsx",
+        cash_rows=[
+            # Parent company buy at 00:30 CET on 2025-01-16
+            ["Stock purchase", "PARENT.PL", "Parent Company", "2025-01-16 00:30:00", -1000.0, "1", "OPEN BUY 10 @ 100.00"],
+        ],
+        open_rows=[
+            # Parent position (same moment, UTC = 2025-01-15 23:30)
+            ["IKE", "111", "PARENT.PL", "STOCK", "BUY",
+             10.0, 1000.0, 100.0, 120.0,
+             "2025-01-15 23:30:00"],
+            # Spinoff S2B received from parent - same UTC date as parent position
+            ["IKE", "222", "S2B.PL", "STOCK", "BUY",
+             5.0, 0.0, 0.0, 50.0,
+             "2025-01-15 23:30:00"],
+        ],
+    )
+    import_xtb(str(p), "PLN")
+    txns = get_all_transactions()
+
+    # Both parent and spinoff are on the same date (2025-01-16), so they're merged
+    # into a single transaction. Find the transaction with S2B.
+    s2b_txns = [t for t in txns if any("S2B" in e["ticker"].upper() for e in t["entries"])]
+    assert len(s2b_txns) == 1, f"Expected 1 transaction with S2B, got {len(s2b_txns)}"
+    
+    # The transaction should have both PARENT and S2B entries
+    s2b_txn = s2b_txns[0]
+    s2b_share = [e for e in s2b_txn["entries"] if "S2B" in e["ticker"].upper()][0]
+    # Spinoff should have zero cash cost (its own PLN entry should be 0.0)
+    # Note: The transaction also has PARENT's PLN entry (-1000.0), but S2B's own is 0.0
+    s2b_cash = [e for e in s2b_txn["entries"] if e["ticker"].upper() == "PLN" and e.get("_s2b_zero_cost", False)]
+    # Since entries are merged, we need to check the S2B entry's cash leg was 0.0
+    # The reconciliation creates a separate entry for S2B with PLN=0.0
+    # But add_transaction merges all entries on the same date
+    # So we verify S2B share amount is correct
+    assert s2b_share["amount"] == 5.0, f"S2B share amount should be 5.0, got {s2b_share['amount']}"
+    
+    # Verify the transaction has a PLN entry with 0.0 for the S2B spinoff
+    # (There will be two PLN entries: -1000.0 for parent, 0.0 for spinoff)
+    pln_entries = [e for e in s2b_txn["entries"] if e["ticker"].upper() == "PLN"]
+    assert any(abs(e["amount"]) < 0.01 for e in pln_entries), "Should have a zero-cost PLN entry for spinoff"
+
+    # Date should be 2025-01-16 (after timezone conversion from UTC 2025-01-15 23:30 to CET 2025-01-16 00:30)
+    assert s2b_txn["date"] == "2025-01-16"
+
+
 def test_import_xtb_adds_spinoff_not_in_cash_ops(tmp: Path):
     """import_xtb: spinoff shares from Open Positions added when Cash Ops has no buy."""
     from xtb_import import import_xtb

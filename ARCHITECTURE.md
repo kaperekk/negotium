@@ -106,7 +106,7 @@ Opens at `http://localhost:8501`
 
 ### 5. Login
 
-- Enter your **User Key (UUID)** on the login page
+- Enter your **User Key** on the login page
 - Click **Login**
 - You'll see your projects and data
 

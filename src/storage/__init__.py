@@ -3,6 +3,7 @@ storage package — low-level file I/O helpers and repositories with multi-proje
 """
 from __future__ import annotations
 
+import re
 import threading
 import uuid
 from datetime import date, datetime
@@ -29,6 +30,17 @@ from storage.repositories import (
     SnapshotRepository,
 )
 from storage.backends import get_backend
+from storage.audit import (
+    log_event,
+    log_login_attempt,
+    log_user_created,
+    log_user_deleted,
+    log_project_created,
+    log_project_deleted,
+    log_project_renamed,
+    log_data_import,
+    get_audit_log,
+)
 
 try:
     import orjson
@@ -118,8 +130,45 @@ def _save_users(users: dict) -> None:
     _write_json(USERS_KEY, users)
 
 
+# Validation helpers
+USERNAME_PATTERN = re.compile(r"^[a-zA-Z0-9_\-\.]{1,64}$")
+PROJECT_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_\-\.]{1,128}$")
+TICKER_PATTERN = re.compile(r"^[A-Z0-9\.\-]{1,20}$")
+
+
+def validate_username(name: str) -> str:
+    """Validate and sanitize username."""
+    name = name.strip()
+    if not name:
+        raise ValueError("Username cannot be empty")
+    if not USERNAME_PATTERN.match(name):
+        raise ValueError("Username must be 1-64 chars: letters, numbers, _, -, .")
+    return name
+
+
+def validate_project_name(name: str) -> str:
+    """Validate and sanitize project name."""
+    name = name.strip()
+    if not name:
+        raise ValueError("Project name cannot be empty")
+    if not PROJECT_NAME_PATTERN.match(name):
+        raise ValueError("Project name must be 1-128 chars: letters, numbers, _, -, .")
+    return name
+
+
+def validate_ticker(ticker: str) -> str:
+    """Validate and sanitize ticker symbol."""
+    ticker = ticker.strip().upper()
+    if not ticker:
+        raise ValueError("Ticker cannot be empty")
+    if not TICKER_PATTERN.match(ticker):
+        raise ValueError("Invalid ticker format")
+    return ticker
+
+
 def create_user(name: str) -> None:
     """Create a new user with their data directory."""
+    name = validate_username(name)
     users = _load_users()
     for data in users.values():
         if data.get("user_name") == name:
@@ -128,6 +177,7 @@ def create_user(name: str) -> None:
     users[user_key] = {"user_name": name, "created": date.today().isoformat()}
     _save_users(users)
     set_current_user(name)
+    log_user_created(name, user_key)
 
 
 def list_users() -> list[str]:
@@ -137,6 +187,8 @@ def list_users() -> list[str]:
 
 def get_user_by_key(user_key: str) -> str | None:
     """Get user_name by user_key."""
+    if not user_key or not isinstance(user_key, str):
+        return None
     users = _load_users()
     if user_key in users:
         return users[user_key].get("user_name")
@@ -200,6 +252,7 @@ def set_watchlist(tickers: list[str], name: str | None = None) -> None:
 
 def create_project(name: str, user: str | None = None) -> None:
     user = user or current_user()
+    name = validate_project_name(name)
     reg = _load_registry(user)
     for proj_name, data in reg.items():
         if data.get("user", LOCAL_USER) == user and proj_name == name:
@@ -209,10 +262,13 @@ def create_project(name: str, user: str | None = None) -> None:
     reg[name] = {"created_at": datetime.now().isoformat(), "user": user}
     _save_registry(reg, user)
     set_current_project(name)
+    log_project_created(name, user)
 
 
 def rename_project(old: str, new: str, user: str | None = None) -> None:
     user = user or current_user()
+    old = validate_project_name(old)
+    new = validate_project_name(new)
     reg = _load_registry(user)
     if old not in reg:
         raise ValueError(f"Project '{old}' not found")
@@ -231,10 +287,12 @@ def rename_project(old: str, new: str, user: str | None = None) -> None:
     reg[new] = reg.pop(old)
     _save_registry(reg, user)
     set_current_project(new)
+    log_project_renamed(old, new, user)
 
 
 def delete_project(name: str, user: str | None = None) -> None:
     user = user or current_user()
+    name = validate_project_name(name)
     reg = _load_registry(user)
     if name not in reg:
         return
@@ -246,6 +304,7 @@ def delete_project(name: str, user: str | None = None) -> None:
         backend.delete(key)
     del reg[name]
     _save_registry(reg, user)
+    log_project_deleted(name, user)
     if current_project() == name:
         set_current_project(None)
 
