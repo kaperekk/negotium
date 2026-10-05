@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +22,7 @@ def _audit_backend():
 def log_event(event_type: str, user: str | None, details: dict[str, Any]) -> None:
     """Log an audit event."""
     entry = {
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "event_type": event_type,
         "user": user,
         "details": details,
