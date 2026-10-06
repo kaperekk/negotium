@@ -8,6 +8,8 @@ Loads .env for COS configuration.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import sys
 import time
 from pathlib import Path
@@ -24,6 +26,7 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).parent))
 
 import storage
+from storage.audit import log_login_attempt
 from app_core import (
     inject_styles,
     inject_theme_veil,
@@ -38,6 +41,39 @@ SESSION_USER_KEY = "negotium_user_key"
 # Rate limiting config
 MAX_LOGIN_ATTEMPTS = 5
 LOCKOUT_DURATION_SECONDS = 300  # 5 minutes
+AUTH_COOKIE_NAME = "negotium_auth"
+COOKIE_MAX_AGE_DAYS = 30
+
+
+def _get_cookie_secret() -> str:
+    """Derive cookie secret from secrets or environment, falling back to a deterministic local secret."""
+    try:
+        secret = st.secrets.get("auth", {}).get("cookie_secret")
+        if secret:
+            return secret
+    except Exception:
+        pass
+    import os
+    return os.getenv("AUTH_COOKIE_SECRET", "negotium_cookie_secret_fallback_key")
+
+
+def _generate_auth_cookie(user_key: str) -> str:
+    """Generate signed cookie payload: user_key:signature."""
+    secret = _get_cookie_secret()
+    sig = hmac.new(secret.encode(), user_key.encode(), hashlib.sha256).hexdigest()
+    return f"{user_key}:{sig}"
+
+
+def _verify_auth_cookie(cookie_val: str) -> str | None:
+    """Verify signed cookie and return user_key if valid, else None."""
+    if not cookie_val or ":" not in cookie_val:
+        return None
+    user_key, sig = cookie_val.split(":", 1)
+    secret = _get_cookie_secret()
+    expected_sig = hmac.new(secret.encode(), user_key.encode(), hashlib.sha256).hexdigest()
+    if hmac.compare_digest(sig, expected_sig):
+        return user_key
+    return None
 
 
 def _check_rate_limit() -> tuple[bool, int]:
@@ -91,11 +127,13 @@ def render_login_page() -> None:
             padding: 2rem;
             border-radius: 12px;
             box-shadow: 0 4px 24px rgba(0,0,0,0.1);
+            background: var(--secondary-background-color, #ffffff);
+            border: 1px solid var(--border-color, rgba(128,128,128,0.2));
         }
         .login-title {
             text-align: center;
             margin-bottom: 1.5rem;
-            color: #1a1a2e;
+            color: var(--text-color, #1a1a2e);
         }
         .rate-limit-msg {
             color: #dc3545;
@@ -132,28 +170,48 @@ def render_login_page() -> None:
         # Native Streamlit form - fast, no page reload
         with st.form("login_form"):
             user_key = st.text_input(
-                "User Keyanythin else to add",
+                "User Key",
                 placeholder="Enter user key to access your portfolio",
                 key="login_user_key",
                 label_visibility="collapsed",
                 type="password",
             )
+            remember_me = st.checkbox("Remember me on this device", value=True, key="remember_me_cb")
 
             submitted = st.form_submit_button("Login", width="stretch", type="primary", disabled=not allowed)
 
             if submitted:
-                if user_key and user_key.strip():
-                    user_name = storage.get_user_by_key(user_key.strip())
+                key_val = user_key.strip() if user_key else ""
+                if key_val:
+                    user_name = storage.get_user_by_key(key_val)
                     if user_name:
-                        storage.set_current_user_by_key(user_key.strip())
+                        log_login_attempt(key_val, success=True, username=user_name)
+                        storage.set_current_user_by_key(key_val)
                         st.session_state[SESSION_LOGGED_IN] = True
-                        st.session_state[SESSION_USER_KEY] = user_key.strip()
+                        st.session_state[SESSION_USER_KEY] = key_val
                         _reset_rate_limit()
+
+                        # Store signed cookie for persistent session if requested
+                        if remember_me and hasattr(st, "context") and hasattr(st.context, "cookies"):
+                            try:
+                                cookie_data = _generate_auth_cookie(key_val)
+                                st.context.cookies[AUTH_COOKIE_NAME] = cookie_data
+                            except Exception:
+                                pass
+
                         st.success(f"Welcome, {user_name}!")
                         st.rerun()
                     else:
+                        log_login_attempt(key_val, success=False, username=None)
                         _record_failed_attempt()
-                        st.error("Invalid user key. Please check and try again.")
+                        attempts = st.session_state.get("login_attempts", 0)
+                        remaining_attempts = MAX_LOGIN_ATTEMPTS - attempts
+                        if remaining_attempts > 0:
+                            st.error(
+                                f"Invalid user key. {remaining_attempts} attempt{'s' if remaining_attempts > 1 else ''} remaining before lockout."
+                            )
+                        else:
+                            st.error("Invalid user key. Account locked due to multiple failed attempts.")
                 else:
                     st.error("Please enter your user key.")
 
@@ -183,6 +241,19 @@ def render_login_page() -> None:
 def main() -> None:
     """Main entry point with login flow."""
     setup_page_config()
+
+    # Attempt auto-login via persistent cookie if not already logged in
+    if not st.session_state.get(SESSION_LOGGED_IN, False):
+        if hasattr(st, "context") and hasattr(st.context, "cookies"):
+            cookie_val = st.context.cookies.get(AUTH_COOKIE_NAME)
+            if cookie_val:
+                user_key = _verify_auth_cookie(cookie_val)
+                if user_key:
+                    user_name = storage.get_user_by_key(user_key)
+                    if user_name:
+                        storage.set_current_user_by_key(user_key)
+                        st.session_state[SESSION_LOGGED_IN] = True
+                        st.session_state[SESSION_USER_KEY] = user_key
 
     if not st.session_state.get(SESSION_LOGGED_IN, False):
         render_login_page()

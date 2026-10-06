@@ -102,11 +102,15 @@ def render_dashboard(cfg, storage, T, today, data_start_date, base_ccy: str | No
         invalidate_ath_cache()
         _ensure_batch_cached.clear()
 
-    # Check which tickers actually need downloading
+    # Check which tickers actually need downloading across entire transaction history
+    start_year = data_start_date.year
     missing = [
         t for t in tickers_needed
         if t not in storage.SUPPORTED_CURRENCIES
-        and (force_refresh or not storage.has_price_year(t, today.year))
+        and (
+            force_refresh
+            or any(not storage.has_price_year(t, y) for y in range(start_year, today.year + 1))
+        )
     ]
 
     download_errors: list[str] = []

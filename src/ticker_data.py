@@ -177,23 +177,49 @@ def _classify_asset_class(quote_type: str, sector: str, name: str) -> str:
     """Map Yahoo quoteType + name heuristics to a coarse asset class."""
     qt = (quote_type or "").upper()
     name_u = (name or "").upper()
-    if qt == "CRYPTOCURRENCY":
+    if qt == "CRYPTOCURRENCY" or "BITCOIN" in name_u or "ETHEREUM" in name_u or "CRYPTO" in name_u:
         return "Crypto"
-    if "BOND" in name_u or "TREASURY" in name_u or "OBLIGAC" in name_u:
+    if "BOND" in name_u or "TREASURY" in name_u or "OBLIGAC" in name_u or qt == "BOND":
         return "Bond"
-    if any(k in name_u for k in ("GOLD", "SILVER", "OIL", "COMMODIT", "COPPER")):
+    if any(k in name_u for k in ("GOLD", "SILVER", "OIL", "COMMODIT", "COPPER", "PHYSICAL")):
         return "Commodity"
     if qt in ("ETF", "MUTUALFUND", "EQUITY", "INDEX", ""):
         return "Equity"
     return "Equity"
 
 
+def _derive_sector(info: dict, quote_type: str, asset_class: str, name: str, ticker: str) -> str:
+    """Derive a meaningful sector for stocks, ETFs, crypto, and fixed income."""
+    sector = info.get("sector") or info.get("category")
+    if sector and sector not in ("N/A", "Unknown"):
+        return sector
+
+    qt = (quote_type or "").upper()
+    name_u = (name or "").upper()
+    ticker_u = ticker.upper()
+
+    if asset_class == "Crypto" or qt == "CRYPTOCURRENCY" or "BTC" in ticker_u or "ETH" in ticker_u:
+        return "Cryptocurrency"
+    if asset_class == "Bond" or qt == "BOND" or "TREASURY" in name_u or "BOND" in name_u:
+        return "Fixed Income"
+    if asset_class == "Commodity" or any(k in name_u for k in ("GOLD", "SILVER", "OIL", "COMMODITY")):
+        return "Commodities"
+
+    if qt in ("ETF", "MUTUALFUND") or "ETF" in name_u or "UCITS" in name_u or "INDEX" in name_u:
+        fund_family = info.get("fundFamily")
+        if fund_family and fund_family not in ("N/A", "Unknown"):
+            return f"ETF ({fund_family})"
+        return "ETF / Index"
+
+    return "Unknown"
+
+
 def get_ticker_meta(ticker: str) -> dict:
     """Return {sector, country, asset_class} for a ticker, cached to disk.
 
     Currency tickers (USD/EUR/PLN) are treated as Cash. Other tickers are
-    resolved via Yahoo Finance `info` with retries; failures are NOT cached
-    so they can be retried on subsequent runs.
+    resolved via Yahoo Finance `info` with retries; successful and derived
+    lookups are cached to avoid redundant network overhead.
     """
     if ticker.upper() in SUPPORTED_CURRENCIES:
         return {"sector": "Cash", "country": ticker.upper(), "asset_class": "Cash"}
@@ -201,33 +227,40 @@ def get_ticker_meta(ticker: str) -> dict:
     meta = load_ticker_meta()
     if ticker in meta:
         cached = meta[ticker]
-        if cached.get("sector") != "Unknown":
+        if cached.get("sector") and cached.get("sector") != "Unknown":
             return cached
 
     entry = {"sector": "Unknown", "country": "Unknown", "asset_class": "Equity"}
+    fetched = False
     for attempt in range(3):
         try:
             with _suppress_output():
                 info = yf.Ticker(_yahoo_symbol(ticker)).info
-            sector = info.get("sector") or "Unknown"
-            if sector == "N/A":
-                sector = "Unknown"
+            if not info:
+                continue
+
+            quote_type = info.get("quoteType") or ""
+            name = info.get("shortName") or info.get("longName") or ticker
             country = info.get("country") or "Unknown"
             if country == "N/A":
                 country = "Unknown"
-            name = info.get("shortName") or info.get("longName") or ticker
+
+            asset_class = _classify_asset_class(quote_type, "", name)
+            sector = _derive_sector(info, quote_type, asset_class, name, ticker)
+
             entry = {
                 "sector": sector,
                 "country": country,
-                "asset_class": _classify_asset_class(info.get("quoteType"), sector, name),
+                "asset_class": asset_class,
             }
+            fetched = True
             break
         except Exception:
             if attempt < 2:
                 time.sleep(0.5 * (attempt + 1))
             continue
 
-    if entry.get("sector") != "Unknown":
+    if fetched and entry.get("sector") != "Unknown":
         meta[ticker] = entry
         save_ticker_meta(meta)
     return entry
@@ -380,12 +413,14 @@ def ensure_parallel(
     # Pre-resolve names sequentially (yf.Ticker().info deadlocks when called
     # concurrently, so we do this before spawning the download pool).
     with _names_lock:
+        names = load_ticker_names()
+        _names_cache.update(names)
+        meta = load_ticker_meta()
         for t in symbols:
             if t not in _names_cache:
-                names = load_ticker_names()
-                _names_cache.update(names)
-                if t not in _names_cache:
-                    get_ticker_name(t)
+                get_ticker_name(t)
+            if t not in meta or meta[t].get("sector") == "Unknown":
+                get_ticker_meta(t)
 
     failed: list[str] = []
 
@@ -448,9 +483,12 @@ def ensure_batch(
         return []
 
     names = load_ticker_names()
+    meta = load_ticker_meta()
     for t in symbols:
         if t not in names:
             get_ticker_name(t)
+        if t not in meta or meta[t].get("sector") == "Unknown":
+            get_ticker_meta(t)
 
     needed_years: dict[str, set[int]] = {}
     for t in symbols:

@@ -28,12 +28,13 @@ def log_event(event_type: str, user: str | None, details: dict[str, Any]) -> Non
         "details": details,
     }
     backend = _audit_backend()
-    # Append to audit log (JSONL format)
-    existing = ""
-    if backend.exists(_AUDIT_KEY):
-        existing = backend.read_bytes(_AUDIT_KEY).decode()
-    new_content = existing + json.dumps(entry, ensure_ascii=False) + "\n"
-    backend.write_bytes(_AUDIT_KEY, new_content.encode())
+    # Append to audit log (JSONL format) in a thread-safe manner
+    with _lock:
+        existing = ""
+        if backend.exists(_AUDIT_KEY):
+            existing = backend.read_bytes(_AUDIT_KEY).decode()
+        new_content = existing + json.dumps(entry, ensure_ascii=False) + "\n"
+        backend.write_bytes(_AUDIT_KEY, new_content.encode())
 
 
 def log_login_attempt(user_key: str, success: bool, username: str | None = None) -> None:
@@ -85,9 +86,10 @@ def log_data_import(project_name: str, user: str, importer: str, records: int) -
 def get_audit_log(limit: int = 100) -> list[dict]:
     """Get recent audit log entries."""
     backend = _audit_backend()
-    if not backend.exists(_AUDIT_KEY):
-        return []
-    content = backend.read_bytes(_AUDIT_KEY).decode()
+    with _lock:
+        if not backend.exists(_AUDIT_KEY):
+            return []
+        content = backend.read_bytes(_AUDIT_KEY).decode()
     lines = content.strip().split("\n")
     entries = [json.loads(line) for line in lines[-limit:] if line.strip()]
     return list(reversed(entries))

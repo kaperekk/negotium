@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import time
 from datetime import date
+from types import ModuleType
 
 import streamlit as st
 
@@ -28,7 +29,7 @@ from ui.bootstrap import configure_import_logging, ensure_project_context
 from storage.context import LOCAL_USER
 
 
-def init_runtime_with_user(user_key: str | None = None) -> tuple[dict, object, str, str, date]:
+def init_runtime_with_user(user_key: str | None = None) -> tuple[dict, ModuleType, str, dict[str, str], date]:
     """Initialize runtime with the given user key (or default)."""
     ensure_project_context()
     configure_import_logging()
@@ -49,7 +50,7 @@ def init_runtime_with_user(user_key: str | None = None) -> tuple[dict, object, s
     return cfg, storage, st.session_state["theme"], theme, date.today()
 
 
-def inject_styles(T: str) -> None:
+def inject_styles(T: dict[str, str]) -> None:
     """Inject all theme-dependent styles."""
     st.markdown(
         build_app_styles(T)
@@ -61,14 +62,14 @@ def inject_styles(T: str) -> None:
     )
 
 
-def inject_theme_veil(T: str) -> None:
+def inject_theme_veil(T: dict[str, str]) -> None:
     """Inject theme transition veil if needed."""
     _fade_ts = st.session_state.pop("theme_fade", None)
     if _fade_ts is not None and (time.time() - _fade_ts) < 3:
         st.markdown(build_theme_veil(T), unsafe_allow_html=True)
 
 
-def render_main_app(cfg, storage_mod, T, today) -> None:
+def render_main_app(cfg: dict, storage_mod: ModuleType, T: dict[str, str], today: date) -> None:
     """Render the main dashboard application."""
     data_start_date = ledger_core.first_transaction_date() or today
     base_ccy = render_sidebar(cfg, storage_mod, T, today, data_start_date)
