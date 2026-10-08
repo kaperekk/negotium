@@ -28,11 +28,11 @@ def classify_asset_class(quote_type: str, sector: str, name: str) -> str:
     """Map Yahoo quoteType + name heuristics to a coarse asset class."""
     qt = (quote_type or "").upper()
     name_u = (name or "").upper()
-    if qt == "CRYPTOCURRENCY":
+    if qt == "CRYPTOCURRENCY" or "BITCOIN" in name_u or "ETHEREUM" in name_u or "CRYPTO" in name_u:
         return "Crypto"
-    if "BOND" in name_u or "TREASURY" in name_u or "OBLIGAC" in name_u:
+    if "BOND" in name_u or "TREASURY" in name_u or "OBLIGAC" in name_u or qt == "BOND":
         return "Bond"
-    if any(k in name_u for k in ("GOLD", "SILVER", "OIL", "COMMODIT", "COPPER")):
+    if any(k in name_u for k in ("GOLD", "SILVER", "OIL", "COMMODIT", "COPPER", "PHYSICAL")):
         return "Commodity"
     if qt in ("ETF", "MUTUALFUND", "EQUITY", "INDEX", ""):
         return "Equity"

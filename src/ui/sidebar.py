@@ -538,4 +538,17 @@ def render_sidebar(cfg, storage, T, today, data_start_date):
             storage.set_last_refresh(today.isoformat())
             st.rerun()
 
+        # Logout button (if running in authenticated session)
+        if st.session_state.get("negotium_logged_in", False):
+            st.divider()
+            if st.button("🚪 Log out", width="stretch", key="logout_btn", type="secondary"):
+                st.session_state.pop("negotium_logged_in", None)
+                st.session_state.pop("negotium_user_key", None)
+                st.session_state.pop("negotium_current_user", None)
+                st.session_state.pop("negotium_current_project", None)
+                st.session_state.pop("project_select", None)
+                # Clear persistent cookie from query params
+                st.query_params.pop("negotium_auth", None)
+                st.rerun()
+
     return base_ccy
