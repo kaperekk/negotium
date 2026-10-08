@@ -192,10 +192,10 @@ def render_login_page() -> None:
                         _reset_rate_limit()
 
                         # Store signed cookie for persistent session if requested
-                        if remember_me and hasattr(st, "context") and hasattr(st.context, "cookies"):
+                        if remember_me:
                             try:
                                 cookie_data = _generate_auth_cookie(key_val)
-                                st.context.cookies[AUTH_COOKIE_NAME] = cookie_data
+                                st.query_params[AUTH_COOKIE_NAME] = cookie_data
                             except Exception:
                                 pass
 
@@ -242,18 +242,27 @@ def main() -> None:
     """Main entry point with login flow."""
     setup_page_config()
 
+    # Initialize theme early so login page uses correct colors
+    import config as cfg_module
+    from ui.colors import get_theme
+    default_cfg = cfg_module.load(storage.current_user())
+    theme_name = cfg_module.get_theme(default_cfg)
+    T = get_theme(theme_name)
+    inject_styles(T)
+
     # Attempt auto-login via persistent cookie if not already logged in
     if not st.session_state.get(SESSION_LOGGED_IN, False):
-        if hasattr(st, "context") and hasattr(st.context, "cookies"):
-            cookie_val = st.context.cookies.get(AUTH_COOKIE_NAME)
-            if cookie_val:
-                user_key = _verify_auth_cookie(cookie_val)
-                if user_key:
-                    user_name = storage.get_user_by_key(user_key)
-                    if user_name:
-                        storage.set_current_user_by_key(user_key)
-                        st.session_state[SESSION_LOGGED_IN] = True
-                        st.session_state[SESSION_USER_KEY] = user_key
+        cookie_val = st.query_params.get(AUTH_COOKIE_NAME)
+        if cookie_val:
+            user_key = _verify_auth_cookie(cookie_val)
+            if user_key:
+                user_name = storage.get_user_by_key(user_key)
+                if user_name:
+                    storage.set_current_user_by_key(user_key)
+                    st.session_state[SESSION_LOGGED_IN] = True
+                    st.session_state[SESSION_USER_KEY] = user_key
+                    # Clear cookie from URL after successful auto-login
+                    st.query_params.pop(AUTH_COOKIE_NAME, None)
 
     if not st.session_state.get(SESSION_LOGGED_IN, False):
         render_login_page()

@@ -547,10 +547,8 @@ def render_sidebar(cfg, storage, T, today, data_start_date):
                 st.session_state.pop("negotium_current_user", None)
                 st.session_state.pop("negotium_current_project", None)
                 st.session_state.pop("project_select", None)
-                # Clear persistent cookie if present
-                if hasattr(st, "context") and hasattr(st.context, "cookies"):
-                    if "negotium_auth" in st.context.cookies:
-                        st.context.cookies["negotium_auth"] = ""
+                # Clear persistent cookie from query params
+                st.query_params.pop("negotium_auth", None)
                 st.rerun()
 
     return base_ccy

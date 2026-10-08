@@ -47,11 +47,11 @@ try:
     def _loads(data: bytes):
         return orjson.loads(data)
     def _dumps(obj) -> str:
-        return orjson.dumps(obj).decode()
+        return orjson.dumps(obj, option=orjson.OPT_INDENT_2).decode()
 except ImportError:
     import json
     _loads = json.loads
-    _dumps = lambda obj: json.dumps(obj, ensure_ascii=False)
+    _dumps = lambda obj: json.dumps(obj, ensure_ascii=False, indent=2)
 
 
 USERS_KEY = "users.json"

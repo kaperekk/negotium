@@ -16,6 +16,15 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 import storage
 
 
+def print_boxed(text: str, width: int = 60) -> None:
+    """Print text in a nice box."""
+    print("┌" + "─" * width + "┐")
+    for line in text.split("\n"):
+        padding = width - len(line)
+        print(f"│ {line}{' ' * padding} │")
+    print("└" + "─" * width + "┘")
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         print("Usage: python scripts/create_user.py <username>")
@@ -27,20 +36,26 @@ def main() -> int:
         return 1
 
     # Check if user already exists
-    for user_key, data in storage._load_users().items():
+    users = storage._load_users()
+    for user_key, data in users.items():
         if data.get("user_name") == username:
             print(f"Error: User '{username}' already exists")
             return 1
 
     # Create and add new user (always local filesystem)
     user_key = str(uuid.uuid4())
-    storage._save_users({
-        **storage._load_users(),
-        user_key: {"user_name": username, "created": date.today().isoformat()},
-    })
+    new_user = {"user_name": username, "created": date.today().isoformat()}
+    users[user_key] = new_user
+    storage._save_users(users)
 
-    print(f"Created user '{username}' with key: {user_key}")
-    print("Stored in local filesystem (users.json)")
+    print_boxed(
+        f"User Created Successfully!\n\n"
+        f"  Username:  {username}\n"
+        f"  User Key:  {user_key}\n"
+        f"  Created:   {date.today().isoformat()}\n\n"
+        f"Storage:  Local filesystem (users.json)\n"
+        f"Users:    {len(users)} total"
+    )
     return 0
 
 
