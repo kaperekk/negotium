@@ -48,10 +48,13 @@ try:
         return orjson.loads(data)
     def _dumps(obj) -> str:
         return orjson.dumps(obj, option=orjson.OPT_INDENT_2).decode()
+    def _dumps_compact(obj) -> str:
+        return orjson.dumps(obj).decode()
 except ImportError:
     import json
     _loads = json.loads
     _dumps = lambda obj: json.dumps(obj, ensure_ascii=False, indent=2)
+    _dumps_compact = lambda obj: json.dumps(obj, ensure_ascii=False)
 
 
 USERS_KEY = "users.json"
@@ -544,7 +547,7 @@ def write_jsonl(path: Path, records: list[dict]) -> None:
     tmp = path.with_name(path.name + ".tmp")
     with tmp.open("wb") as f:
         for rec in records:
-            f.write(_dumps(rec).encode())
+            f.write(_dumps_compact(rec).encode())
             f.write(b"\n")
     tmp.replace(path)
 
@@ -553,7 +556,7 @@ def append_jsonl(path: Path, record: dict) -> None:
     """Append a record to a JSONL file (for backward compatibility)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("ab") as f:
-        f.write(_dumps(record).encode())
+        f.write(_dumps_compact(record).encode())
         f.write(b"\n")
 
 
