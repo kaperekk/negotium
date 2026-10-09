@@ -347,14 +347,23 @@ class SyncBackend(StorageBackend):
             pass
 
     def sync_to_cos(self) -> None:
-        """Push local data to COS, only syncing configured paths."""
+        """Sync local state to COS: upload new/updated files and delete removed files."""
         from storage.context import get_current_user
         current_user = get_current_user()
-        files = self.local.list_files("")
-        for key in files:
-            if self._is_sync(key, current_user):
-                data = self.local.read_bytes(key)
-                self.cos.write_bytes(key, data)
+
+        local_files = self.local.list_files("")
+        local_sync = {key for key in local_files if self._is_sync(key, current_user)}
+
+        # Upload new and updated files
+        for key in local_sync:
+            data = self.local.read_bytes(key)
+            self.cos.write_bytes(key, data)
+
+        # Delete from COS any files that are no longer present locally
+        cos_files = self.cos.list_files("")
+        for key in cos_files:
+            if self._is_sync(key, current_user) and key not in local_sync:
+                self.cos.delete(key)
 
     def exists(self, path: str) -> bool:
         return self.local.exists(path)
