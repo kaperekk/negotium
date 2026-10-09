@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import tempfile
 import time
 from datetime import date
-from pathlib import Path
 
 import streamlit as st
 
@@ -17,6 +15,7 @@ from portfolio_core import (
 )
 from ticker_data import (
     ensure_batch,
+    ensure_parallel,
     get_fx_rate,
     get_price,
     get_ticker_name,
@@ -28,7 +27,6 @@ from ledger_core import (
     compute_twr,
     get_all_tickers,
     get_all_transactions,
-    rebuild_balance,
 )
 from ui.holdings import render_holdings_table
 from ui.allocation import render_allocation_breakdown
@@ -46,26 +44,22 @@ from ui.watchlist import render_watchlist
 
 
 @st.cache_data(ttl=3600)
-def _ensure_batch_cached(
+def _ensure_parallel_cached(
     tickers_tuple: tuple[str, ...],
     start_date_iso: str,
-    force_refresh: bool,
-) -> tuple[list[str], int]:
-    """Cached price download so reruns don't re-fetch already-cached data.
+) -> list[str]:
+    """Cached parallel price download — reruns skip re-downloading within a session.
 
-    Returns (failed_tickers, call_count). The call_count increments only
-    on actual downloads — cached returns keep the original count so the
-    caller can tell whether a download happened this session.
-
-    Uses st.cache_data (not cache_resource) because the return value is
-    immutable data, not a shared resource like a database connection.
+    Uses ensure_parallel (ThreadPoolExecutor) so multiple tickers download
+    concurrently. The caller pre-filters `tickers_tuple` to only tickers that
+    actually need downloading, so no force_refresh flag is needed here.
+    Returns failed tickers.
     """
-    failed = ensure_batch(
+    return ensure_parallel(
         list(tickers_tuple),
         date.fromisoformat(start_date_iso),
-        force_refresh_current_year=force_refresh,
+        force_refresh_current_year=True,
     )
-    return failed, 1
 
 
 def render_dashboard(cfg, storage, T, today, data_start_date, base_ccy: str | None = None):
@@ -100,7 +94,7 @@ def render_dashboard(cfg, storage, T, today, data_start_date, base_ccy: str | No
         from ticker_data import invalidate_recent_price_cache, invalidate_ath_cache
         invalidate_recent_price_cache()
         invalidate_ath_cache()
-        _ensure_batch_cached.clear()
+        _ensure_parallel_cached.clear()
 
     # Check which tickers actually need downloading across entire transaction history
     start_year = data_start_date.year
@@ -119,14 +113,13 @@ def render_dashboard(cfg, storage, T, today, data_start_date, base_ccy: str | No
         dl_bar = st.progress(0, text=f"Downloading {len(missing)} tickers…")
 
         try:
-            download_errors, _ = _ensure_batch_cached(
+            download_errors = _ensure_parallel_cached(
                 tuple(missing),
                 data_start_date.isoformat(),
-                True,
             )
         except Exception as e:
             download_errors = list(missing)
-            st.caption(f"⚠ Batch download failed: {e}")
+            st.caption(f"⚠ Download failed: {e}")
 
         dl_bar.empty()
 
@@ -136,33 +129,6 @@ def render_dashboard(cfg, storage, T, today, data_start_date, base_ccy: str | No
                 "These positions will be missing from the chart. "
                 "Check your internet connection and try **Refresh data**."
             )
-
-    # ── Rebuild balance after price refresh (fixes stale avg_price) ──────────────
-
-    if force_refresh:
-        rebuild_balance()
-        # Broker post-import hooks (e.g. XTB VWAP open-lot fixes) depend on the
-        # whole position set, so they re-run after the price refresh too.
-        from services.import_service import ImportService
-
-        service = ImportService()
-        for broker, filename in service.discover_files():
-            importer = service.importer_for(broker)
-            if hasattr(importer, "post_import"):
-                data = service.get_import_file(broker, filename)
-                if data is not None:
-                    pattern, _ = service.importers[broker]
-                    suffix = Path(pattern).suffix
-                    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-                        tmp.write(data)
-                        tmp_path = Path(tmp.name)
-                    try:
-                        importer.post_import(tmp_path, service.currency_for(broker, filename))
-                    finally:
-                        try:
-                            tmp_path.unlink()
-                        except Exception:
-                            pass
 
     # Warn if we have stock tickers but zero price files at all
     stock_tickers = [t for t in tickers_needed

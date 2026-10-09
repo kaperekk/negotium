@@ -26,7 +26,7 @@ def _render_import_warnings(filename: str, warnings: list[str]) -> None:
 
 
 def _run_refresh(storage, today, base_ccy, service: ImportService | None = None):
-    """Re-import all broker files and invalidate cached data."""
+    """Re-import all broker files, invalidate cached data, and record the refresh timestamp."""
     service = service or ImportService()
     bar = st.progress(0.0, text="Importing…")
     try:
@@ -43,12 +43,12 @@ def _run_refresh(storage, today, base_ccy, service: ImportService | None = None)
             for w in report.warnings:
                 st.warning(w)
 
-    storage.invalidate_portfolio_from((today - timedelta(days=1)).isoformat())
-    st.session_state.pop(f"snapshots_{base_ccy}_D", None)
     for k in list(st.session_state.keys()):
-        if k.startswith("benchmarks_"):
+        if k.startswith("snapshots_") or k.startswith("benchmarks_"):
             st.session_state.pop(k)
     st.session_state["force_refresh"] = True
+
+    storage.set_last_refresh(today.isoformat())
 
     return report.file_count, report.imported
 
@@ -234,7 +234,8 @@ def render_sidebar(cfg, storage, T, today, data_start_date):
             file_count, imported = _run_refresh(
                 storage, today, ccy_options[st.session_state["base_ccy_idx"]], service=_import_service
             )
-            storage.set_last_refresh(today.isoformat())
+            if not file_count:
+                st.info("No import files found.")
             st.rerun()
 
         ccy_cols = st.columns(3)
@@ -544,7 +545,6 @@ def render_sidebar(cfg, storage, T, today, data_start_date):
             else:
                 st.info("No import files found.")
 
-            storage.set_last_refresh(today.isoformat())
             st.rerun()
 
         # Logout button (if running in authenticated session)

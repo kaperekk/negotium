@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 import tempfile
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 from typing import Callable
 
@@ -229,15 +229,25 @@ class ImportService:
     ) -> RefreshReport:
         """Re-import all broker files in the project's imports directory.
 
-        Each importer resolves its own statement currency, so no filename
-        guessing leaks into the ledger.
+        Clears the ledger and all derived state first so that files removed
+        by the user do not leave stale transactions behind. The result always
+        reflects exactly the files currently stored.
         """
+        from storage.repositories import TransactionRepository
+        from ledger_core import rebuild_balance
+
+        # Wipe ledger and all portfolio snapshots before replaying from scratch
+        if progress_cb:
+            progress_cb(0.0, "Clearing ledger…")
+        TransactionRepository(self.context).save_all([])
+        storage.invalidate_portfolio_from("0000-00-00")
+
         all_files = self.discover_files()
         report = RefreshReport(file_count=len(all_files))
 
         for idx, (broker, filename) in enumerate(all_files):
             if progress_cb:
-                progress_cb(idx / len(all_files), f"Importing {filename}…")
+                progress_cb((idx + 1) / (len(all_files) + 1), f"Importing {filename}…")
 
             ccy = self.currency_for(broker, filename)
             res = self.import_stored_file(
@@ -261,5 +271,9 @@ class ImportService:
                     suffix = Path(pattern).suffix
                     self._with_temp_file(data, suffix, lambda p: importer.post_import(p, ccy))
 
-        storage.invalidate_portfolio_from((today - timedelta(days=1)).isoformat())
+        if progress_cb:
+            progress_cb(0.95, "Rebuilding balance…")
+        rebuild_balance()
+        if progress_cb:
+            progress_cb(1.0, "Done")
         return report
