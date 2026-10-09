@@ -83,9 +83,12 @@ class ImportService:
             return False
 
     def broker_for_filename(self, filename: str) -> str | None:
-        """Map a statement filename to its broker key by extension and content.
+        """Map a statement filename to its broker key by extension alone.
 
-        For .xlsx files, peeks inside to check for XTB's "Cash Operations" sheet.
+        Only a filename string is available here, so content-peeking is not
+        possible. Any .xlsx is assumed to be XTB (the only registered xlsx
+        broker). Use broker_for_path when you have a real Path and need the
+        content check.
         """
         suffix = Path(filename).suffix.lower()
         if suffix == ".xlsx":

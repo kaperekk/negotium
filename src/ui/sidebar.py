@@ -25,6 +25,15 @@ def _render_import_warnings(filename: str, warnings: list[str]) -> None:
         st.warning(f"**{filename}** — {w}")
 
 
+def _clear_portfolio_caches(storage, from_date: str) -> None:
+    """Invalidate on-disk portfolio snapshots and all in-memory caches."""
+    storage.invalidate_portfolio_from(from_date)
+    for k in list(st.session_state.keys()):
+        if k.startswith("snapshots_") or k.startswith("benchmarks_"):
+            st.session_state.pop(k)
+    st.session_state["force_refresh"] = True
+
+
 def _run_refresh(storage, today, base_ccy, service: ImportService | None = None):
     """Re-import all broker files, invalidate cached data, and record the refresh timestamp."""
     service = service or ImportService()
@@ -43,11 +52,7 @@ def _run_refresh(storage, today, base_ccy, service: ImportService | None = None)
             for w in report.warnings:
                 st.warning(w)
 
-    for k in list(st.session_state.keys()):
-        if k.startswith("snapshots_") or k.startswith("benchmarks_"):
-            st.session_state.pop(k)
-    st.session_state["force_refresh"] = True
-
+    _clear_portfolio_caches(storage, (today - timedelta(days=1)).isoformat())
     storage.set_last_refresh(today.isoformat())
 
     return report.file_count, report.imported
@@ -78,11 +83,7 @@ def _add_transaction_to_ledger(tx_date, entries, storage, data_start_date, base_
         _render_import_warnings(tx_path.name, result.warnings)
     else:
         st.error(result.error)
-    st.session_state["force_refresh"] = True
-    for k in list(st.session_state.keys()):
-        if k.startswith("snapshots_") or k.startswith("benchmarks_"):
-            st.session_state.pop(k)
-    storage.invalidate_portfolio_from(data_start_date.isoformat())
+    _clear_portfolio_caches(storage, data_start_date.isoformat())
     st.rerun()
 
 
@@ -128,15 +129,13 @@ def _render_import_manager_dialog(import_service: ImportService, storage, T, dat
                                 _render_import_warnings(filename, result.warnings)
                             else:
                                 st.error(f"**{filename}** — {result.error}")
-                            storage.invalidate_portfolio_from(data_start_date.isoformat())
-                            st.session_state["force_refresh"] = True
+                            _clear_portfolio_caches(storage, data_start_date.isoformat())
                             st.rerun()
                     with col3:
                         if st.button("🗑️ Delete", key=f"delete_{broker}_{filename}", width="stretch", type="secondary"):
                             import_service.delete_import_file(broker, filename)
                             deleted.add(f"{broker}/{filename}")
-                            storage.invalidate_portfolio_from(data_start_date.isoformat())
-                            st.session_state["force_refresh"] = True
+                            _clear_portfolio_caches(storage, data_start_date.isoformat())
 
                 st.divider()
                 broker_key = broker
@@ -160,8 +159,7 @@ def _render_import_manager_dialog(import_service: ImportService, storage, T, dat
                             _render_import_warnings(uf.name, result.warnings)
                         else:
                             st.error(f"**{uf.name}** — {result.error}")
-                    storage.invalidate_portfolio_from(data_start_date.isoformat())
-                    st.session_state["force_refresh"] = True
+                    _clear_portfolio_caches(storage, data_start_date.isoformat())
                     st.rerun()
 
     _show()
@@ -517,12 +515,8 @@ def render_sidebar(cfg, storage, T, today, data_start_date):
                         _render_import_warnings(uf.name, result.warnings)
                     else:
                         st.error(f"**{uf.name}** — {result.error}")
-                st.session_state["force_refresh"] = True
                 st.session_state.pop(f"{_proj}_{broker}_upload", None)
-                for k in list(st.session_state.keys()):
-                    if k.startswith("snapshots_") or k.startswith("benchmarks_"):
-                        st.session_state.pop(k)
-                storage.invalidate_portfolio_from(data_start_date.isoformat())
+                _clear_portfolio_caches(storage, data_start_date.isoformat())
                 st.rerun()
 
             broker_files = sorted(broker_dir.glob("*.xlsx")) + sorted(broker_dir.glob("*.csv")) + sorted(broker_dir.glob("*.json"))

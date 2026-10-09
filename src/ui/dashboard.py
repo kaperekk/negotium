@@ -178,6 +178,10 @@ def render_dashboard(cfg, storage, T, today, data_start_date, base_ccy: str | No
 
     all_snapshots: list[dict] = st.session_state[cache_key]
 
+    if not all_snapshots:
+        st.warning("No portfolio data available yet. Transactions may all be future-dated.")
+        st.stop()
+
     # ── Download data for selected benchmarks ─────────────────────────────────────
     # Benchmarks use the ADJUSTED (total-return) cache: the portfolio earns
     # dividends as cash, so a fair what-if comparison needs the benchmark's
