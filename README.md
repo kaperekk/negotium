@@ -9,6 +9,7 @@ files on your disk.
 Created by **Kacper Kaperek**. If you like this, buy me a coffee:
 [buymeacoffee.com/ACCOUNTNUMBER](https://buymeacoffee.com/ACCOUNTNUMBER)
 
+
 ## Features
 
 - **Multi-project** — keep broker accounts (XTB, BOSSA, …) as independent projects with separate ledgers
