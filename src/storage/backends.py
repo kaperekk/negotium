@@ -318,16 +318,16 @@ class SyncBackend(StorageBackend):
         
         for p in sync_paths:
             if "/*/" in p:
-                # Handle wildcard for project-level imports: users/<user>/*/imports/
+                # Handle wildcard pattern: e.g. users/<user>/*/imports/
+                # Split on /*/ to get the fixed prefix and the required suffix.
                 parts = p.split("/*/")
-                prefix = parts[0]
-                suffix = parts[1] if len(parts) > 1 else ""
-                if path.startswith(prefix) and path[len(prefix):].startswith(suffix.rstrip("/").split("/")[0] + "/"):
-                    # Verify it matches the pattern: users/<user>/<project>/imports/
-                    remaining = path[len(prefix):]
+                prefix = parts[0] + "/"   # e.g. "users/alice/"
+                suffix = parts[1]          # e.g. "imports/"
+                if path.startswith(prefix):
+                    remaining = path[len(prefix):]  # e.g. "myproject/imports/xtb/file.xlsx"
                     if "/" in remaining:
-                        project_part = remaining.split("/")[0]
-                        if project_part and remaining.startswith(project_part + "/" + suffix):
+                        project_part, rest = remaining.split("/", 1)
+                        if project_part and rest.startswith(suffix):
                             return True
             elif path == p.rstrip("/") or path.startswith(p):
                 return True
