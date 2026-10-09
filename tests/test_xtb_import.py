@@ -13,6 +13,10 @@ def test_xtb_parse_shares(tmp: Path):
     assert _parse_shares("OPEN BUY 0.1367 @ 1462.60") == 0.1367
     assert _parse_shares("CLOSE BUY 3.9657/14.7171 @ 123.3700") == 3.9657
     assert _parse_shares("OPEN BUY 1 @ 107.00") == 1.0
+    # Newer XTB format includes the ticker after BUY
+    assert _parse_shares("OPEN BUY TSLA.US 0.4236/1.4236 @ 351.20") == 0.4236
+    assert _parse_shares("OPEN BUY FB2A.DE 0.3107 @ 643.60") == 0.3107
+    assert _parse_shares("CLOSE BUY SXRV.DE 1/1.0231 @ 1539.20") == 1.0
     assert _parse_shares(None) is None
     assert _parse_shares("") is None
     assert _parse_shares("no match here") is None
@@ -153,6 +157,28 @@ def test_xtb_withholding_tax(tmp: Path):
     assert entries[0]["ticker"] == "EUR"
     assert entries[0]["amount"] == -0.76
     assert entries[0].get("account_operation") is None or entries[0].get("account_operation") is False
+
+
+def test_xtb_sec_fee(tmp: Path):
+    """SEC fee (US regulatory fee) creates a plain currency entry."""
+    from xtb_import import parse_xtb_excel
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.create_sheet("Cash Operations")
+    ws.append(["Type", "Ticker", "Instrument", "Time", "Amount", "ID", "Comment"])
+    ws.append([
+        "SEC fee", "ACMR.US", "ACM Research",
+        "2026-10-01 13:02:19", -0.01, 444,
+        "Sec Fee adj ACMR.US 20260930",
+    ])
+    del wb["Sheet"]
+    xlsx_path = tmp / "test_sec_fee.xlsx"
+    wb.save(str(xlsx_path))
+    wb.close()
+
+    txns = parse_xtb_excel(str(xlsx_path), "USD")
+    assert txns == [{"date": "2026-10-01", "entries": [{"ticker": "USD", "amount": -0.01}]}]
 
 
 def test_xtb_dividend_import(tmp: Path):

@@ -28,7 +28,8 @@ except ImportError:
 
 log = logging.getLogger(__name__)
 
-SHARE_RE = re.compile(r"(?:OPEN|CLOSE)\s+BUY\s+([\d.]+)")
+# Matches both "OPEN BUY 8/8.1672 @ 30.77" and the newer "OPEN BUY TSLA.US 0.4236/1.4236 @ 351.20"
+SHARE_RE = re.compile(r"(?:OPEN|CLOSE)\s+BUY\s+(?:\S+\s+)??([\d.]+)(?:/|\s)")
 
 _OPENPYXL_NO_DEFAULT_STYLE = "Workbook contains no default style, apply openpyxl's default"
 
@@ -245,7 +246,7 @@ def _parse_cash_operations_raw(file_path: str | Path, currency: str) -> list[Tra
 
         elif op_type_str in (
             "Free funds interest", "Free funds interest tax",
-            "Withholding tax", "Commission", "Fractional shares",
+            "Withholding tax", "Commission", "Fractional shares", "SEC fee",
         ):
             if amount != 0:
                 entries.append(LedgerEntry(ticker=currency, amount=round(amount, 8)))
