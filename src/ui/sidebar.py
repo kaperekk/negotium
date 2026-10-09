@@ -92,12 +92,22 @@ def _render_import_manager_dialog(import_service: ImportService, storage, T, dat
     def _show():
         st.subheader("📁 Manage Imported Files")
 
+        # Track files deleted within this dialog session so they disappear
+        # immediately without dismissing the dialog via st.rerun().
+        deleted_key = "_import_mgr_deleted"
+        if deleted_key not in st.session_state:
+            st.session_state[deleted_key] = set()
+        deleted: set[str] = st.session_state[deleted_key]
+
         brokers = list(import_service.importers.keys())
         tabs = st.tabs([b.capitalize() for b in brokers])
 
         for idx, broker in enumerate(brokers):
             with tabs[idx]:
-                files = import_service.list_import_files(broker)
+                files = [
+                    f for f in import_service.list_import_files(broker)
+                    if f"{broker}/{f}" not in deleted
+                ]
                 if not files:
                     st.info(f"No {broker} files imported yet.")
                     continue
@@ -124,10 +134,9 @@ def _render_import_manager_dialog(import_service: ImportService, storage, T, dat
                     with col3:
                         if st.button("🗑️ Delete", key=f"delete_{broker}_{filename}", width="stretch", type="secondary"):
                             import_service.delete_import_file(broker, filename)
-                            st.success(f"Deleted {filename}")
+                            deleted.add(f"{broker}/{filename}")
                             storage.invalidate_portfolio_from(data_start_date.isoformat())
                             st.session_state["force_refresh"] = True
-                            st.rerun()
 
                 st.divider()
                 broker_key = broker
