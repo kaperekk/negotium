@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import storage
 from storage.audit import log_login_attempt
+from version import get_version
 from app_core import (
     inject_styles,
     inject_theme_veil,
@@ -236,6 +237,10 @@ def render_login_page() -> None:
         """)
 
         st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div style="text-align:center;opacity:0.5;font-size:12px;margin-top:1rem;">{get_version()}</div>',
+            unsafe_allow_html=True,
+        )
 
 
 def main() -> None:

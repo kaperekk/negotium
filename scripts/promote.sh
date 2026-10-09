@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
-# Promotion script: runs all tests and fast-forwards source branch to target branch.
+# Promotion script: runs all tests, stamps the release version, and fast-forwards
+# source branch to target branch.
 # Usage: ./promote.sh [SOURCE_BRANCH] [TARGET_BRANCH]
 # Default: main -> release
+#
+# Versioning: the version (v<MAJOR>.<MINOR>.<COMMITS>, see src/version.py) is
+# written to RELEASE_VERSION, committed on SOURCE_BRANCH as "release: vX.Y.Z",
+# tagged, and pushed. The app shows this version on the login screen.
 
 set -euo pipefail
 
@@ -60,7 +65,7 @@ echo "============================================================"
 
 # Fetch latest
 echo "Fetching latest changes..."
-git fetch origin
+git fetch origin --tags
 
 # Check if target branch exists locally or remotely
 if ! git rev-parse --verify "$TARGET_BRANCH" >/dev/null 2>&1 && \
@@ -75,6 +80,29 @@ fi
 
 # Save current branch to restore later
 ORIGINAL_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+
+# Stamp release version on source branch
+echo "============================================================"
+echo "Stamping release version on $SOURCE_BRANCH..."
+echo "============================================================"
+git checkout "$SOURCE_BRANCH"
+if ! git merge --ff-only "origin/$SOURCE_BRANCH"; then
+    echo "❌ Local $SOURCE_BRANCH has diverged from origin/$SOURCE_BRANCH!"
+    git checkout "$ORIGINAL_BRANCH"
+    exit 1
+fi
+
+VERSION_TAG=$(.venv/bin/python src/version.py)
+if git rev-parse -q --verify "refs/tags/$VERSION_TAG" >/dev/null; then
+    echo "Version $VERSION_TAG already released (no new commits) — skipping stamp."
+else
+    echo "Release version: $VERSION_TAG"
+    echo "$VERSION_TAG" > RELEASE_VERSION
+    git add RELEASE_VERSION
+    git commit -m "release: $VERSION_TAG"
+    git tag -a "$VERSION_TAG" -m "Release $VERSION_TAG"
+    git push origin "$SOURCE_BRANCH" "$VERSION_TAG"
+fi
 
 # Checkout target branch
 echo "Checking out $TARGET_BRANCH branch..."
@@ -99,5 +127,5 @@ fi
 
 echo ""
 echo "============================================================"
-echo "🎉 Promotion successful!"
+echo "🎉 Promotion successful! ($VERSION_TAG)"
 echo "============================================================"
