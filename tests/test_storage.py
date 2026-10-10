@@ -288,3 +288,94 @@ def test_list_projects_per_user(tmp: Path):
     storage.set_current_user("user2")
     projects = storage.list_projects()
     assert projects == ["project_c"]
+
+
+def test_watchlist_get_set(tmp: Path):
+    """get_watchlist and set_watchlist round-trip preserves tickers."""
+    import storage
+
+    storage.set_watchlist(["AAPL", "MSFT", "GOOGL"])
+    watch = storage.get_watchlist()
+    assert watch == ["AAPL", "MSFT", "GOOGL"]
+
+
+def test_watchlist_empty_returns_empty_list(tmp: Path):
+    """get_watchlist returns empty list when not set."""
+    import storage
+    assert storage.get_watchlist() == []
+
+
+def test_watchlist_set_empty_clears(tmp: Path):
+    """set_watchlist with empty list clears watchlist."""
+    import storage
+    storage.set_watchlist(["AAPL", "MSFT"])
+    storage.set_watchlist([])
+    assert storage.get_watchlist() == []
+
+
+def test_watchlist_isolation_per_project(tmp: Path):
+    """Watchlist is isolated per project."""
+    import storage
+
+    storage.create_project("project_a")
+    storage.set_watchlist(["AAPL", "MSFT"])
+
+    storage.create_project("project_b")
+    storage.set_watchlist(["GOOGL", "TSLA"])
+
+    storage.set_current_project("project_a")
+    assert storage.get_watchlist() == ["AAPL", "MSFT"]
+
+    storage.set_current_project("project_b")
+    assert storage.get_watchlist() == ["GOOGL", "TSLA"]
+
+
+def test_watchlist_isolation_per_user(tmp: Path):
+    """Watchlist is isolated per user."""
+    import storage
+
+    storage.create_user("user1")
+    storage.set_watchlist(["AAPL"])
+
+    storage.create_user("user2")
+    storage.set_watchlist(["MSFT"])
+
+    storage.set_current_user("user1")
+    assert storage.get_watchlist() == ["AAPL"]
+
+    storage.set_current_user("user2")
+    assert storage.get_watchlist() == ["MSFT"]
+
+
+def test_watchlist_preserves_order(tmp: Path):
+    """Watchlist preserves the order of tickers as set by user."""
+    import storage
+
+    storage.set_watchlist(["Z", "A", "M"])
+    watch = storage.get_watchlist()
+    assert watch == ["Z", "A", "M"]
+
+
+def test_watchlist_handles_duplicate_tickers(tmp: Path):
+    """set_watchlist preserves duplicates if provided (user responsibility)."""
+    import storage
+
+    storage.set_watchlist(["AAPL", "AAPL", "MSFT"])
+    watch = storage.get_watchlist()
+    assert watch == ["AAPL", "AAPL", "MSFT"]
+
+
+def test_watchlist_with_explicit_project_and_user(tmp: Path):
+    """get_watchlist/set_watchlist accept explicit project/user args."""
+    import storage
+
+    storage.create_user("user1")
+    storage.create_user("user2")
+    storage.create_project("project_a")
+    storage.create_project("project_b")
+
+    storage.set_watchlist(["AAPL"], name="project_a", user="user1")
+    storage.set_watchlist(["MSFT"], name="project_b", user="user2")
+
+    assert storage.get_watchlist(name="project_a", user="user1") == ["AAPL"]
+    assert storage.get_watchlist(name="project_b", user="user2") == ["MSFT"]

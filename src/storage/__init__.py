@@ -242,7 +242,7 @@ def get_watchlist(name: str | None = None, user: str | None = None) -> list[str]
     return list(reg.get(name, {}).get("watchlist", []))
 
 
-def set_watchlist(tickers: list[str], name: str | None = None) -> None:
+def set_watchlist(tickers: list[str], name: str | None = None, user: str | None = None) -> None:
     user = user or current_user()
     name = name or current_project()
     if name is None:
