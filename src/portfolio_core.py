@@ -123,11 +123,17 @@ def build_portfolio(
         balance: dict[str, float] = {
             a["ticker"]: a["amount"] for a in last_snap["assets"]
         }
-        cumulative_contrib = last_snap["invested"]
+        cumulative_contrib = float(last_snap.get("invested", 0.0))
+        cum_twr_factor     = 1.0 + float(last_snap.get("twr", 0.0))
+        prev_total_value   = float(last_snap.get("total_value", 0.0))
+        peak_value         = max((float(s.get("total_value", 0.0)) for s in existing), default=0.0)
     else:
         resume_from        = start_date
         balance            = {}
         cumulative_contrib = 0.0
+        cum_twr_factor     = 1.0
+        prev_total_value   = 0.0
+        peak_value         = 0.0
 
     # -- Load transactions once ------------------------------------------------
     today_str = date.today().isoformat()
@@ -145,6 +151,7 @@ def build_portfolio(
     for i, day in enumerate(all_days):
         day_str = day.isoformat()
         year    = day.year
+        day_flow = 0.0
 
         if progress_cb and i % 10 == 0:
             progress_cb(day_str, i / total_days)
@@ -153,6 +160,7 @@ def build_portfolio(
         while tx_idx < n_tx and pending_tx[tx_idx]["date"] <= day_str:
             rec     = pending_tx[tx_idx]
             tx_year = int(rec["date"][:4])
+            is_same_day = (rec["date"] == day_str)
 
             # invested rule: ONLY account_operation entries (deposits /
             # withdrawals) count toward invested capital. Unmarked pure-cash
@@ -168,7 +176,10 @@ def build_portfolio(
 
                 if e.get("account_operation", False):
                     fx = cache.get_fx(t, base_currency, rec["date"], tx_year)
-                    cumulative_contrib += amt * fx
+                    flow_base = amt * fx
+                    cumulative_contrib += flow_base
+                    if is_same_day:
+                        day_flow += flow_base
 
             tx_idx += 1
 
@@ -179,8 +190,11 @@ def build_portfolio(
             new_snapshots.append({
                 "date": day_str, "assets": [],
                 "total_value": 0.0, "invested": 0.0,
+                "pnl": 0.0, "pnl_pct": 0.0,
+                "twr": 0.0, "mwr": 0.0, "drawdown": 0.0,
                 "base_currency": base_currency,
             })
+            prev_total_value = 0.0
             continue
 
         # Value each position
@@ -226,11 +240,33 @@ def build_portfolio(
                 })
                 total_value += value_base
 
+        # Incremental metrics calculation
+        total_val_round = round(total_value, 2)
+        inv_round = round(cumulative_contrib, 2)
+        pnl = round(total_val_round - inv_round, 2)
+        pnl_pct = round(((total_val_round / inv_round) - 1.0) * 100.0, 4) if inv_round > 1e-9 else 0.0
+
+        if prev_total_value > 1e-9:
+            growth_factor = (total_val_round - day_flow) / prev_total_value
+            cum_twr_factor *= max(growth_factor, 0.0)
+
+        current_twr = round(cum_twr_factor - 1.0, 6) if (inv_round > 0 or total_val_round > 0) else 0.0
+        mwr = round((total_val_round / inv_round - 1.0), 6) if inv_round > 1e-9 else 0.0
+
+        peak_value = max(peak_value, total_val_round)
+        drawdown = round((total_val_round - peak_value) / peak_value, 6) if peak_value > 1e-9 else 0.0
+        prev_total_value = total_val_round
+
         new_snapshots.append({
             "date":          day_str,
             "assets":        assets,
-            "total_value":   round(total_value, 2),
-            "invested":  round(cumulative_contrib, 2),
+            "total_value":   total_val_round,
+            "invested":      inv_round,
+            "pnl":           pnl,
+            "pnl_pct":       pnl_pct,
+            "twr":           current_twr,
+            "mwr":           mwr,
+            "drawdown":      drawdown,
             "base_currency": base_currency,
         })
 

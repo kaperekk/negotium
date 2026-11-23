@@ -536,11 +536,22 @@ def build_holdings_styles(theme: dict[str, str]) -> str:
     <style>
     .holdings-row {{ border-bottom:1px solid {t["holdings_bar_bg"]}; }}
     .holdings-row:last-child {{ border-bottom:none; }}
-    .h-hdr {{ border-bottom:2px solid {t["border"]}; padding:0; margin-bottom:4px; }}
+    .h-hdr {{ border-bottom:2px solid {t["border"]}; padding:0; margin-bottom:6px; }}
     .h-col-hdr {{ color:{t["text_muted"]}; font-size:{HOLDINGS_COL_HEADER_FONT_REM}rem; font-weight:700;
         text-transform:uppercase; letter-spacing:0.08em; text-align:center; display:block;
         padding:0.5rem 0; background:{t["card_faint"]}; border-radius:0.5rem; }}
     .h-cell {{ padding:4px 0; font-size:{HOLDINGS_CELL_FONT_REM}rem; font-family:sans-serif; color:{t["text_cell"]}; text-align:center; }}
+    .h-cell-right {{ padding:4px 0; font-size:{HOLDINGS_CELL_FONT_REM}rem; font-family:sans-serif; color:{t["text_cell"]}; text-align:right; }}
+    .h-inst-box {{ display: flex; align-items: center; gap: 0.65rem; text-align: left; }}
+    .h-logo {{ width: 26px; height: 26px; border-radius: 50%; object-fit: cover; flex-shrink: 0; background: {t["card_faint"]}; }}
+    .h-logo-fallback {{ width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0;
+        background: {t["accent_tag_bg"]}; color: {t["accent"]}; font-size: 0.68rem; font-weight: 700;
+        display: flex; align-items: center; justify-content: center; border: 1px solid {t["accent_tag_border"]}; }}
+    .h-inst-text {{ display: flex; flex-direction: column; min-width: 0; overflow: hidden; }}
+    .h-inst-sym {{ font-weight: 700; font-size: 0.88rem; color: {t["text"]}; white-space: nowrap; }}
+    .h-inst-name {{ font-size: 0.72rem; color: {t["text_muted"]}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+    .h-days-badge {{ font-size: 0.82rem; color: {t["text_muted"]}; background: {t["card_faint"]};
+        padding: 0.15rem 0.4rem; border-radius: 0.35rem; font-weight: 600; display: inline-block; }}
     .h-ticker {{ position:relative; overflow:hidden; }}
     .h-bar {{ position:absolute; top:0; left:0; height:100%; opacity:0.10;
         border-radius:4px; transition:width 0.3s ease; }}
@@ -576,6 +587,92 @@ def build_metric_card_styles(theme: dict[str, str]) -> str:
     .purple .value,
     .amber .value,
     .cyan .value {{ color:{t["text"]}; }}
+
+    /* FundStat-style KPI cards */
+    .fundstat-kpi-row {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      margin: 0.6rem 0 1.2rem 0;
+      width: 100%;
+    }}
+    .fundstat-kpi-card {{
+      flex: 1;
+      min-width: 220px;
+      padding: 1.1rem 1.3rem;
+      border-radius: 0.75rem;
+      background: {t["card_bg"]};
+      border: 1px solid {t["border"]};
+      box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      transition: border-color 0.2s ease;
+    }}
+    .fundstat-kpi-card:hover {{
+      border-color: {t["border_hover"]};
+    }}
+    .fundstat-kpi-label {{
+      font-size: 0.85rem;
+      color: {t["text_muted"]};
+      font-weight: 600;
+      margin-bottom: 0.35rem;
+    }}
+    .fundstat-kpi-val {{
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: {t["text"]};
+      letter-spacing: -0.02em;
+      margin-bottom: 0.4rem;
+      line-height: 1.2;
+    }}
+    .fundstat-kpi-sub {{
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.85rem;
+    }}
+    .fundstat-badge {{
+      display: inline-flex;
+      align-items: center;
+      padding: 0.15rem 0.5rem;
+      border-radius: 0.35rem;
+      font-weight: 700;
+      font-size: 0.82rem;
+    }}
+    .fundstat-subtext {{
+      color: {t["text_faint"]};
+      font-size: 0.82rem;
+    }}
+    .fundstat-ann-val {{
+      font-weight: 700;
+      font-size: 0.9rem;
+      color: {t["text"]};
+    }}
+
+    /* Section Headers */
+    .section-header-box {{
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin: 1.2rem 0 0.6rem 0;
+    }}
+    .section-title {{
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: {t["text"]};
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }}
+    .section-date-badge {{
+      font-size: 0.8rem;
+      color: {t["text_muted"]};
+      background: {t["card_faint"]};
+      padding: 0.25rem 0.65rem;
+      border-radius: 0.5rem;
+      border: 1px solid {t["border"]};
+    }}
     </style>
     """
 
@@ -740,6 +837,58 @@ def render_metric_cards(theme: dict[str, str], *,
     """
 
 
+def render_fundstat_metric_cards(theme: dict[str, str], *,
+                                total_value: str,
+                                total_gain_str: str,
+                                total_gain_pct_str: str,
+                                is_gain_positive: bool,
+                                investor_return_cum: str,
+                                investor_return_ann: str,
+                                portfolio_return_cum: str,
+                                portfolio_return_ann: str,
+                                base_ccy: str) -> str:
+    t = theme
+    gain_color = POSITIVE if is_gain_positive else NEGATIVE
+    gain_bg = "rgba(34,197,94,0.12)" if is_gain_positive else "rgba(239,68,68,0.12)"
+    gain_border = "rgba(34,197,94,0.25)" if is_gain_positive else "rgba(239,68,68,0.25)"
+
+    return f"""
+    <div class="fundstat-kpi-row">
+      <!-- Card 1: Wartość portfela -->
+      <div class="fundstat-kpi-card" title="Całkowita wartość rynkowa aktywów w {base_ccy}">
+        <div class="fundstat-kpi-label">Wartość portfela</div>
+        <div class="fundstat-kpi-val">{total_value}</div>
+        <div class="fundstat-kpi-sub">
+          <span class="fundstat-badge" style="color:{gain_color};background:{gain_bg};border:1px solid {gain_border};">
+            {total_gain_str} ({total_gain_pct_str})
+          </span>
+          <span class="fundstat-subtext">Zysk całkowity</span>
+        </div>
+      </div>
+
+      <!-- Card 2: Zwrot inwestora (MWR / IRR) -->
+      <div class="fundstat-kpi-card" title="Money-Weighted Return (MWR / IRR) — uwzględnia dokładny timing i wielkość wpłat/wypłat">
+        <div class="fundstat-kpi-label">Zwrot inwestora</div>
+        <div class="fundstat-kpi-val">{investor_return_cum}</div>
+        <div class="fundstat-kpi-sub">
+          <span class="fundstat-ann-val">{investor_return_ann}</span>
+          <span class="fundstat-subtext">rocznie</span>
+        </div>
+      </div>
+
+      <!-- Card 3: Wynik portfela (TWR) -->
+      <div class="fundstat-kpi-card" title="Time-Weighted Return (TWR) — mierzy rzeczywisty wynik samych inwestycji, niezależnie od momentu wpłat">
+        <div class="fundstat-kpi-label">Wynik portfela</div>
+        <div class="fundstat-kpi-val">{portfolio_return_cum}</div>
+        <div class="fundstat-kpi-sub">
+          <span class="fundstat-ann-val">{portfolio_return_ann}</span>
+          <span class="fundstat-subtext">rocznie</span>
+        </div>
+      </div>
+    </div>
+    """
+
+
 
 
 def render_trade_table_html(theme: dict[str, str], trade_df) -> str:
@@ -776,5 +925,6 @@ __all__ = [
     "render_trade_empty_state",
     "render_trade_summary_cards",
     "render_metric_cards",
+    "render_fundstat_metric_cards",
     "render_trade_table_html",
 ]

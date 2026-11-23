@@ -637,6 +637,33 @@ def get_ticker_history(ticker: str) -> list[dict]:
     return results
 
 
+def get_holding_days(ticker: str, today: date | str) -> int | None:
+    """Return holding duration in days for an active position.
+
+    Finds the first buy transaction of the current continuous holding run
+    (since running shares was last zero).
+    """
+    if isinstance(today, str):
+        today_date = date.fromisoformat(today)
+    else:
+        today_date = today
+
+    history = get_ticker_history(ticker)
+    if not history:
+        return None
+
+    start_date = None
+    for item in history:
+        if item["running"] > 1e-9 and start_date is None:
+            start_date = date.fromisoformat(item["date"])
+        elif abs(item["running"]) <= 1e-9:
+            start_date = None
+
+    if start_date is None:
+        return None
+    return max((today_date - start_date).days, 0)
+
+
 def get_ticker_legs(ticker: str) -> list[dict]:
     """Return the full set of ledger entries ("legs") for each trade involving ticker.
 

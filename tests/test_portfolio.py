@@ -219,6 +219,49 @@ def test_day_range_daily(tmp: Path):
     assert days[-1] == date(2023, 1, 6)
 
 
+def test_portfolio_incremental_metrics(tmp: Path):
+    """Portfolio snapshots compute pnl, pnl_pct, twr, mwr, and drawdown correctly."""
+    import ledger_core, portfolio_core
+
+    fx.inject_fake_prices(tmp)
+
+    ledger_core.add_transaction("2023-01-03", [
+        {"ticker": "PLN", "amount": 10000.0, "account_operation": True},
+    ])
+    ledger_core.add_transaction("2023-01-03", [
+        {"ticker": "AAPL", "amount": 10.0},
+        {"ticker": "USD", "amount": -1250.70},
+    ])
+
+    snapshots = portfolio_core.build_portfolio(
+        start_date=date(2023, 1, 3),
+        end_date=date(2023, 1, 6),
+        base_currency="PLN",
+        precision="D",
+        use_cache=False,
+    )
+
+    assert len(snapshots) == 4
+    for snap in snapshots:
+        assert "pnl" in snap
+        assert "pnl_pct" in snap
+        assert "twr" in snap
+        assert "mwr" in snap
+        assert "drawdown" in snap
+        assert snap["drawdown"] <= 0.0
+
+
+def test_holding_days_calculation(tmp: Path):
+    """get_holding_days computes days from earliest open lot."""
+    import ledger_core
+
+    ledger_core.add_transaction("2023-01-01", [
+        {"ticker": "AAPL", "amount": 10.0},
+    ])
+    days = ledger_core.get_holding_days("AAPL", "2023-01-11")
+    assert days == 10
+
+
 def test_day_range_weekly(tmp: Path):
     """_day_range with weekly precision yields only Fridays."""
     from portfolio_core import _day_range
@@ -664,3 +707,57 @@ def test_price_slab_loaded_once_per_build(tmp: Path, monkeypatch):
     aapl_loads = [p for p in calls if p[0] == "AAPL"]
     # AAPL 2023 slab should be loaded exactly once across all ~57 days
     assert aapl_loads == [("AAPL", 2023)], f"expected single AAPL load, got {aapl_loads}"
+
+
+def test_snapshots_contain_twr_mwr_and_drawdown(tmp: Path):
+    """Snapshot dicts must contain incremental twr, mwr, pnl, and drawdown fields."""
+    import ledger_core, portfolio_core
+
+    fx.inject_fake_prices(tmp)
+
+    ledger_core.add_transaction("2024-01-02", [
+        {"ticker": "PLN", "amount": 10000.0, "account_operation": True},
+    ])
+    ledger_core.add_transaction("2024-01-05", [
+        {"ticker": "AAPL", "amount": 10.0},
+        {"ticker": "USD", "amount": -1800.0},
+    ])
+
+    snapshots = portfolio_core.build_portfolio(
+        start_date=date(2024, 1, 2),
+        end_date=date(2024, 1, 10),
+        base_currency="PLN",
+        precision="D",
+        use_cache=False,
+    )
+
+    assert len(snapshots) > 0
+    for s in snapshots:
+        assert "twr" in s
+        assert "mwr" in s
+        assert "pnl" in s
+        assert "pnl_pct" in s
+        assert "drawdown" in s
+        assert isinstance(s["twr"], float)
+        assert isinstance(s["mwr"], float)
+        assert isinstance(s["drawdown"], float)
+
+
+def test_get_holding_days(tmp: Path):
+    """Holding duration in days is calculated from first buy in current continuous position."""
+    import ledger_core
+    from ledger_core import get_holding_days
+
+    fx.inject_fake_prices(tmp)
+
+    ledger_core.add_transaction("2024-01-01", [
+        {"ticker": "AAPL", "amount": 5.0},
+        {"ticker": "USD", "amount": -750.0},
+    ])
+    ledger_core.add_transaction("2024-01-10", [
+        {"ticker": "AAPL", "amount": 5.0},
+        {"ticker": "USD", "amount": -800.0},
+    ])
+
+    days = get_holding_days("AAPL", date(2024, 1, 20))
+    assert days == 19
