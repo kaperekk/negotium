@@ -95,15 +95,31 @@ class PortfolioSnapshot:
     total_value: float
     invested: float
     base_currency: str
+    pnl: float = 0.0
+    pnl_pct: float = 0.0
+    twr: float = 0.0
+    mwr: float = 0.0
+    drawdown: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "date": self.date,
             "assets": [a.to_dict() for a in self.assets],
             "total_value": self.total_value,
             "invested": self.invested,
             "base_currency": self.base_currency,
         }
+        if self.pnl:
+            d["pnl"] = self.pnl
+        if self.pnl_pct:
+            d["pnl_pct"] = self.pnl_pct
+        if self.twr:
+            d["twr"] = self.twr
+        if self.mwr:
+            d["mwr"] = self.mwr
+        if self.drawdown:
+            d["drawdown"] = self.drawdown
+        return d
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PortfolioSnapshot:
@@ -113,6 +129,11 @@ class PortfolioSnapshot:
             total_value=float(data.get("total_value", 0.0)),
             invested=float(data.get("invested", 0.0)),
             base_currency=str(data.get("base_currency", "")),
+            pnl=float(data.get("pnl", 0.0)),
+            pnl_pct=float(data.get("pnl_pct", 0.0)),
+            twr=float(data.get("twr", 0.0)),
+            mwr=float(data.get("mwr", 0.0)),
+            drawdown=float(data.get("drawdown", 0.0)),
         )
 
 

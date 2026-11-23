@@ -28,16 +28,17 @@ from ledger_core import (
     get_all_tickers,
     get_all_transactions,
 )
+from datetime import timedelta
 from ui.holdings import render_holdings_table
 from ui.allocation import render_allocation_breakdown
-from ui.drawdown import render_drawdown_analysis
-from ui.metrics import render_metric_section, render_pnl_toggle_section
+from ui.metrics import render_metric_section
 from ui.colors import BENCHMARKS, BENCH_COLORS
-from ui.portfolio_chart import render_portfolio_chart
+from ui.portfolio_chart import render_portfolio_chart, render_benchmarking_section
 from ui.styles import (
     build_late_theme_override,
     build_streamlit_fix_script,
     render_empty_state,
+    render_project_banner,
 )
 from ui.trade_history import render_trade_history_dialog
 from ui.watchlist import render_watchlist
@@ -301,78 +302,172 @@ def render_dashboard(cfg, storage, T, today, data_start_date, base_ccy: str | No
     # ── Bench index by date ──────────────────────────────────────────────────────
     bench_by_date: dict[str, dict] = {b["date"]: b for b in all_benchmarks}
 
-    # Filter to chart date range
-    chart_start = st.session_state.get("chart_start", data_start_date)
-    chart_end = st.session_state.get("chart_end", today)
-    cs = chart_start.isoformat()
-    ce = chart_end.isoformat()
-    snapshots = [s for s in all_snapshots if cs <= s["date"] <= ce]
+    project_name = storage.active_project() if hasattr(storage, "active_project") else "Portfel"
+    if project_name == "default":
+        project_name = "Portfel inwestycyjny"
 
-    # Filter out leading zero-value snapshots (before first transaction)
-    first_nonzero = next((i for i, s in enumerate(snapshots) if s["total_value"] != 0.0), None)
-    if first_nonzero is not None:
-        snapshots = snapshots[first_nonzero:]
-
-    if not snapshots:
-        st.warning("No portfolio data for the selected date range. Try 'All time' or add transactions.")
+    # ── Filter out leading zero-value snapshots ──────────────────────────────────
+    first_nonzero = next((i for i, s in enumerate(all_snapshots) if s["total_value"] != 0.0), 0)
+    active_snapshots = all_snapshots[first_nonzero:]
+    if not active_snapshots:
+        st.warning("Brak aktywnych pozycji w wybranym portfelu.")
         st.stop()
 
-    dates, values, investeds = snapshots_to_series(snapshots)
+    min_portfolio_date = date.fromisoformat(active_snapshots[0]["date"])
 
-    # ── Metric cards ──────────────────────────────────────────────────────────────
-
-    latest = snapshots[-1]
-    prev   = snapshots[-2] if len(snapshots) > 1 else None
-
-    cur_value  = latest["total_value"]
-    contrib    = latest["invested"]
-    pnl        = cur_value - contrib
-    pnl_pct    = (pnl / contrib * 100) if contrib else 0.0
-    day_change = (cur_value - prev["total_value"]) if prev else 0.0
-    day_pct    = (day_change / prev["total_value"] * 100) if prev and prev["total_value"] else 0.0
+    # ── Top Metric Cards (FundStat 3-Card Design) ────────────────────────────────
+    latest = active_snapshots[-1]
+    cur_value = float(latest["total_value"])
+    contrib = float(latest["invested"])
+    pnl = cur_value - contrib
+    pnl_pct = (pnl / contrib * 100) if contrib else 0.0
 
     SYM = CURRENCY_SYMBOLS
 
     def _fmt_money(v: float) -> str:
         formatted = f"{v:,.0f}".replace(",", " ")
         if base_ccy == "PLN":
-            return f"{formatted} PLN"
-        return f"{SYM[base_ccy]}{formatted}"
+            return f"{formatted} zł"
+        elif base_ccy == "USD":
+            return f"{formatted} USD"
+        elif base_ccy == "EUR":
+            return f"{formatted} €"
+        return f"{formatted} {base_ccy}"
 
     fx_cache: dict = {}
-    twr_cum = compute_twr(snapshots, base_ccy, fx_cache=fx_cache, end=ce)
-    irr = compute_irr(cur_value, base_ccy, fx_cache=fx_cache, end=ce)
+    ce_all = active_snapshots[-1]["date"]
+    twr_cum = float(latest.get("twr", 0.0))
+    if twr_cum == 0.0 and len(active_snapshots) > 1:
+        twr_cum = compute_twr(active_snapshots, base_ccy, fx_cache=fx_cache, end=ce_all) or 0.0
+
+    irr = compute_irr(cur_value, base_ccy, fx_cache=fx_cache, end=ce_all)
+    span_days = max((date.fromisoformat(active_snapshots[-1]["date"]) - min_portfolio_date).days, 1)
+    twr_ann = annualize_twr(twr_cum, span_days) if twr_cum else None
+
+    twr_cum_str = f"{twr_cum * 100:+.2f}%"
+    twr_ann_str = f"{twr_ann * 100:+.2f}%" if twr_ann is not None else "—"
+    mwr_cum_str = f"{pnl_pct:+.2f}%"
+    mwr_ann_str = f"{irr * 100:+.2f}%" if irr is not None else "—"
 
     best_ticker = max(latest["assets"], key=lambda a: a["value_base"])["ticker"] if latest["assets"] else "—"
 
-    twr = None
-    if twr_cum is not None:
-        span_days = (date.fromisoformat(snapshots[-1]["date"]) - date.fromisoformat(snapshots[0]["date"])).days
-        twr = annualize_twr(twr_cum, span_days)
+    render_metric_section(
+        T,
+        base_ccy=base_ccy,
+        cur_value=cur_value,
+        contrib=contrib,
+        best_ticker=best_ticker,
+        fmt=_fmt_money,
+        pnl=pnl,
+        pnl_pct=pnl_pct,
+        twr_cum_str=twr_cum_str,
+        twr_ann_str=twr_ann_str,
+        mwr_cum_str=mwr_cum_str,
+        mwr_ann_str=mwr_ann_str,
+    )
 
-    twr_str = f"{twr * 100:.1f}%" if twr is not None else "—"
-    irr_str = f"{irr * 100:.1f}%" if irr is not None else "—"
+    # ── Section 1: Portfel w czasie (Main Chart) ──────────────────────────────────
+    # Date range filtered strictly from sidebar's Range dropdown
+    chart_start = st.session_state.get("chart_start", min_portfolio_date)
+    chart_end = st.session_state.get("chart_end", today)
+    cs = chart_start.isoformat()
+    ce = chart_end.isoformat()
+    chart_snapshots = [s for s in active_snapshots if cs <= s["date"] <= ce] or active_snapshots
 
-    render_metric_section(T, base_ccy, cur_value, contrib, best_ticker, twr_str, irr_str, _fmt_money)
-    render_pnl_toggle_section(T, cur_value, pnl, pnl_pct, _fmt_money)
+    if "portfolio_chart_mode" not in st.session_state:
+        st.session_state["portfolio_chart_mode"] = "value"
 
-    chart_mode = st.session_state.chart_mode
+    st.markdown(
+        f"""
+        <div class="section-header-box" style="margin-top:1.5rem;">
+          <div class="section-title">Portfel w czasie</div>
+          <div class="section-date-badge">{chart_snapshots[0]['date']} – {chart_snapshots[-1]['date']}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Chart Mode Tabs
+    mode_tabs = [
+        ("value", "Wartość portfela"),
+        ("profit", "Zysk całkowity"),
+        ("twr", "TWR"),
+        ("mwr", "MWR"),
+        ("drawdown", "Obsunięcie"),
+    ]
+    active_chart_mode = st.session_state["portfolio_chart_mode"]
+    m_cols = st.columns(len(mode_tabs))
+    for col, (m_key, m_label) in zip(m_cols, mode_tabs):
+        with col:
+            is_active = (m_key == active_chart_mode)
+            if st.button(m_label, key=f"p_mode_{m_key}", type="primary" if is_active else "secondary", width="stretch"):
+                st.session_state["portfolio_chart_mode"] = m_key
+                st.rerun()
+
     log_scale = bool(st.session_state.get("log_scale", False))
-    render_portfolio_chart(T, base_ccy, dates, values, investeds, bench_by_date, BENCHMARKS, BENCH_COLORS, chart_mode, log_scale=log_scale)
+    render_portfolio_chart(
+        T,
+        base_ccy=base_ccy,
+        snapshots=chart_snapshots,
+        bench_by_date=bench_by_date,
+        benchmarks=BENCHMARKS,
+        bench_colors=BENCH_COLORS,
+        chart_mode=active_chart_mode,
+        log_scale=log_scale,
+    )
+
+    # ── Section 2: Benchmarking ──────────────────────────────────────────────────
+    st.markdown(
+        f"""
+        <div class="section-header-box" style="margin-top:2rem;">
+          <div class="section-title">Benchmarking</div>
+          <div class="section-date-badge">{chart_snapshots[0]['date']} – {chart_snapshots[-1]['date']}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if "bench_chart_mode" not in st.session_state:
+        st.session_state["bench_chart_mode"] = "twr"
+    active_bench_mode = st.session_state["bench_chart_mode"]
+
+    bench_mode_tabs = [
+        ("twr", "TWR"),
+        ("mwr", "MWR"),
+        ("value", "Wartość portfela"),
+        ("profit", "Zysk całkowity"),
+    ]
+    b_cols = st.columns(len(bench_mode_tabs))
+    for col, (b_key, b_label) in zip(b_cols, bench_mode_tabs):
+        with col:
+            is_active = (b_key == active_bench_mode)
+            if st.button(b_label, key=f"b_mode_{b_key}", type="primary" if is_active else "secondary", width="stretch"):
+                st.session_state["bench_chart_mode"] = b_key
+                st.rerun()
 
     bench_selected_keys = st.multiselect(
-        "What-if benchmarks",
+        "Wybierz benchmarki do porównania",
         options=list(BENCHMARKS.keys()),
+        default=st.session_state.get("bench_persist", list(BENCHMARKS.keys())[:2]),
         key="bench_select",
-        placeholder="Choose options",
         on_change=lambda: st.session_state.update(bench_persist=list(st.session_state.bench_select)),
+    )
+
+    render_benchmarking_section(
+        T,
+        base_ccy=base_ccy,
+        snapshots=chart_snapshots,
+        bench_by_date=bench_by_date,
+        benchmarks=BENCHMARKS,
+        bench_colors=BENCH_COLORS,
+        bench_mode=active_bench_mode,
+        project_name=project_name,
     )
 
     def _show_trade_dialog(ticker: str, name: str, ccy: str):
         render_trade_history_dialog(T, ticker, name, ccy, base_ccy, today, storage)
 
-    # ── Holdings table ────────────────────────────────────────────────────────────
-
+    # ── Section 3: Holdings Table (Aktywa) ─────────────────────────────────────────
     if latest["assets"]:
         render_holdings_table(
             T,
@@ -388,18 +483,7 @@ def render_dashboard(cfg, storage, T, today, data_start_date, base_ccy: str | No
         st.subheader("🧩  Allocation Breakdown")
         render_allocation_breakdown(latest["assets"], base_ccy, today, T, get_ticker_meta)
 
-        # Drawdown must honour the selected date range — passing all_snapshots
-        # here made this chart span the full history even when the range
-        # selector (and the main chart above) showed a shorter window.
-        render_drawdown_analysis(snapshots, T)
-
     # ── Footer ────────────────────────────────────────────────────────────────────
-
-    st.caption(
-        f":material/info: Yahoo Finance · {today} · {base_ccy} · "
-        f"Daily · {len(latest.get('assets', [])) if latest else 0} positions"
-    )
-
     render_watchlist(T)
 
     # ── Late-stage theme override (injected last, beats Streamlit's dark CSS) ──
